@@ -1,0 +1,31 @@
+{
+  "template": "node",
+  "name": "@cobol-ts/file_readers_writers",
+  "description": "From a copybook and a data file, read and write the data file as an array of arrays of values",
+  "links": [
+    "@cobol-ts/errors",
+    "@cobol-ts/string_utils",
+    "@cobol-ts/cobolcodec",
+    "@cobol-ts/copybook",
+    "@cobol-ts/copybookfiles",
+    "@cobol-ts/file_parse_write"
+  ],
+  "packageJson": {
+    "files": [
+      "build/"
+    ],
+    "dependencies": {
+    },
+    "devDependencies": {
+    },
+    "scripts": {
+      "start": "react-scripts start"
+    }
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true,
+    "react": false
+  }
+}

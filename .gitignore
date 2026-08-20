@@ -1,0 +1,27 @@
+# Laoban ignores
+.cache/
+build/
+.session/
+.log
+.status
+.profile
+.version.test.txt
+.package.details.test.json
+.laoban.test.json
+target/
+target2/
+target3/
+tests/git/org/.git
+.yarn/
+
+question_directory/
+json_directory/
+
+.parcel-cache/
+
+node_modules/
+coverage/
+
+.idea/
+
+dist/

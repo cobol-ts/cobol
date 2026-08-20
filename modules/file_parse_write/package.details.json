@@ -1,0 +1,27 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/file_parse_write",
+  "description": "Isomorphism between arrays of values and a byte[] defined by the copy book",
+  "links": [
+    "@cobol-ts/copybookfiles",
+    "@cobol-ts/errors"
+  ],
+  "packageJson": {
+    "files": [
+      "build/"
+    ],
+    "dependencies": {
+    },
+    "devDependencies": {
+    },
+    "scripts": {
+      "start": "react-scripts start"
+    }
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true,
+    "react": false
+  }
+}

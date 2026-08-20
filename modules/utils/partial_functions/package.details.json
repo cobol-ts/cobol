@@ -1,0 +1,22 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/partial_functions",
+  "description": "utilities about partial functions",
+  "links": [
+  ],
+  "packageJson": {
+    "files": ["build/"],
+    "dependencies": {
+    },
+    "devDependencies": {
+
+    },
+    "scripts": {"start": "react-scripts start"}
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true,
+    "react": false
+  }
+}

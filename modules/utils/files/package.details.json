@@ -1,0 +1,23 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/files",
+  "description": "file utilities for the @cobol-ts project",
+  "links": [
+    "@cobol-ts/records"
+  ],
+  "packageJson": {
+    "files": [
+      "build/"
+    ],
+    "dependencies": {
+    },
+    "devDependencies": {
+    }
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": false,
+    "react": false
+  }
+}

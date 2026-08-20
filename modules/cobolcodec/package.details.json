@@ -1,0 +1,29 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/cobolcodec",
+  "description": "Codecs to support reading and writing COBOL copybooks",
+  "links": [
+    "@cobol-ts/copybook",
+    "@cobol-ts/copybookfiles",
+    "@cobol-ts/errors",
+    "@cobol-ts/string_utils"
+  ],
+  "packageJson": {
+    "files": [
+      "build/"
+    ],
+    "dependencies": {
+    },
+    "devDependencies": {
+    },
+    "scripts": {
+      "start": "react-scripts start"
+    }
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true,
+    "react": false
+  }
+}

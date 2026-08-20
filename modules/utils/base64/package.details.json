@@ -1,0 +1,22 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/base64",
+  "description": "utilities about base64 encoding",
+  "links": [
+  ],
+  "packageJson": {
+    "files": ["build/"],
+    "dependencies": {
+    },
+    "devDependencies": {
+
+    },
+    "scripts": {"start": "react-scripts start"}
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true,
+    "react": false
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "name": "@cobol-ts/base64",
+  "description": "utilities about base64 encoding",
+  "version": "0.0.1",
+  "main": "dist/index",
+  "types": "dist/index",
+  "browserslist": {
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ],
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ]
+  },
+  "dependencies": {
+    "debug": "^4.3.4"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.1.4",
+    "@types/jest": "^29.0.0",
+    "@types/node": "^14.0.0",
+    "jest": "^29.0.0",
+    "ts-jest": "^29.0.0",
+    "typescript": "^5.2.2"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ],
+    "overrides": [
+      {
+        "files": [
+          "**/*.stories.*"
+        ],
+        "rules": {
+          "import/no-anonymous-default-export": "off"
+        }
+      }
+    ]
+  },
+  "files": [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/src/",
+    "build/"
+  ],
+  "keywords": [
+    "indexing"
+  ],
+  "license": "MIT",
+  "repository": "git@github.com:intellimaintain/intellimaintain.git",
+  "scripts": {
+    "test": "jest --config jest.config.json --env node",
+    "test:watch": "npm run test -- --watch",
+    "start": "react-scripts start"
+  }
+}

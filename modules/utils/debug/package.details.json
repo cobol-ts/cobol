@@ -1,0 +1,19 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/debug",
+  "description": "Debug utilities ",
+  "packageJson": {
+    "dependencies": {
+    },
+    "devDependencies": {
+    }
+  },
+  "links": [
+    "@cobol-ts/records"
+  ],
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true
+  }
+}

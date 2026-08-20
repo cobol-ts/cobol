@@ -1,0 +1,30 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/compile_copybook",
+  "description": "Converts a cobol copy book to our file dom",
+  "links": [
+    "@cobol-ts/cobolcodec",
+    "@cobol-ts/copybook",
+    "@cobol-ts/copybookfiles",
+    "@cobol-ts/errors",
+    "@cobol-ts/string_utils"
+  ],
+  "packageJson": {
+    "files": [
+      "build/"
+    ],
+    "dependencies": {
+    },
+    "devDependencies": {
+    },
+    "scripts": {
+      "start": "react-scripts start"
+    }
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true,
+    "react": false
+  }
+}

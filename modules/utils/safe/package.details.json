@@ -1,0 +1,14 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/safe",
+  "description": "things like safeArray and safeObject that ensure we don't throw errors when accessing properties",
+  "links": [
+    "@cobol-ts/errors",
+    "@cobol-ts/records"
+  ],
+  "guards": {
+    "publish": true,
+    "test": true,
+    "compile": true
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/copybookfiles",
+  "description": "A dom for copybooks and how we parse/write them",
+  "links": [
+    "@cobol-ts/copybook",
+    "@cobol-ts/errors",
+    "@cobol-ts/string_utils"
+  ],
+  "packageJson": {
+    "files": [
+      "build/"
+    ],
+    "dependencies": {
+    },
+    "devDependencies": {
+    },
+    "scripts": {
+      "start": "react-scripts start"
+    }
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true,
+    "react": false
+  }
+}

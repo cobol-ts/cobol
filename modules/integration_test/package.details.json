@@ -1,0 +1,30 @@
+{
+  "template": "node",
+  "name": "@cobol-ts/integration_test",
+  "description": "Integration tests for the @cobol-ts project",
+  "links": [
+    "@cobol-ts/copybook",
+    "@cobol-ts/compile_copybook",
+    "@cobol-ts/file_readers_writers",
+    "@cobol-ts/errors",
+    "@cobol-ts/string_utils"
+  ],
+  "packageJson": {
+    "files": [
+      "build/"
+    ],
+    "dependencies": {
+    },
+    "devDependencies": {
+    },
+    "scripts": {
+      "start": "react-scripts start"
+    }
+  },
+  "guards": {
+    "compile": true,
+    "publish": false,
+    "test": true,
+    "react": false
+  }
+}

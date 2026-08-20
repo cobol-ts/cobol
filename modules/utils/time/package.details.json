@@ -1,0 +1,18 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/time",
+  "description": "A timeservice for the @cobol-ts project",
+  "packageJson": {
+    "dependencies": {
+    },
+    "devDependencies": {
+    }
+  },
+  "links": [
+  ],
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true
+  }
+}

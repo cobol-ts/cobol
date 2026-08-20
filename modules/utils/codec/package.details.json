@@ -1,0 +1,20 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/codec",
+  "description": "Coders and decoders for the @cobol-ts project",
+  "packageJson": {
+    "dependencies": {
+    },
+    "devDependencies": {
+    }
+  },
+  "links": [
+    "@cobol-ts/errors",
+    "@cobol-ts/validate"
+  ],
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true
+  }
+}

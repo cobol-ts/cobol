@@ -1,0 +1,42 @@
+{
+  "name":            "${packageDetails.name}",
+  "description":     "${packageDetails.description}",
+  "version":         "${version}",
+  "license":         "${properties.license}",
+  "repository":      "${properties.repository}",
+  "dependencies":    {
+    "debug": "^4.3.4"
+  },
+  "devDependencies": {
+    "typescript":                "^5.2.2",
+    "@testing-library/jest-dom": "^6.1.4",
+    "@types/jest":               "^29.0.0",
+    "@types/node":               "^14.0.0",
+    "jest":                      "^29.0.0",
+    "ts-jest":                   "^29.0.0"
+  },
+  "keywords":        [
+    "indexing"
+  ],
+  "main":            "dist/index",
+  "types":           "dist/index",
+  "scripts":         {
+    "test": "jest --config jest.config.json --env node"
+  },
+  "eslintConfig":    {
+    "extends":   [
+      "react-app",
+      "react-app/jest"
+    ],
+    "overrides": [
+      {
+        "files": [
+          "**/*.stories.*"
+        ],
+        "rules": {
+          "import/no-anonymous-default-export": "off"
+        }
+      }
+    ]
+  }
+}

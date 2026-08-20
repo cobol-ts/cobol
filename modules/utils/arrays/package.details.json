@@ -1,0 +1,22 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/arrays",
+  "description": "utilities about arrays",
+  "links": [
+  ],
+  "packageJson": {
+    "files": ["build/"],
+    "dependencies": {
+    },
+    "devDependencies": {
+
+    },
+    "scripts": {"start": "react-scripts start"}
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true,
+    "react": false
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/template",
+  "description": "A small template language",
+  "links": [
+    "@cobol-ts/errors",
+    "@cobol-ts/records",
+    "@cobol-ts/safe"
+  ],
+  "guards": {
+    "publish": true,
+    "test": true,
+    "compile": true
+  }
+}

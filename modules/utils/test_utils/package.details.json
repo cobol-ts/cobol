@@ -1,0 +1,19 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/test_utils",
+  "description": "test utilities for the @cobol-ts project",
+  "packageJson": {
+    "dependencies": {
+    },
+    "devDependencies": {
+
+    }
+  },
+  "links": [
+  ],
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": false
+  }
+}
