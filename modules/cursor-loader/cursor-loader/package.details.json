@@ -1,0 +1,27 @@
+{
+  "template": "node",
+  "name": "@cobol-ts/cursor-loader",
+  "description": "produces a cursor across multiple files that might be cobol or csv or jsonl or other formats",
+  "links": [
+    "@cobol-ts/cursor-loader-types",
+    "@cobol-ts/errors"
+  ],
+  "packageJson": {
+    "files": [
+      "build/"
+    ],
+    "dependencies": {
+    },
+    "devDependencies": {
+    },
+    "scripts": {
+      "start": "react-scripts start"
+    }
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true,
+    "react": false
+  }
+}

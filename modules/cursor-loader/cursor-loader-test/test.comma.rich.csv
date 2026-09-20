@@ -1,0 +1,8 @@
+id,name,age,addressLine1,addressLine2,postcode,status,balance
+1001,Alice Smith,42,"12 High Street","Flat 2, Rear","SW1A 1AA",A,1234.56
+1002,Bob Jones,37,"8 Station Road",,"LS1 4AB",I,98.75
+1003,Carol Brown,29,"The Old Mill","Riverside, East Wing","BS1 5TY",A,0.00
+1004,David Green,51,"7 King's Road","He said ""use the rear entrance""","M1 2AB",A,42.10
+1005,Eve Black,33,"Apartment 4","Floor 2, ""West Wing""","EH1 1AA",I,100.00
+1006,Frank White,60,"1 Market Street","","AB1 2CD",A,"123.45"
+1007,Grace Blue,"44","2 River Road","Comma, and ""quotes"" together","YO1 7AA",A,"9.50"

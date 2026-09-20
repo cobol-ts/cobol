@@ -23,8 +23,9 @@ export type Errors = {
     /** Optional extra context or metadata. */
     extras?: any;
 };
-export const value = <T>(t: T): ErrorsOr<T> => ({ value: t });
-export const errors = (...es: string[]): ErrorsOr<never> => ({ errors: es });
+export const value = <T>(t: T): ErrorsOr<T> => ({value: t});
+export const errors = (...es: string[]): ErrorsOr<never> => ({errors: es});
+
 /**
  * Creates an Errors object from an exception or unknown error.
  * @param context - A string describing the context where the error occurred.
@@ -69,8 +70,10 @@ export function isValue<T>(e: ErrorsOr<T>): e is Value<T> {
  * @param e - The ErrorsOr to inspect.
  * @returns True if e contains errors, false if it contains a value.
  */
-export function isErrors<T>(e: ErrorsOr<T>): e is Errors {
-    return 'errors' in e
+export function isErrors(
+    e: unknown
+): e is Errors {
+    return (typeof e === "object" && e !== null && "errors" in e);
 }
 
 /**

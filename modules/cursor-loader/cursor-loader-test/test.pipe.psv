@@ -1,0 +1,4 @@
+id|name|age|addressLine1|addressLine2|postcode|status|balance
+2001|Alice Pipe|40|"10 North | Road"|"Wing | A"|P1 1AA|A|12.50
+2002|Bob Pipe|41|"20 South Road"|"He said ""hello"""|P2 2BB|I|20.00
+2003|Carol Pipe|42|"30 East Road"||P3 3CC|A|0.00

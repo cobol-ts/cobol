@@ -1,0 +1,4 @@
+id,name,age,addressLine1,addressLine2,postcode,status,balance
+1001,Alice Smith,42,"12 High Street","Flat 2, Rear","SW1A 1AA",A,1234.56
+1002,Bob Jones,37,"8 Station Road",,"LS1 4AB",I,98.75,EXTRA
+1003,Carol Brown,29,"The Old Mill","Riverside, East Wing","BS1 5TY",A,0.00

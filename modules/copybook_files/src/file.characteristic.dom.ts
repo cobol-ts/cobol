@@ -7,65 +7,195 @@ import {
 } from "./file.characteristic.encoding";
 
 
+/*
+ * Record structure
+ */
+
+export type FileMetadata = {
+    size?: number;
+    entries: FileEntry[];
+};
+
+
+export type FileEntry =
+    | FileGroup
+    | FileElementary;
+
+
+/*
+ * Entry identity
+ */
+
+export type FileEntryName =
+    | NamedFileEntryName
+    | FillerFileEntryName;
+
+
+export type NamedFileEntryName = {
+    kind: "named";
+    name: string;
+};
+
+
+export type FillerFileEntryName = {
+    kind: "filler";
+};
+
+
+/*
+ * References
+ */
+
+export type FileEntryReference = {
+    path: readonly string[];
+};
+
+
+/*
+ * Offsets
+ */
+
+export type FileOffset =
+    | StaticFileOffset
+    | DynamicFileOffset
+    | LengthResolvedFileOffset;
+
+
+export type StaticFileOffset = {
+    kind: "static";
+    offset: number;
+};
+
+
+export type DynamicFileOffset = {
+    kind: "dynamic";
+    fixed: number;
+    variables: DynamicFileOffsetVariable[];
+};
+
+
+export type DynamicFileOffsetVariable = {
+    value: FileEntryReference;
+    size: number;
+};
+
+
+export type LengthResolvedFileOffset = {
+    kind: "length-resolved";
+    fromEnd: number;
+};
+
+
+/*
+ * Common entry characteristics
+ */
+
+export type FileEntryCharacteristics = {
+    name: FileEntryName;
+    description?: string;
+
+    occurs?: FileOccurs;
+    redefines?: FileEntryReference;
+
+    size?: number;
+    offset?: FileOffset;
+};
+
+
+/*
+ * Groups
+ */
+
+export type FileGroup =
+    FileEntryCharacteristics & {
+    kind: "group";
+    entries: FileEntry[];
+};
+
+
+/*
+ * Elementary fields
+ */
+
+export type FileElementary<
+    T extends FileFieldValue = FileFieldValue,
+> =
+    FileEntryCharacteristics & {
+    kind: "elementary";
+    size: number;
+    type: FileFieldType<T>;
+    conditions: FileCondition<T>[];
+};
+
+
+/*
+ * OCCURS
+ */
+
+export type FileOccurs =
+    | FixedFileOccurs
+    | DependingOnFileOccurs;
+
+
+export type FixedFileOccurs = {
+    kind: "fixed";
+    count: number;
+};
+
+
+export type DependingOnFileOccurs = {
+    kind: "depending-on";
+    min: number;
+    max: number;
+    dependingOn: FileEntryReference;
+};
+
+
+/*
+ * Level 88 conditions
+ */
+
+export type FileCondition<
+    T extends FileFieldValue = FileFieldValue,
+> = {
+    name: string;
+    values: FileConditionValue<T>[];
+};
+
+
+export type FileConditionValue<
+    T extends FileFieldValue = FileFieldValue,
+> =
+    | SingleFileConditionValue<T>
+    | RangeFileConditionValue<T>;
+
+
+export type SingleFileConditionValue<
+    T extends FileFieldValue = FileFieldValue,
+> = {
+    kind: "value";
+    value: T;
+};
+
+
+export type RangeFileConditionValue<
+    T extends FileFieldValue = FileFieldValue,
+> = {
+    kind: "range";
+    from: T;
+    to: T;
+};
+
+
+/*
+ * Field values
+ */
+
 export type FileFieldValue =
     | string
     | bigint
     | Decimal
     | number;
-
-
-/*
- * Authoring metadata
- */
-
-export type AuthoringFileMetadata = {
-    entries: AuthoringFileEntry[];
-};
-
-
-export type AuthoringFileEntry =
-    | AuthoringFileFieldMetadata
-    | AuthoringFileFillerMetadata;
-
-
-export type AuthoringFileFieldMetadata<
-    T extends FileFieldValue = FileFieldValue,
-> = {
-    kind: "field";
-    name: string;
-    description?: string;
-    size: number;
-    type: FileFieldType<T>;
-};
-
-
-export type AuthoringFileFillerMetadata = {
-    kind: "filler";
-    size: number;
-};
-
-
-/*
- * Canonical metadata
- */
-
-export type FileMetadata<
-    TFields extends readonly FileFieldMetadata[] = FileFieldMetadata[],
-> = {
-    size: number;
-    fields: TFields;
-};
-
-
-export type FileFieldMetadata<
-    T extends FileFieldValue = FileFieldValue,
-> = {
-    name: string;
-    description?: string;
-    from: number;
-    to: number;
-    type: FileFieldType<T>;
-};
 
 
 /*
@@ -106,6 +236,7 @@ export type DisplayIntegerFieldType = {
     encoding: "display-integer";
     characterEncoding: CharacterEncodingName;
     sign: DisplaySignEncoding;
+    digits: number;
 };
 
 
@@ -115,6 +246,7 @@ export type BinaryIntegerFieldType = {
     byteOrder: ByteOrder;
     semantics: BinarySemantics;
     signed: boolean;
+    digits: number;
 };
 
 

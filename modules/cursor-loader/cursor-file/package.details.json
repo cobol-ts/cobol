@@ -1,0 +1,27 @@
+{
+  "template": "node",
+  "name": "@cobol-ts/cursor-file",
+  "description": "the cursor that physically reads the file and returns the byte arrays to the cursor loader",
+  "links": [
+    "@cobol-ts/cursor-loader-types",
+    "@cobol-ts/errors"
+  ],
+  "packageJson": {
+    "files": [
+      "build/"
+    ],
+    "dependencies": {
+    },
+    "devDependencies": {
+    },
+    "scripts": {
+      "start": "react-scripts start"
+    }
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true,
+    "react": false
+  }
+}

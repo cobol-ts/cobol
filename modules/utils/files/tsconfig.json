@@ -12,7 +12,7 @@
     "types": [
       "jest"
     ],
-
+    "strictNullChecks": true,
     "outDir": "./dist",
     "declaration": true,
     "allowJs": false,

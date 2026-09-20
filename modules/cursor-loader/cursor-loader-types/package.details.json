@@ -1,0 +1,26 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/cursor-loader-types",
+  "description": "types for the cursor loader package",
+  "links": [
+    "@cobol-ts/errors"
+  ],
+  "packageJson": {
+    "files": [
+      "build/"
+    ],
+    "dependencies": {
+    },
+    "devDependencies": {
+    },
+    "scripts": {
+      "start": "react-scripts start"
+    }
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": false,
+    "react": false
+  }
+}
