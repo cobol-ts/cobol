@@ -28,6 +28,6 @@
   "devDependencies": {
     "laoban": "^1.4.58",
     "madge": "^8.0.0",
-    "nyc": "^17.1.0"
+    "nyc": "^18.0.0"
   }
 }
