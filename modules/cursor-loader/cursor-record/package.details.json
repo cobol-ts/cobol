@@ -1,10 +1,10 @@
 {
   "template": "node",
   "name": "@cobol-ts/cursor-record",
-  "description": "object pool for and file line buffers",
+  "description": "physical record framing for the @cobol-ts cursor stack",
   "links": [
-    "@cobol-ts/cursor-loader-types",
-    "@cobol-ts/errors"
+    "@cobol-ts/cursor-file",
+    "@cobol-ts/cursor-loader-types"
   ],
   "packageJson": {
     "files": [

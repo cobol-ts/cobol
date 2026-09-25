@@ -27,7 +27,7 @@ import {
 
 import {
     createFileCursor
-} from "./cursor.loader.file.cursor";
+} from "@cobol-ts/cursor-loader/src/cursor.loader.file.cursor";
 import {createFileBufferPool} from "@cobol-ts/cursor-file";
 import {
     createFixedRecordReader,

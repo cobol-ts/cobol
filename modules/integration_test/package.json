@@ -21,8 +21,7 @@
     "@cobol-ts/copybook": "0.0.1",
     "@cobol-ts/errors": "0.0.1",
     "@cobol-ts/file_readers_writers": "0.0.1",
-    "@cobol-ts/string_utils": "0.0.1",
-    "debug": "^4.3.4"
+    "@cobol-ts/string_utils": "0.0.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.1.4",

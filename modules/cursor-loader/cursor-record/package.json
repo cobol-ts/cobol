@@ -1,6 +1,6 @@
 {
   "name": "@cobol-ts/cursor-record",
-  "description": "object pool for and file line buffers",
+  "description": "physical record framing for the @cobol-ts cursor stack",
   "version": "0.0.1",
   "main": "dist/index",
   "types": "dist/index",
@@ -17,9 +17,8 @@
     ]
   },
   "dependencies": {
-    "@cobol-ts/cursor-loader-types": "0.0.1",
-    "@cobol-ts/errors": "0.0.1",
-    "debug": "^4.3.4"
+    "@cobol-ts/cursor-file": "0.0.1",
+    "@cobol-ts/cursor-loader-types": "0.0.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.1.4",

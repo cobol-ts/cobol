@@ -22,8 +22,7 @@
     "@cobol-ts/cursor-loader-csv": "0.0.1",
     "@cobol-ts/cursor-loader-types": "0.0.1",
     "@cobol-ts/cursor-record": "0.0.1",
-    "@cobol-ts/errors": "0.0.1",
-    "debug": "^4.3.4"
+    "@cobol-ts/errors": "0.0.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.1.4",

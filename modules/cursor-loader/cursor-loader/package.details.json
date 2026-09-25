@@ -4,8 +4,6 @@
   "description": "produces a cursor across multiple files that might be cobol or csv or jsonl or other formats",
   "links": [
     "@cobol-ts/cursor-loader-types",
-    "@cobol-ts/cursor-file",
-    "@cobol-ts/cursor-record",
     "@cobol-ts/errors"
   ],
   "packageJson": {

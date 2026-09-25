@@ -19,8 +19,7 @@
   "dependencies": {
     "@cobol-ts/errors": "0.0.1",
     "@cobol-ts/records": "0.0.1",
-    "@cobol-ts/safe": "0.0.1",
-    "debug": "^4.3.4"
+    "@cobol-ts/safe": "0.0.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.1.4",

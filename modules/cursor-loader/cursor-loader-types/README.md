@@ -1,91 +1,173 @@
-# @cobol-ts/cursor-loader-test
+# @cobol-ts/cursor-loader-types
 
-Cross-package integration tests and shared fixtures for the `@cobol-ts` cursor stack.
+Shared contracts and configuration types for the `@cobol-ts` cursor stack.
 
-The package exists to test the real composition of the cursor modules rather than replacing physical layers with test-specific substitutes.
+This package contains the interfaces shared by:
 
-## Cursor stack under test
+```text
+@cobol-ts/cursor-file
+@cobol-ts/cursor-record
+@cobol-ts/cursor-loader
+parser implementations
+application configuration
+```
+
+It contains contracts rather than runtime file-reading or parsing implementations.
+
+## Cursor architecture
 
 ```text
 physical file
     ↓
-@cobol-ts/cursor-file
-    ↓
 pooled byte buffers
     ↓
-@cobol-ts/cursor-record
+physical records
     ↓
-PhysicalRecordContent
+parser representation
     ↓
-@cobol-ts/cursor-loader
-    ↓
-parser
+validation
     ↓
 projection
     ↓
 application values
 ```
 
-## CSV integration
+The types in this package define the boundaries between those layers.
 
-CSV tests exercise the complete production path:
+## Physical records
 
-```text
-real fixture file
-    ↓
-real filesystem
-    ↓
-@cobol-ts/cursor-file
-    ↓
-@cobol-ts/cursor-record
-    ↓
-@cobol-ts/cursor-loader
-    ↓
-@cobol-ts/cursor-loader-csv
-    ↓
-application projection
+Physical record readers expose:
+
+```ts
+interface PhysicalRecordContent {
+    readonly buffers:
+        readonly Uint8Array[];
+
+    readonly firstBufferOffset:
+        number;
+
+    readonly length:
+        number;
+}
 ```
 
-The tests do not construct `PhysicalRecordContent` manually.
+The representation is deliberately zero-copy.
 
-This verifies that byte I/O, physical framing, parser preparation, parsing and projection agree with one another.
+The buffers are owned by the corresponding record cursor.
 
-## Fixed-width integration
+A physical record remains valid only until the cursor advances or closes.
 
-Fixed-width integration tests create real temporary files.
+## Record readers
 
-This makes it possible to control both logical record size and physical file-buffer size.
+A physical record reader has the form:
 
-Tests deliberately use awkward alignments, for example:
-
-```text
-physical buffers, size 4:
-
-abcd
-efgh
-ijkl
-mno
-
-logical records, size 5:
-
-abcde
-fghij
-klmno
+```ts
+type RecordReader<
+    TDetails extends PhysicalFileDetails
+> = (
+    details: TDetails
+) => RecordCursor;
 ```
 
-This verifies that record boundaries are independent of physical read boundaries.
+Physical reader dispatch is represented by `RecordReaderMap`.
 
-## What integration tests are intended to catch
+This allows `@cobol-ts/cursor-loader` to depend on an injected physical reader rather than a hard-coded implementation.
 
-Important cross-package contracts include:
+## Record boundary detectors
 
-- file-buffer ownership;
-- physical record lifetime;
-- record offsets;
-- boundary detection across physical buffers;
-- parser preparation;
-- CSV header handling;
-- physical line numbering;
-- recoverable error propagation;
-- projection-before-advance ordering;
-- configuration compatibility between packages.
+`RecordBoundaryDetector` describes how a physical record boundary is located across a sequence of retained byte buffers.
+
+Its important offsets are:
+
+```text
+recordStart
+    first byte of the current record
+
+searchStart
+    first byte not already examined while searching
+    for the boundary of the current record
+```
+
+This allows searching detectors to avoid rescanning old bytes when a physical record spans multiple buffers.
+
+## Parsers
+
+A parser converts one complete physical record into a parser-specific representation.
+
+```ts
+interface Parser<
+    Representation = unknown,
+    ParserConfig = undefined,
+    ParserDetails = ParserConfig
+> {
+    prepare?: (
+        firstRecord: PhysicalRecordContent,
+        config: ParserConfig
+    ) => ParserResult<ParserDetails>;
+
+    parse(
+        record: PhysicalRecordContent,
+        details: ParserDetails
+    ): ParserResult<Representation>;
+}
+```
+
+`prepare()` is optional.
+
+It is useful for formats where the first physical record determines how later records are interpreted.
+
+CSV headers are the usual example.
+
+## Validation
+
+Recoverable physical or representation validation failures use:
+
+```ts
+type ValidationErrors =
+    readonly string[];
+```
+
+The shared empty value is:
+
+```ts
+NO_VALIDATION_ERRORS
+```
+
+The general division of responsibility is:
+
+```text
+cursor-record
+    physical framing validation
+
+parser
+    syntax / format validation
+
+checkRepresentation
+    semantic validation
+
+cursor-loader
+    source filename and line/record context
+```
+
+Operational failures and programming errors throw.
+
+## Design intent
+
+The contracts in this package preserve clear ownership between layers:
+
+```text
+cursor-file
+    owns physical read buffers
+
+cursor-record
+    owns buffers while records refer to them
+
+parser
+    may expose ephemeral representations
+
+cursor-loader
+    completes projection before advancing the record cursor
+
+application
+    receives detached application values
+```
