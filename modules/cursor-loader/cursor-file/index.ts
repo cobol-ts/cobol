@@ -1,1 +1,1 @@
-export * from './src/cursor.file.bytes'
+export * from './src/cursor.files'

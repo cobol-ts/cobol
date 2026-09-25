@@ -15,7 +15,7 @@ import {
 import {
     createFileBufferPool,
     createFileByteCursor
-} from "./cursor.loader.physical.bytes";
+} from "./cursor.files";
 
 
 describe(

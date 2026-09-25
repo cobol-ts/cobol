@@ -516,25 +516,9 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@cobol-ts/cursor-file@workspace:modules/cursor-loader/cursor-file":
+"@cobol-ts/cursor-file@npm:0.0.1, @cobol-ts/cursor-file@workspace:modules/cursor-loader/cursor-file":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-file@workspace:modules/cursor-loader/cursor-file"
-  dependencies:
-    "@cobol-ts/cursor-loader-types": "npm:0.0.1"
-    "@cobol-ts/errors": "npm:0.0.1"
-    "@testing-library/jest-dom": "npm:^6.1.4"
-    "@types/jest": "npm:^29.0.0"
-    "@types/node": "npm:^14.0.0"
-    debug: "npm:^4.3.4"
-    jest: "npm:^29.0.0"
-    ts-jest: "npm:^29.0.0"
-    typescript: "npm:^5.2.2"
-  languageName: unknown
-  linkType: soft
-
-"@cobol-ts/cursor-fileline@workspace:modules/cursor-loader/cursor-fileline":
-  version: 0.0.0-use.local
-  resolution: "@cobol-ts/cursor-fileline@workspace:modules/cursor-loader/cursor-fileline"
   dependencies:
     "@cobol-ts/cursor-loader-types": "npm:0.0.1"
     "@cobol-ts/errors": "npm:0.0.1"
@@ -584,9 +568,11 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-loader-test@workspace:modules/cursor-loader/cursor-loader-test"
   dependencies:
+    "@cobol-ts/cursor-file": "npm:0.0.1"
     "@cobol-ts/cursor-loader": "npm:0.0.1"
     "@cobol-ts/cursor-loader-csv": "npm:0.0.1"
     "@cobol-ts/cursor-loader-types": "npm:0.0.1"
+    "@cobol-ts/cursor-record": "npm:0.0.1"
     "@cobol-ts/errors": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
     "@types/jest": "npm:^29.0.0"
@@ -616,6 +602,24 @@ __metadata:
 "@cobol-ts/cursor-loader@npm:0.0.1, @cobol-ts/cursor-loader@workspace:modules/cursor-loader/cursor-loader":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-loader@workspace:modules/cursor-loader/cursor-loader"
+  dependencies:
+    "@cobol-ts/cursor-file": "npm:0.0.1"
+    "@cobol-ts/cursor-loader-types": "npm:0.0.1"
+    "@cobol-ts/cursor-record": "npm:0.0.1"
+    "@cobol-ts/errors": "npm:0.0.1"
+    "@testing-library/jest-dom": "npm:^6.1.4"
+    "@types/jest": "npm:^29.0.0"
+    "@types/node": "npm:^14.0.0"
+    debug: "npm:^4.3.4"
+    jest: "npm:^29.0.0"
+    ts-jest: "npm:^29.0.0"
+    typescript: "npm:^5.2.2"
+  languageName: unknown
+  linkType: soft
+
+"@cobol-ts/cursor-record@npm:0.0.1, @cobol-ts/cursor-record@workspace:modules/cursor-loader/cursor-record":
+  version: 0.0.0-use.local
+  resolution: "@cobol-ts/cursor-record@workspace:modules/cursor-loader/cursor-record"
   dependencies:
     "@cobol-ts/cursor-loader-types": "npm:0.0.1"
     "@cobol-ts/errors": "npm:0.0.1"

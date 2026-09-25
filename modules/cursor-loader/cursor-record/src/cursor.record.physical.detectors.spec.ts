@@ -5,7 +5,7 @@ import {
 import {
     createFixedWidthRecordBoundaryDetector,
     newlineRecordBoundaryDetector
-} from "./cursor.loader.physical.detectors";
+} from "./cursor.record.physical.detectors";
 
 
 describe(

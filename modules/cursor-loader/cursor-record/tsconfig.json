@@ -10,9 +10,10 @@
     ],
 
     "types": [
+      "node",
       "jest"
     ],
-    "strictNullChecks": true,
+
     "outDir": "./dist",
     "declaration": true,
     "allowJs": false,

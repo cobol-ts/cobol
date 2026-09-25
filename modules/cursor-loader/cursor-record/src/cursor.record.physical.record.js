@@ -1,29 +1,9 @@
-import {
-    type FileLineBufferPool,
-    type FixedFile,
-    type LineFile,
-    type PhysicalRecordContent,
-    type RecordBoundaryDetector,
-    type RecordCursor,
-    type RecordReader
-} from "@cobol-ts/cursor-loader-types";
-
-import {
-    createFileBufferPool,
-    createFileByteCursor
-} from "./cursor.loader.physical.bytes";
-
-import {
-    createFixedWidthRecordBoundaryDetector,
-    newlineRecordBoundaryDetector
-} from "./cursor.loader.physical.detectors";
-
-
-type EndOfFileBehaviour =
-    "final-record"
-    | "incomplete-record-error";
-
-
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createLineRecordReader = createLineRecordReader;
+exports.createFixedRecordReader = createFixedRecordReader;
+const cursor_record_physical_detectors_1 = require("./cursor.record.physical.detectors");
+const cursor_file_1 = require("@cobol-ts/cursor-file");
 /**
  * Create a line-oriented physical record reader.
  *
@@ -35,26 +15,9 @@ type EndOfFileBehaviour =
  * Both the boundary detector and buffer pool may be supplied explicitly
  * for tests or alternative physical formats.
  */
-export function createLineRecordReader(
-    boundaryDetector:
-    RecordBoundaryDetector =
-    newlineRecordBoundaryDetector,
-
-    bufferPool:
-    FileLineBufferPool =
-    createFileBufferPool()
-): RecordReader<LineFile> {
-
-    return details =>
-        createRecordCursor(
-            details.filename,
-            boundaryDetector,
-            "final-record",
-            bufferPool
-        );
+function createLineRecordReader(boundaryDetector = cursor_record_physical_detectors_1.newlineRecordBoundaryDetector, bufferPool = (0, cursor_file_1.createFileBufferPool)()) {
+    return details => createRecordCursor(details.filename, boundaryDetector, "final-record", bufferPool);
 }
-
-
 /**
  * Create a fixed-width physical record reader.
  *
@@ -66,33 +29,10 @@ export function createLineRecordReader(
  * EOF with bytes remaining which do not form a complete record is reported
  * as a physical record error.
  */
-export function createFixedRecordReader(
-    boundaryDetector:
-        RecordBoundaryDetector
-        | undefined =
-    undefined,
-
-    bufferPool:
-    FileLineBufferPool =
-    createFileBufferPool()
-): RecordReader<FixedFile> {
-
-    return details =>
-        createRecordCursor(
-            details.filename,
-
-            boundaryDetector
-            ?? createFixedWidthRecordBoundaryDetector(
-                details.recordSize
-            ),
-
-            "incomplete-record-error",
-
-            bufferPool
-        );
+function createFixedRecordReader(boundaryDetector = undefined, bufferPool = (0, cursor_file_1.createFileBufferPool)()) {
+    return details => createRecordCursor(details.filename, boundaryDetector
+        ?? (0, cursor_record_physical_detectors_1.createFixedWidthRecordBoundaryDetector)(details.recordSize), "incomplete-record-error", bufferPool);
 }
-
-
 /**
  * Read one file as complete physical records.
  *
@@ -119,63 +59,23 @@ export function createFixedRecordReader(
  * boundaryDetector.recordEnd() returns the inclusive final data byte of
  * the current record, excluding any physical framing bytes.
  */
-async function* createRecordCursor(
-    filename: string,
-    boundaryDetector: RecordBoundaryDetector,
-    endOfFileBehaviour: EndOfFileBehaviour,
-    bufferPool: FileLineBufferPool
-): RecordCursor {
-
-    const buffers:
-        Uint8Array[] =
-        [];
-
-
-    let bufferedLength =
-        0;
-
-    let startByte =
-        0;
-
-    let searchStart =
-        0;
-
-
+async function* createRecordCursor(filename, boundaryDetector, endOfFileBehaviour, bufferPool) {
+    const buffers = [];
+    let bufferedLength = 0;
+    let startByte = 0;
+    let searchStart = 0;
     try {
-        for await (
-            const buffer
-            of createFileByteCursor(
-            filename,
-            bufferPool
-        )
-            ) {
-            buffers.push(
-                buffer
-            );
-
-            bufferedLength +=
-                buffer.length;
-
-
+        for await (const buffer of (0, cursor_file_1.createFileByteCursor)(filename, bufferPool)) {
+            buffers.push(buffer);
+            bufferedLength += buffer.length;
             /**
              * Do not invoke the detector when there are no bytes available
              * for the current record.
              */
-            while (
-                startByte
-                < bufferedLength
-                ) {
-                const nextRecordStart =
-                    boundaryDetector.nextRecordStart(
-                        buffers,
-                        startByte,
-                        searchStart
-                    );
-
-
-                if (
-                    nextRecordStart === -1
-                ) {
+            while (startByte
+                < bufferedLength) {
+                const nextRecordStart = boundaryDetector.nextRecordStart(buffers, startByte, searchStart);
+                if (nextRecordStart === -1) {
                     /**
                      * The complete boundary is not yet available.
                      *
@@ -191,32 +91,11 @@ async function* createRecordCursor(
                      */
                     searchStart =
                         bufferedLength;
-
                     break;
                 }
-
-
-                validateNextRecordStart(
-                    nextRecordStart,
-                    startByte,
-                    bufferedLength
-                );
-
-
-                const recordEnd =
-                    boundaryDetector.recordEnd(
-                        buffers,
-                        nextRecordStart
-                    );
-
-
-                validateRecordEnd(
-                    recordEnd,
-                    startByte,
-                    nextRecordStart
-                );
-
-
+                validateNextRecordStart(nextRecordStart, startByte, bufferedLength);
+                const recordEnd = boundaryDetector.recordEnd(buffers, nextRecordStart);
+                validateRecordEnd(recordEnd, startByte, nextRecordStart);
                 /**
                  * recordEnd is inclusive.
                  *
@@ -226,32 +105,19 @@ async function* createRecordCursor(
                  *
                  * and therefore correctly has length zero.
                  */
-                const recordLength =
-                    recordEnd
+                const recordLength = recordEnd
                     - startByte
                     + 1;
-
-
-                const record:
-                    PhysicalRecordContent = {
-
+                const record = {
                     buffers,
-
-                    firstBufferOffset:
-                    startByte,
-
-                    length:
-                    recordLength
+                    firstBufferOffset: startByte,
+                    length: recordLength
                 };
-
-
                 /**
                  * The generator is suspended while the consumer uses this
                  * record, so all referenced buffers remain valid.
                  */
                 yield record;
-
-
                 /**
                  * The consumer has advanced the cursor.
                  *
@@ -259,22 +125,12 @@ async function* createRecordCursor(
                  * completed record or to its physical framing and can now
                  * be discarded.
                  */
-                const releasedBytes =
-                    releaseConsumedBuffers(
-                        buffers,
-                        nextRecordStart,
-                        bufferPool
-                    );
-
-
+                const releasedBytes = releaseConsumedBuffers(buffers, nextRecordStart, bufferPool);
                 bufferedLength -=
                     releasedBytes;
-
                 startByte =
                     nextRecordStart
-                    - releasedBytes;
-
-
+                        - releasedBytes;
                 /**
                  * A new record begins at startByte.
                  *
@@ -285,33 +141,20 @@ async function* createRecordCursor(
                     startByte;
             }
         }
-
-
-        if (
-            startByte
-            < bufferedLength
-        ) {
-            const remainingLength =
-                bufferedLength
+        if (startByte
+            < bufferedLength) {
+            const remainingLength = bufferedLength
                 - startByte;
-
-
-            if (
-                endOfFileBehaviour
-                === "final-record"
-            ) {
+            if (endOfFileBehaviour
+                === "final-record") {
                 /**
                  * EOF without a physical terminator is a valid final record
                  * for formats which permit it.
                  */
                 yield {
                     buffers,
-
-                    firstBufferOffset:
-                    startByte,
-
-                    length:
-                    remainingLength
+                    firstBufferOffset: startByte,
+                    length: remainingLength
                 };
             }
             else {
@@ -321,8 +164,8 @@ async function* createRecordCursor(
                  */
                 yield [
                     "Incomplete physical record at end of file: "
-                    + `${remainingLength} byte(s) remain but do not form `
-                    + "a complete physical record"
+                        + `${remainingLength} byte(s) remain but do not form `
+                        + "a complete physical record"
                 ];
             }
         }
@@ -334,18 +177,11 @@ async function* createRecordCursor(
          * Any buffers still retained by this cursor can no longer be
          * observed and are returned to the pool.
          */
-        for (
-            const buffer
-            of buffers
-            ) {
-            bufferPool.release(
-                buffer
-            );
+        for (const buffer of buffers) {
+            bufferPool.release(buffer);
         }
     }
 }
-
-
 /**
  * Release complete buffers which contain no bytes belonging to the next
  * physical record.
@@ -357,72 +193,29 @@ async function* createRecordCursor(
  * of the buffer sequence. The caller uses this value to rebase its
  * remaining offsets.
  */
-function releaseConsumedBuffers(
-    buffers: Uint8Array[],
-    consumedBytes: number,
-    bufferPool: FileLineBufferPool
-): number {
-
-    let releasedBytes =
-        0;
-
-    let releaseCount =
-        0;
-
-
-    while (
-        releaseCount
-        < buffers.length
-        ) {
-        const buffer =
-            buffers[
-                releaseCount
-                ];
-
-
-        if (
-            consumedBytes
+function releaseConsumedBuffers(buffers, consumedBytes, bufferPool) {
+    let releasedBytes = 0;
+    let releaseCount = 0;
+    while (releaseCount
+        < buffers.length) {
+        const buffer = buffers[releaseCount];
+        if (consumedBytes
             - releasedBytes
-            < buffer.length
-        ) {
+            < buffer.length) {
             break;
         }
-
-
         releasedBytes +=
             buffer.length;
-
         releaseCount++;
     }
-
-
-    for (
-        let index = 0;
-        index < releaseCount;
-        index++
-    ) {
-        bufferPool.release(
-            buffers[
-                index
-                ]
-        );
+    for (let index = 0; index < releaseCount; index++) {
+        bufferPool.release(buffers[index]);
     }
-
-
-    if (
-        releaseCount !== 0
-    ) {
-        buffers.splice(
-            0,
-            releaseCount
-        );
+    if (releaseCount !== 0) {
+        buffers.splice(0, releaseCount);
     }
-
-
     return releasedBytes;
 }
-
-
 /**
  * Validate nextRecordStart returned by RecordBoundaryDetector.
  *
@@ -435,30 +228,17 @@ function releaseConsumedBuffers(
  * An invalid value indicates a programming or configuration error rather
  * than malformed input data.
  */
-function validateNextRecordStart(
-    nextRecordStart: number,
-    startByte: number,
-    bufferedLength: number
-): void {
-
-    if (
-        !Number.isInteger(
-            nextRecordStart
-        )
+function validateNextRecordStart(nextRecordStart, startByte, bufferedLength) {
+    if (!Number.isInteger(nextRecordStart)
         || nextRecordStart
-        <= startByte
+            <= startByte
         || nextRecordStart
-        > bufferedLength
-    ) {
-        throw new Error(
-            "RecordBoundaryDetector returned invalid next record start "
+            > bufferedLength) {
+        throw new Error("RecordBoundaryDetector returned invalid next record start "
             + `${nextRecordStart}; expected -1 or an integer greater than `
-            + `${startByte} and no greater than ${bufferedLength}`
-        );
+            + `${startByte} and no greater than ${bufferedLength}`);
     }
 }
-
-
 /**
  * Validate recordEnd returned by RecordBoundaryDetector.
  *
@@ -473,28 +253,14 @@ function validateNextRecordStart(
  * An invalid value indicates a programming or configuration error rather
  * than malformed input data.
  */
-function validateRecordEnd(
-    recordEnd: number,
-    startByte: number,
-    nextRecordStart: number
-): void {
-
-    if (
-        !Number.isInteger(
-            recordEnd
-        )
+function validateRecordEnd(recordEnd, startByte, nextRecordStart) {
+    if (!Number.isInteger(recordEnd)
         || recordEnd
-        < startByte - 1
+            < startByte - 1
         || recordEnd
-        >= nextRecordStart
-    ) {
-        throw new Error(
-            "RecordBoundaryDetector returned invalid record end "
-            + `${recordEnd}; expected an integer between ${
-                startByte - 1
-            } and ${
-                nextRecordStart - 1
-            }`
-        );
+            >= nextRecordStart) {
+        throw new Error("RecordBoundaryDetector returned invalid record end "
+            + `${recordEnd}; expected an integer between ${startByte - 1} and ${nextRecordStart - 1}`);
     }
 }
+//# sourceMappingURL=cursor.record.physical.record.js.map

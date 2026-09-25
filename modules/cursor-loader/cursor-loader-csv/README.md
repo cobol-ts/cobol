@@ -1,17 +1,36 @@
 # @cobol-ts/cursor-loader-csv
 
-Low-allocation CSV parser for `@cobol-ts/cursor-loader`.
+Low-allocation CSV parsing for the `@cobol-ts` cursor stack.
 
-The parser consumes one already-framed `PhysicalRecordContent` at a time. Physical line detection is the responsibility of `@cobol-ts/cursor-loader`.
+The CSV parser consumes one already-framed `PhysicalRecordContent` at a time.
 
-## Usage
+Physical file I/O and line detection are handled by lower layers.
 
-Register the parser:
+## Position in the cursor stack
+
+```text
+@cobol-ts/cursor-file
+    ↓
+@cobol-ts/cursor-record
+    ↓
+PhysicalRecordContent
+    ↓
+@cobol-ts/cursor-loader-csv
+    ↓
+CsvRow
+    ↓
+projection
+```
+
+`@cobol-ts/cursor-loader` orchestrates parser preparation, parsing, validation and projection.
+
+## Parser registration
 
 ```ts
 import {
     csvParser
 } from "@cobol-ts/cursor-loader-csv";
+
 
 const parsers = {
     csv:
@@ -19,7 +38,7 @@ const parsers = {
 };
 ```
 
-Then configure the expected logical columns:
+## CSV configuration
 
 ```ts
 const customerCsvDetails = {
@@ -59,28 +78,23 @@ const customerCsvDetails = {
 
 CSV uses parser preparation.
 
-The first physical record is treated as the header:
+The first physical record is treated as the CSV header.
 
-```text
-id,name,balance
-```
+Preparation:
 
-`prepare()`:
+- parses the header;
+- records the actual physical column names;
+- validates configured required columns;
+- maps logical configured columns to physical positions;
+- prepares reusable state for later records.
 
-- parses the physical header;
-- validates the configured column names;
-- maps logical configured columns to their physical positions;
-- reports missing required columns;
-- records the actual physical width of the file;
-- prepares reusable state for subsequent data rows.
+The header is not projected as application data.
 
-The header record is consumed by preparation and is not emitted as application data.
+## CsvRow
 
-## CSV row
+Data records produce a `CsvRow`.
 
-Parsing produces a `CsvRow`.
-
-Values are accessed by configured logical column index:
+Configured logical columns are accessed by index:
 
 ```ts
 const customer = {
@@ -101,130 +115,34 @@ const customer = {
 };
 ```
 
-Supported configured column types include:
+## Lazy value materialisation
 
-```text
-string
-integer
-float
-character
-```
-
-## Lazy materialisation
-
-The parser scans the complete physical row because it must:
-
-- validate CSV syntax;
-- find field boundaries;
-- validate physical column count.
+The parser scans the complete CSV record because it must validate syntax and identify field boundaries.
 
 It does not need to decode every field into a JavaScript string.
 
-For example, a projection which only reads:
-
-```ts
-row.integer(0)
-row.character(6)
-```
-
-does not need to materialise unrelated string columns.
-
-This is central to the low-allocation design.
-
-## Quoting
-
-Quoting is configured explicitly:
-
-```ts
-quote:
-    "\""
-```
-
-Quoted fields may contain the configured separator.
-
-Escaped quotes are handled according to the parser configuration.
-
-The parser also supports configurable separators, for example:
-
-```ts
-separator:
-    "|"
-```
+Unused string fields therefore need not be materialised.
 
 ## Physical records
 
-CSV does not perform file I/O and does not locate line endings.
+The CSV parser does not locate physical line endings.
 
-Its input is:
+It receives one complete physical record from `@cobol-ts/cursor-record`.
 
-```ts
-PhysicalRecordContent
-```
+A CSV record may span multiple physical byte buffers without requiring the complete record to be copied first.
 
-supplied by a physical record reader.
+## Lifetime
 
-A CSV record may therefore itself span several byte buffers without the parser needing to copy the complete record first.
+`CsvRow` may refer to cursor-owned physical buffers and parser-owned reusable state.
 
-## Record lifetime
+It should therefore be considered ephemeral.
 
-`CsvRow` is a parser representation over cursor-owned data and parser-owned reusable state.
+Projection must complete before the underlying physical record cursor advances.
 
-Projection must complete before the underlying physical cursor advances.
-
-`createFileCursor()` guarantees this ordering.
-
-Application objects returned by a projection should therefore contain detached application values, not references to ephemeral parser state.
+`@cobol-ts/cursor-loader` guarantees this ordering.
 
 ## Errors
 
-CSV syntax and schema failures are returned as `Errors`, rather than thrown as operational failures.
+CSV syntax and schema problems are returned as recoverable `Errors`.
 
-Diagnostics include information such as:
-
-- missing configured header columns;
-- the actual header encountered;
-- invalid quoting;
-- unterminated quoted fields;
-- too many physical fields;
-- invalid typed values.
-
-`createFileCursor()` subsequently adds filename and line/record context.
-
-## Example
-
-```ts
-const config = {
-    type:
-        "line",
-
-    filename:
-        "customers.csv",
-
-    parser:
-        "csv",
-
-    parserConfig:
-        customerCsvDetails,
-
-    project: (
-        row: CsvRow
-    ) => ({
-        id:
-            row.integer(
-                0
-            ),
-
-        name:
-            row.string(
-                1
-            )
-    }),
-
-    entityId:
-        customer =>
-            customer.id,
-
-    cardinality:
-        "many"
-};
-```
+`@cobol-ts/cursor-loader` subsequently adds filename and physical line information.

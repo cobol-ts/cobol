@@ -21,23 +21,18 @@ import {
     type RecordReaderMap
 } from "@cobol-ts/cursor-loader-types";
 
-import {
-    createFileBufferPool
-} from "./cursor.loader.physical.bytes";
 
-import {
-    createFixedWidthRecordBoundaryDetector,
-    newlineRecordBoundaryDetector
-} from "./cursor.loader.physical.detectors";
 
-import {
-    createFixedRecordReader,
-    createLineRecordReader
-} from "./cursor.loader.physical.record";
+
 
 import {
     createFileCursor
 } from "./cursor.loader.file.cursor";
+import {createFileBufferPool} from "@cobol-ts/cursor-file";
+import {
+    createFixedRecordReader,
+    createFixedWidthRecordBoundaryDetector, createLineRecordReader, newlineRecordBoundaryDetector
+} from "@cobol-ts/cursor-record";
 
 
 describe(

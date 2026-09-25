@@ -1,251 +1,91 @@
-# `@cobol-ts/cursor-loader-types` — README.md
+# @cobol-ts/cursor-loader-test
 
-# @cobol-ts/cursor-loader-types
+Cross-package integration tests and shared fixtures for the `@cobol-ts` cursor stack.
 
-Shared types for the `@cobol-ts` cursor-loading system.
+The package exists to test the real composition of the cursor modules rather than replacing physical layers with test-specific substitutes.
 
-This package defines the contracts between:
-
-- physical file readers;
-- physical record framing;
-- parsers;
-- application projections;
-- cursor configuration;
-- loaded entity datasets.
-
-It contains types and constants only. File I/O and parsing implementations live in the other cursor-loader packages.
-
-## Architecture
-
-The loader is deliberately split into layers:
+## Cursor stack under test
 
 ```text
 physical file
     ↓
-byte buffers
+@cobol-ts/cursor-file
     ↓
-physical records
+pooled byte buffers
     ↓
-parser representation
+@cobol-ts/cursor-record
     ↓
-validation
+PhysicalRecordContent
+    ↓
+@cobol-ts/cursor-loader
+    ↓
+parser
+    ↓
+projection
+    ↓
+application values
+```
+
+## CSV integration
+
+CSV tests exercise the complete production path:
+
+```text
+real fixture file
+    ↓
+real filesystem
+    ↓
+@cobol-ts/cursor-file
+    ↓
+@cobol-ts/cursor-record
+    ↓
+@cobol-ts/cursor-loader
+    ↓
+@cobol-ts/cursor-loader-csv
     ↓
 application projection
 ```
 
-The types in this package describe the boundaries between those layers.
+The tests do not construct `PhysicalRecordContent` manually.
 
-## Physical files
+This verifies that byte I/O, physical framing, parser preparation, parsing and projection agree with one another.
 
-Supported physical file descriptions are:
+## Fixed-width integration
 
-```ts
-interface LineFile {
-    readonly type: "line";
-    readonly filename: string;
-}
+Fixed-width integration tests create real temporary files.
 
-interface FixedFile {
-    readonly type: "fixed";
-    readonly filename: string;
-    readonly recordSize: number;
-}
+This makes it possible to control both logical record size and physical file-buffer size.
 
-interface LengthPrefixedFile {
-    readonly type: "length-prefixed";
-    readonly filename: string;
-    readonly prefixSize: number;
-    readonly recordLength:
-        (prefix: Uint8Array) => number;
-}
+Tests deliberately use awkward alignments, for example:
+
+```text
+physical buffers, size 4:
+
+abcd
+efgh
+ijkl
+mno
+
+logical records, size 5:
+
+abcde
+fghij
+klmno
 ```
 
-`PhysicalFileDetails` is the discriminated union of these types.
+This verifies that record boundaries are independent of physical read boundaries.
 
-## Physical records
+## What integration tests are intended to catch
 
-A physical reader yields `PhysicalRecordContent`:
+Important cross-package contracts include:
 
-```ts
-interface PhysicalRecordContent {
-    readonly buffers:
-        readonly Uint8Array[];
-
-    readonly firstBufferOffset:
-        number;
-
-    readonly length:
-        number;
-}
-```
-
-A record may span several physical buffers.
-
-The record is zero-copy: the buffers remain owned by the `RecordCursor`.
-
-Consequently:
-
-> `PhysicalRecordContent` remains valid only until its cursor is advanced or closed.
-
-Anything which needs to retain record data beyond that point must copy or otherwise detach it.
-
-## Record readers
-
-A physical reader is selected according to the physical file type:
-
-```ts
-type RecordReader<
-    TDetails extends PhysicalFileDetails
-> = (
-    details: TDetails
-) => RecordCursor;
-```
-
-`RecordReaderMap` provides dispatch by the `type` discriminator:
-
-```ts
-{
-    line: ...,
-    fixed: ...,
-    "length-prefixed": ...
-}
-```
-
-Physical readers yield either:
-
-- a complete `PhysicalRecordContent`; or
-- `ValidationErrors` describing malformed physical input.
-
-Operational failures such as file-system errors throw instead.
-
-## Record boundary detectors
-
-`RecordBoundaryDetector` separates framing policy from file reading.
-
-A detector receives the currently retained byte buffers and determines where the next physical record begins.
-
-The interface distinguishes:
-
-- `recordStart`: where the current record begins;
-- `searchStart`: where boundary searching should resume.
-
-This permits long records to span many physical buffers without repeatedly rescanning bytes already examined.
-
-The detector also converts a known next-record boundary into the inclusive end of the current record's data.
-
-This allows framing bytes such as LF or CRLF to be excluded from the parser-visible record.
-
-## Parsers
-
-A parser converts one physical record into a parser-specific representation:
-
-```ts
-interface Parser<
-    Representation = unknown,
-    ParserConfig = undefined,
-    ParserDetails = ParserConfig
-> {
-    prepare?: (
-        firstRecord: PhysicalRecordContent,
-        config: ParserConfig
-    ) => ParserResult<ParserDetails>;
-
-    parse(
-        record: PhysicalRecordContent,
-        details: ParserDetails
-    ): ParserResult<Representation>;
-}
-```
-
-`prepare()` is optional.
-
-It is useful for formats such as CSV where the first physical record is a header which determines how subsequent records are interpreted.
-
-The preparation record is not subsequently parsed as application data.
-
-## File configuration
-
-`FileDetails` combines:
-
-- physical file description;
-- parser selection;
-- parser configuration;
-- optional representation validation;
-- application projection;
-- entity identity;
-- cardinality.
-
-Application configuration is normally checked using `satisfies`:
-
-```ts
-const config = {
-    customer: {
-        type:
-            "line",
-
-        filename:
-            "customers.csv",
-
-        parser:
-            "csv",
-
-        parserConfig:
-            customerCsvDetails,
-
-        project:
-            row => ({
-                id:
-                    row.integer(0),
-
-                name:
-                    row.string(1)
-            }),
-
-        entityId:
-            customer =>
-                customer.id,
-
-        cardinality:
-            "many"
-    }
-} satisfies CursorLoaderConfig<
-    typeof parsers,
-    number
->;
-```
-
-This preserves useful literal types while allowing TypeScript to verify that the parser, configuration, projection and result types agree.
-
-## Validation
-
-Recoverable data-validation failures use:
-
-```ts
-type ValidationErrors =
-    readonly string[];
-```
-
-The shared empty value is:
-
-```ts
-NO_VALIDATION_ERRORS
-```
-
-The general division is:
-
-- physical reader: framing errors;
-- parser: syntax and format errors;
-- representation check: semantic validation;
-- operational/programming errors: throw.
-
-## Cardinality
-
-Supported source cardinalities are:
-
-```ts
-"one"
-"optional"
-"many"
-```
-
-The dataset types use these declarations to derive the resulting application-facing shape.
+- file-buffer ownership;
+- physical record lifetime;
+- record offsets;
+- boundary detection across physical buffers;
+- parser preparation;
+- CSV header handling;
+- physical line numbering;
+- recoverable error propagation;
+- projection-before-advance ordering;
+- configuration compatibility between packages.

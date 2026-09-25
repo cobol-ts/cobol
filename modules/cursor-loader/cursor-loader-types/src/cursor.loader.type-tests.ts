@@ -392,7 +392,7 @@ const transactionAmount: number =
 
 // @ts-expect-error customer is not an array
 dataset.customer.map(
-    customerValue =>
+    (customerValue:any) =>
         customerValue.id
 );
 

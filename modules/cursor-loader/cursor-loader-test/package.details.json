@@ -3,6 +3,8 @@
   "name": "@cobol-ts/cursor-loader-test",
   "description": "tests the cursor loader package",
   "links": [
+    "@cobol-ts/cursor-file",
+    "@cobol-ts/cursor-record",
     "@cobol-ts/cursor-loader",
     "@cobol-ts/cursor-loader-types",
     "@cobol-ts/cursor-loader-csv",

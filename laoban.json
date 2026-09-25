@@ -24,6 +24,7 @@
     "license": "MIT",
     "laobanVersion": "1.4.51",
     "@mljs/kmeans": "^6.0.0",
+    "@types/node": "^14.0.0",
     "ml-matrix": "^6.12.1",
     "react-chartjs-2": "^5.3.0",
     "tsne-js": "^1.0.3",

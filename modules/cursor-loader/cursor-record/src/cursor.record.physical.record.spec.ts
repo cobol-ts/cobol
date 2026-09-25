@@ -18,13 +18,12 @@ import {
     type RecordBoundaryDetector
 } from "@cobol-ts/cursor-loader-types";
 
-import {
-    createFileBufferPool
-} from "./cursor.loader.physical.bytes";
+
 
 import {
     createLineRecordReader
-} from "./cursor.loader.physical.record";
+} from "./cursor.record.physical.record";
+import {createFileBufferPool} from "@cobol-ts/cursor-file";
 
 
 describe(

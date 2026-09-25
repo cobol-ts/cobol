@@ -1,10 +1,77 @@
 # @cobol-ts/cursor-file
 
-Low-level pooled byte cursor for reading files.
+Efficient pooled byte I/O for the `@cobol-ts` cursor stack.
 
-This package contains no record-framing or parser logic. It reads a file as a sequence of `Uint8Array` buffers and transfers ownership of each yielded buffer to its consumer.
+This package is the lowest physical I/O layer. It reads files into reusable `Uint8Array` buffers.
 
-## Byte cursor
+It knows nothing about records, lines, CSV, JSON, fixed-width layouts, parsers, or application values.
+
+## Position in the cursor stack
+
+```text
+physical file
+    ↓
+@cobol-ts/cursor-file
+    ↓
+pooled Uint8Array buffers
+    ↓
+@cobol-ts/cursor-record
+    ↓
+physical records
+```
+
+## Responsibilities
+
+`@cobol-ts/cursor-file` is responsible for:
+
+- opening physical files;
+- reading file bytes;
+- pooling physical read buffers;
+- handling short operating-system reads;
+- transferring ownership of yielded buffers to the consumer;
+- closing files correctly when iteration completes or is stopped early.
+
+It is deliberately not responsible for finding physical record boundaries.
+
+## Public API
+
+The main API is:
+
+```ts
+FILE_BUFFER_SIZE
+
+FileByteCursor
+
+createFileBufferPool()
+
+createFileByteCursor()
+```
+
+## Buffer pool
+
+Create a reusable pool with:
+
+```ts
+const pool =
+    createFileBufferPool();
+```
+
+or specify a physical read-buffer size:
+
+```ts
+const pool =
+    createFileBufferPool(
+        4096
+    );
+```
+
+The pool grows to the maximum number of buffers required concurrently and then reuses those buffers.
+
+Buffers are not cleared when returned to the pool. A buffer is overwritten by the next file read before its contents are exposed again.
+
+## File byte cursor
+
+Create a file cursor with:
 
 ```ts
 const cursor =
@@ -14,70 +81,70 @@ const cursor =
     );
 ```
 
-The cursor:
+The cursor fills each non-final buffer before yielding it.
 
-- opens the file using Node file APIs;
-- fills pooled byte buffers;
-- handles short reads correctly;
-- yields complete buffers for full reads;
-- yields a shorter view for the final partial read;
-- closes the file when iteration completes or is terminated early.
+This remains true even if the underlying operating-system read returns fewer bytes than requested.
 
-It does not know about:
+At EOF:
 
-- lines;
-- LF or CRLF;
-- fixed-width records;
-- CSV;
-- JSON;
-- COBOL.
+- an empty buffer is returned immediately to the pool;
+- a final partial buffer is yielded as a zero-copy view over the pooled allocation.
 
 ## Buffer ownership
 
-Yielding transfers ownership of a buffer to the consumer.
+A yielded buffer is owned by the consumer.
 
-This is important because a higher-level record reader may need to retain several buffers at once while assembling a logical record which crosses physical read boundaries.
+Advancing the byte cursor does not invalidate buffers which have already been yielded.
 
-The byte cursor therefore does **not** automatically reclaim a buffer after the consumer requests another one.
-
-The consumer must return buffers to the same pool when they are no longer required.
-
-## Buffer pool
+The consumer must eventually return each yielded buffer to the same pool:
 
 ```ts
-const pool =
-    createFileBufferPool();
+pool.release(
+    buffer
+);
 ```
 
-The pool allocates fixed-size physical file buffers and reuses released backing storage.
+This ownership model is important because a physical record may span several physical file buffers.
 
-The default buffer size is:
+For example:
 
-```ts
-FILE_BUFFER_SIZE
+```text
+buffer 1:
+    abcdefgh
+
+buffer 2:
+    ijklmnop
+
+buffer 3:
+    qrst\n
 ```
 
-The pool grows to the maximum number of buffers concurrently required and then reuses those buffers.
+A record reader must be able to retain all three buffers until the physical record has been consumed.
 
 ## Example
 
 ```ts
+import {
+    createFileBufferPool,
+    createFileByteCursor
+} from "@cobol-ts/cursor-file";
+
+
 const pool =
     createFileBufferPool();
 
-const cursor =
-    createFileByteCursor(
-        "input.dat",
-        pool
-    );
 
 for await (
     const buffer
-    of cursor
-) {
+    of createFileByteCursor(
+    "input.dat",
+    pool
+)
+    ) {
     try {
         // Consume or retain the buffer.
-    } finally {
+    }
+    finally {
         pool.release(
             buffer
         );
@@ -85,19 +152,15 @@ for await (
 }
 ```
 
-A record-oriented consumer may deliberately postpone `release()` until all records referring to the buffer have been consumed.
+Higher-level record readers normally retain buffers beyond a single loop iteration and return them only when no current or future physical record can refer to them.
 
-## Scope
+## Design goals
 
-This package represents the lowest physical I/O layer:
+The byte layer is designed for:
 
-```text
-file
-    ↓
-Uint8Array
-    ↓
-consumer
-```
-
-Record framing belongs at a higher layer.
-
+- low allocation;
+- predictable memory usage;
+- buffer reuse;
+- records larger than a physical read buffer;
+- zero-copy composition with higher layers;
+- explicit ownership.

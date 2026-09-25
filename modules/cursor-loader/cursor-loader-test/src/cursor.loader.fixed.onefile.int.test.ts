@@ -1,20 +1,10 @@
-import {
-    mkdtemp,
-    rm,
-    writeFile
-} from "node:fs/promises";
+import {mkdtemp, rm, writeFile} from "node:fs/promises";
 
-import {
-    tmpdir
-} from "node:os";
+import {tmpdir} from "node:os";
 
-import {
-    join
-} from "node:path";
+import {join} from "node:path";
 
-import {
-    isErrors
-} from "@cobol-ts/errors";
+import {isErrors} from "@cobol-ts/errors";
 
 import {
     type CursorOptions,
@@ -24,14 +14,9 @@ import {
     type PhysicalRecordContent,
     type RecordReaderMap
 } from "@cobol-ts/cursor-loader-types";
-
-import {
-    createFileBufferPool,
-    createFileCursor,
-    createFixedRecordReader,
-    createLineRecordReader
-} from "@cobol-ts/cursor-loader";
-
+import {createFileBufferPool} from "@cobol-ts/cursor-file";
+import {createFileCursor, } from "@cobol-ts/cursor-loader";
+import {createFixedRecordReader, createLineRecordReader} from "@cobol-ts/cursor-record"
 
 describe(
     "fixed-width file integration",

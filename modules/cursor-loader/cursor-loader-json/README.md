@@ -1,10 +1,26 @@
 # @cobol-ts/cursor-loader-json
 
-JSON parser implementation for `@cobol-ts/cursor-loader`.
+JSON record parsing for the `@cobol-ts` cursor stack.
 
-The package provides `JsonParser`, which converts one complete physical record into a JavaScript value using `JSON.parse()`.
+The JSON parser consumes one already-framed physical record and converts it into a JavaScript value using `JSON.parse()`.
 
-It is suitable for record-oriented JSON formats where each physical record contains one complete JSON value, such as JSON Lines when used with the line record reader.
+It is suitable for record-oriented JSON formats such as JSON Lines when combined with the line record reader from `@cobol-ts/cursor-record`.
+
+## Position in the cursor stack
+
+```text
+@cobol-ts/cursor-file
+    ↓
+@cobol-ts/cursor-record
+    ↓
+PhysicalRecordContent
+    ↓
+@cobol-ts/cursor-loader-json
+    ↓
+JavaScript representation
+    ↓
+projection
+```
 
 ## Usage
 
@@ -13,103 +29,59 @@ import {
     JsonParser
 } from "@cobol-ts/cursor-loader-json";
 
+
 const parsers = {
     json:
         new JsonParser<MyRecord>()
 };
 ```
 
-A corresponding line-file configuration might use:
-
-```ts
-{
-    type:
-        "line",
-
-    filename:
-        "records.jsonl",
-
-    parser:
-        "json",
-
-    ...
-}
-```
-
 ## Physical record handling
 
-The parser receives:
-
-```ts
-PhysicalRecordContent
-```
-
-rather than a prebuilt JavaScript string.
+The parser receives `PhysicalRecordContent`.
 
 A physical record may:
 
-- start part way through its first byte buffer;
-- span several byte buffers;
+- begin part way through its first buffer;
+- span several physical buffers;
 - end part way through its final buffer.
 
-`JsonParser` decodes exactly the bytes belonging to the record as UTF-8.
+The parser decodes exactly the bytes belonging to the current physical record.
 
-For a record contained in one buffer it uses the relevant subarray directly.
+## UTF-8 decoding
 
-For a multi-buffer record it uses streaming `TextDecoder` calls so that UTF-8 characters split across physical buffers are decoded correctly.
+A record contained within one physical buffer can be decoded directly from the relevant byte range.
+
+A record spanning multiple physical buffers is decoded incrementally.
+
+This matters because a UTF-8 character may itself cross a physical buffer boundary.
 
 ## Parsing
 
-After decoding, the implementation delegates JSON syntax to:
+After decoding, JSON syntax is delegated to:
 
 ```ts
 JSON.parse()
 ```
 
-and returns the resulting representation.
+The generic type parameter describes the parser representation at compile time.
 
-The generic parameter controls the parser's TypeScript representation type:
+It is not runtime schema validation.
 
-```ts
-interface Customer {
-    id: number;
-    name: string;
-}
+Runtime semantic validation belongs in the loader's representation-validation stage.
 
-const parser =
-    new JsonParser<Customer>();
-```
+## Physical framing
 
-This is a compile-time representation declaration; `JSON.parse()` itself does not perform runtime schema validation.
+This package does not:
 
-Application-level validation may be supplied separately through the cursor-loader configuration.
+- open files;
+- find line endings;
+- construct fixed-width records.
+
+Physical framing belongs to `@cobol-ts/cursor-record`.
 
 ## Errors
 
-JSON parsing and UTF-8 decoding exceptions are converted into the shared `Errors` representation.
+JSON syntax or decoding failures are converted into recoverable `Errors`.
 
-They are reported as JSON parse failures rather than terminating the record cursor as an operational file-system error.
-
-Filename and physical line/record context are subsequently added by `createFileCursor()`.
-
-## Responsibilities
-
-This package is responsible for:
-
-```text
-PhysicalRecordContent
-    ↓
-UTF-8 decoding
-    ↓
-JSON.parse()
-    ↓
-parser representation
-```
-
-It is not responsible for:
-
-- opening files;
-- detecting line endings;
-- fixed-width framing;
-- application projection;
-- runtime application-schema validation.
+`@cobol-ts/cursor-loader` adds filename and physical line/record context before surfacing them to the application.
