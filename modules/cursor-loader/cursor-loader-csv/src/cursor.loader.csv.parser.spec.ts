@@ -36,7 +36,7 @@ function record(
             buffer
         ],
 
-        firstBufferOffset:
+        startOffset:
             0,
 
         length:
@@ -77,7 +77,7 @@ function splitRecord(
     return {
         buffers,
 
-        firstBufferOffset:
+        startOffset:
             0,
 
         length
@@ -127,11 +127,78 @@ function offsetRecord(
             buffer
         ],
 
-        firstBufferOffset:
+        startOffset:
         prefixBytes.length,
 
         length:
         valueBytes.length
+    };
+}
+
+
+/*
+ * Create a record whose framing occupies complete earlier buffers.
+ *
+ * startOffset is therefore a logical offset across the complete supplied
+ * buffer sequence rather than an offset within buffers[0].
+ */
+function prefixedSplitRecord(
+    prefixParts: readonly string[],
+    ...recordParts: string[]
+): PhysicalRecordContent {
+
+    const prefixBuffers =
+        prefixParts.map(
+            part =>
+                encoder.encode(
+                    part
+                )
+        );
+
+    const recordBuffers =
+        recordParts.map(
+            part =>
+                encoder.encode(
+                    part
+                )
+        );
+
+
+    let startOffset =
+        0;
+
+
+    for (
+        const buffer
+        of prefixBuffers
+        ) {
+        startOffset +=
+            buffer.length;
+    }
+
+
+    let length =
+        0;
+
+
+    for (
+        const buffer
+        of recordBuffers
+        ) {
+        length +=
+            buffer.length;
+    }
+
+
+    return {
+        buffers: [
+            ...prefixBuffers,
+            ...recordBuffers
+        ],
+
+        startOffset,
+
+        length
     };
 }
 
@@ -1632,6 +1699,173 @@ test(
         ).toBe(
             "Fred"
         );
+
+        expect(
+            row.float(
+                2
+            )
+        ).toBe(
+            19.95
+        );
+    }
+);
+
+
+test(
+    "parses a record beginning after a complete framing buffer",
+    () => {
+
+        const prepared =
+            prepare(
+                standardDetails,
+                record(
+                    "id,name,balance"
+                )
+            );
+
+
+        const row =
+            parse(
+                prepared,
+                prefixedSplitRecord(
+                    [
+                        "PREFIX"
+                    ],
+                    `123,"Fred",19.95`
+                )
+            );
+
+
+        expect(
+            row.integer(
+                0
+            )
+        ).toBe(
+            123
+        );
+
+
+        expect(
+            row.string(
+                1
+            )
+        ).toBe(
+            "Fred"
+        );
+
+
+        expect(
+            row.float(
+                2
+            )
+        ).toBe(
+            19.95
+        );
+    }
+);
+
+
+test(
+    "parses a record beginning after several complete framing buffers",
+    () => {
+
+        const prepared =
+            prepare(
+                standardDetails,
+                record(
+                    "id,name,balance"
+                )
+            );
+
+
+        const row =
+            parse(
+                prepared,
+                prefixedSplitRecord(
+                    [
+                        "PR",
+                        "EF",
+                        "IX"
+                    ],
+                    `123,"Fred",19.95`
+                )
+            );
+
+
+        expect(
+            row.integer(
+                0
+            )
+        ).toBe(
+            123
+        );
+
+
+        expect(
+            row.string(
+                1
+            )
+        ).toBe(
+            "Fred"
+        );
+
+
+        expect(
+            row.float(
+                2
+            )
+        ).toBe(
+            19.95
+        );
+    }
+);
+
+
+test(
+    "record may begin after framing buffers and span several data buffers",
+    () => {
+
+        const prepared =
+            prepare(
+                standardDetails,
+                record(
+                    "id,name,balance"
+                )
+            );
+
+
+        const row =
+            parse(
+                prepared,
+                prefixedSplitRecord(
+                    [
+                        "PR",
+                        "EFIX"
+                    ],
+                    "123,Fre",
+                    "d Smi",
+                    "th,19.95"
+                )
+            );
+
+
+        expect(
+            row.integer(
+                0
+            )
+        ).toBe(
+            123
+        );
+
+
+        expect(
+            row.string(
+                1
+            )
+        ).toBe(
+            "Fred Smith"
+        );
+
 
         expect(
             row.float(

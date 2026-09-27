@@ -34,6 +34,8 @@ import {
     minimalCustomerConfig,
     type MinimalCustomer
 } from "./cursor.loader.fixture";
+import {createLineRecordReader} from "@cobol-ts/cursor-record/src/cursor.record";
+import {createFileBufferPool} from "@cobol-ts/cursor-file";
 
 
 const encoder =
@@ -99,7 +101,7 @@ const recordReaders:
                         bytes
                     ],
 
-                    firstBufferOffset:
+                    startOffset:
                         0,
 
                     length:
@@ -428,6 +430,8 @@ test(
         ]);
     }
 );
+
+
 /**
  * Rich comma-separated fixture
  *
@@ -1260,5 +1264,181 @@ test(
         ).toEqual([
             'test.comma.bad-header.csv: line 1: CSV header is missing required columns: "addressLine2", "postcode", "balance". Actual header columns are: "id", "name", "age", "addressLine1", "status".'
         ]);
+    }
+);
+test(
+    "loads CSV through the complete production cursor stack",
+    async () => {
+
+        const productionRecordReaders:
+            RecordReaderMap = {
+
+            line:
+                createLineRecordReader(
+                    undefined,
+                    {
+                        bufferPool:
+                            createFileBufferPool(
+                                7
+                            )
+                    }
+                ),
+
+            fixed:
+                async function* () {
+
+                    throw new Error(
+                        "fixed reader should not be used"
+                    );
+                },
+
+            "length-prefixed":
+                async function* () {
+
+                    throw new Error(
+                        "length-prefixed reader should not be used"
+                    );
+                }
+        };
+
+
+        const productionOptions:
+            CursorOptions<
+                typeof parsers,
+                number
+            > = {
+
+            parsers,
+
+            recordReaders:
+            productionRecordReaders,
+
+            compareEntityId: (
+                left,
+                right
+            ) =>
+                left - right
+        };
+
+
+        const customers:
+            Customer[] =
+            [];
+
+
+        const cursor =
+            createFileCursor(
+                allCustomerConfig.customer,
+                productionOptions
+            );
+
+
+        for await (
+            const result
+            of cursor
+            ) {
+            if (
+                isErrors(
+                    result
+                )
+            ) {
+                throw new Error(
+                    result.errors.join(
+                        "; "
+                    )
+                );
+            }
+
+
+            customers.push(
+                result
+            );
+        }
+
+
+        expect(
+            customers
+        ).toHaveLength(
+            3
+        );
+
+
+        expect(
+            customers[
+                0
+                ]
+        ).toEqual({
+            id:
+                1001,
+
+            name:
+                "Alice Smith",
+
+            age:
+                42,
+
+            address: {
+                line1:
+                    "12 High Street",
+
+                line2:
+                    "Flat 2, Rear",
+
+                postcode:
+                    "SW1A 1AA"
+            },
+
+            status:
+                "A".charCodeAt(
+                    0
+                ),
+
+            balance:
+                1234.56
+        });
+
+
+        expect(
+            customers[
+                1
+                ].id
+        ).toBe(
+            1002
+        );
+
+
+        expect(
+            customers[
+                2
+                ]
+        ).toEqual({
+            id:
+                1003,
+
+            name:
+                "Carol Brown",
+
+            age:
+                29,
+
+            address: {
+                line1:
+                    "The Old Mill",
+
+                line2:
+                    "Riverside, East Wing",
+
+                postcode:
+                    "BS1 5TY"
+            },
+
+            status:
+                "A".charCodeAt(
+                    0
+                ),
+
+            balance:
+                0
+        });
     }
 );

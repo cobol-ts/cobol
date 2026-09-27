@@ -44,7 +44,7 @@ export async function* createFileCursor<
             ];
 
 
-    /*
+    /**
      * RecordReaderMap is the dispatch table for physical file types.
      *
      * TypeScript does not preserve the relationship between the
@@ -86,8 +86,8 @@ export async function* createFileCursor<
      *
      * For line files this is also the one-based line number.
      *
-     * The first physical record is therefore line 1, which if the file is a csv is
-     * the CSV header.
+     * The first physical record is therefore line 1, which if the file is a
+     * CSV is the CSV header.
      */
     let recordNumber =
         0;
@@ -143,11 +143,30 @@ export async function* createFileCursor<
         if (
             !parserPrepared
         ) {
-            const prepared =
-                parser.prepare!(
-                    record,
-                    details.parserConfig
+            let prepared:
+                ReturnType<
+                    NonNullable<
+                        typeof parser.prepare
+                    >
+                >;
+
+
+            try {
+                prepared =
+                    parser.prepare!(
+                        record,
+                        details.parserConfig
+                    );
+            } catch (
+                error
+                ) {
+                throw parserException(
+                    details,
+                    recordNumber,
+                    "preparation",
+                    error
                 );
+            }
 
 
             if (
@@ -185,11 +204,28 @@ export async function* createFileCursor<
         /**
          * Parse physical record into the parser-specific representation.
          */
-        const parsed =
-            parser.parse(
-                record,
-                parserDetails
+        let parsed:
+            ReturnType<
+                typeof parser.parse
+            >;
+
+
+        try {
+            parsed =
+                parser.parse(
+                    record,
+                    parserDetails
+                );
+        } catch (
+            error
+            ) {
+            throw parserException(
+                details,
+                recordNumber,
+                "parse",
+                error
             );
+        }
 
 
         if (
@@ -269,6 +305,63 @@ export async function* createFileCursor<
 
 
 /**
+ * Convert an exception thrown by parser code into an exception carrying
+ * the complete physical source context.
+ *
+ * Parser-returned Errors remain recoverable values and are handled
+ * separately by withSource().
+ *
+ * A thrown exception indicates that parser execution itself failed. The
+ * original exception is retained as cause so its original stack and type
+ * remain available to diagnostics.
+ */
+function parserException(
+    details: PhysicalFileDetails & {
+        readonly parser:
+            string;
+    },
+    recordNumber: number,
+    phase:
+        "preparation"
+        | "parse",
+    error: unknown
+): Error {
+
+    const location =
+        sourceLocation(
+            details,
+            recordNumber
+        );
+
+    const action =
+        phase === "preparation"
+            ? "preparation failed"
+            : "failed";
+
+
+    return new Error(
+        `${details.filename}: ${
+            location
+        }: parser ${
+            JSON.stringify(
+                details.parser
+            )
+        } ${
+            action
+        }: ${
+            errorMessage(
+                error
+            )
+        }`,
+        {
+            cause:
+            error
+        }
+    );
+}
+
+
+/**
  * Add physical source information to a record-related error.
  *
  * For line files the physical record number is naturally a line number.
@@ -291,9 +384,10 @@ function withSource(
 ): Errors {
 
     const location =
-        details.type === "line"
-            ? `line ${recordNumber}`
-            : `record ${recordNumber}`;
+        sourceLocation(
+            details,
+            recordNumber
+        );
 
 
     return {
@@ -318,6 +412,20 @@ function withSource(
             recordNumber
         }
     };
+}
+
+
+/**
+ * Return the human-readable location of one physical record.
+ */
+function sourceLocation(
+    details: PhysicalFileDetails,
+    recordNumber: number
+): string {
+
+    return details.type === "line"
+        ? `line ${recordNumber}`
+        : `record ${recordNumber}`;
 }
 
 
@@ -349,4 +457,24 @@ function withFilename(
             filename
         }
     };
+}
+
+
+/**
+ * Convert an unknown thrown value into useful diagnostic text.
+ */
+function errorMessage(
+    error: unknown
+): string {
+
+    if (
+        error instanceof Error
+    ) {
+        return error.message;
+    }
+
+
+    return String(
+        error
+    );
 }

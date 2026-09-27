@@ -34,6 +34,67 @@ application values
 
 The types in this package define the boundaries between those layers.
 
+## Physical file types
+
+The shared physical-file union currently contains:
+
+```ts
+type PhysicalFileDetails =
+    | LineFile
+    | FixedFile
+    | LengthPrefixedFile;
+```
+
+### Line files
+
+```ts
+interface LineFile {
+    readonly type:
+        "line";
+
+    readonly filename:
+        string;
+}
+```
+
+### Fixed-width files
+
+```ts
+interface FixedFile {
+    readonly type:
+        "fixed";
+
+    readonly filename:
+        string;
+
+    readonly recordSize:
+        number;
+}
+```
+
+### Length-prefixed files
+
+```ts
+interface LengthPrefixedFile {
+    readonly type:
+        "length-prefixed";
+
+    readonly filename:
+        string;
+
+    readonly prefixSize:
+        number;
+
+    readonly recordLength: (
+        prefix: Uint8Array
+    ) => number;
+}
+```
+
+`recordLength()` returns the number of parser-visible payload bytes following the prefix.
+
+The physical interpretation of a particular prefix format belongs in configuration rather than in the shared contract.
+
 ## Physical records
 
 Physical record readers expose:
@@ -43,7 +104,7 @@ interface PhysicalRecordContent {
     readonly buffers:
         readonly Uint8Array[];
 
-    readonly firstBufferOffset:
+    readonly startOffset:
         number;
 
     readonly length:
@@ -51,11 +112,91 @@ interface PhysicalRecordContent {
 }
 ```
 
+The supplied buffers are treated as one logical contiguous byte sequence.
+
+For example:
+
+```text
+buffers[0]:
+    [prefix bytes]
+
+buffers[1]:
+    [prefix bytes][record data...]
+
+buffers[2]:
+    [...record data]
+```
+
+may describe a record with:
+
+```ts
+startOffset:
+    4
+```
+
+`startOffset` is therefore a logical offset across all supplied buffers.
+
+It is not necessarily an offset within `buffers[0]`.
+
+`length` is the number of parser-visible record bytes beginning at `startOffset`.
+
 The representation is deliberately zero-copy.
 
-The buffers are owned by the corresponding record cursor.
+## Record lifetime
 
-A physical record remains valid only until the cursor advances or closes.
+The buffers referenced by `PhysicalRecordContent` are owned by the corresponding `RecordCursor`.
+
+A yielded physical record remains valid only until the cursor advances or closes.
+
+Consumers must therefore complete:
+
+```text
+parse
+    ↓
+validation
+    ↓
+projection
+```
+
+before advancing the physical cursor.
+
+Anything which needs to retain physical bytes after that point must copy or otherwise detach them.
+
+## File byte cursors
+
+Physical byte input is represented by:
+
+```ts
+type FileByteCursor =
+    AsyncGenerator<
+        Uint8Array,
+        void,
+        unknown
+    >;
+```
+
+A byte-cursor factory has the form:
+
+```ts
+type FileByteCursorFactory = (
+    filename: string,
+    bufferPool: FileBufferPool
+) => FileByteCursor;
+```
+
+The corresponding buffer pool contract is:
+
+```ts
+interface FileBufferPool {
+    acquire(): Uint8Array;
+
+    release(
+        buffer: Uint8Array
+    ): void;
+}
+```
+
+These contracts allow the physical record layer to use the production file reader or an injected byte source in tests.
 
 ## Record readers
 
@@ -69,26 +210,83 @@ type RecordReader<
 ) => RecordCursor;
 ```
 
-Physical reader dispatch is represented by `RecordReaderMap`.
+A record cursor yields either:
 
-This allows `@cobol-ts/cursor-loader` to depend on an injected physical reader rather than a hard-coded implementation.
+```ts
+PhysicalRecordContent
+```
+
+or recoverable physical validation errors.
+
+Physical reader dispatch is represented by:
+
+```ts
+type RecordReaderMap = {
+    [TDetails in PhysicalFileDetails as TDetails["type"]]:
+    RecordReader<TDetails>;
+};
+```
+
+This allows `@cobol-ts/cursor-loader` to dispatch by physical file type without depending on a hard-coded implementation.
 
 ## Record boundary detectors
 
-`RecordBoundaryDetector` describes how a physical record boundary is located across a sequence of retained byte buffers.
+`RecordBoundaryDetector` describes how physical framing maps onto parser-visible record data.
 
-Its important offsets are:
+All offsets are logical offsets across the supplied buffers as though those buffers had been concatenated.
+
+The important positions are:
 
 ```text
-recordStart
-    first byte of the current record
+frameStart
+    first byte of the current physical frame,
+    including any prefix framing
 
 searchStart
     first byte not already examined while searching
-    for the boundary of the current record
+    for the end of the current frame
+
+recordStart
+    first parser-visible record-data byte
+
+recordEnd
+    inclusive final parser-visible record-data byte
+
+nextRecordStart
+    first byte of the following physical frame
 ```
 
-This allows searching detectors to avoid rescanning old bytes when a physical record spans multiple buffers.
+For a fixed-width file:
+
+```text
+[record data][next record]
+ ^           ^
+ |           nextRecordStart
+ frameStart
+ recordStart
+```
+
+For a line file:
+
+```text
+[record data][CR][LF][next record]
+ ^                     ^
+ |                     nextRecordStart
+ frameStart
+ recordStart
+```
+
+For a length-prefixed file:
+
+```text
+[prefix][record data][next prefix]
+ ^       ^            ^
+ |       |            nextRecordStart
+ |       recordStart
+ frameStart
+```
+
+Searching detectors can use `searchStart` to avoid rescanning bytes already examined when a record spans multiple physical read buffers.
 
 ## Parsers
 
@@ -149,6 +347,8 @@ cursor-loader
     source filename and line/record context
 ```
 
+Recoverable data problems are returned or yielded as validation errors.
+
 Operational failures and programming errors throw.
 
 ## Design intent
@@ -171,3 +371,5 @@ cursor-loader
 application
     receives detached application values
 ```
+
+The important invariant is that physical storage remains low-allocation and zero-copy while public application values do not depend on cursor-owned buffers.

@@ -1232,7 +1232,7 @@ function physicalRecord(
             bytes
         ],
 
-        firstBufferOffset:
+        startOffset:
             0,
 
         length:

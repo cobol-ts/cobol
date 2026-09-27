@@ -30,7 +30,7 @@ function bytes(
             content
         ],
 
-        firstBufferOffset:
+        startOffset:
             0,
 
         length:
@@ -247,6 +247,7 @@ test(
             false
         );
 
+
         expect(
             result
         ).toBeNull();
@@ -255,12 +256,13 @@ test(
 
 
 test(
-    "parses a record beginning part way through the first buffer",
+    "parses a record beginning part way through one buffer",
     () => {
         const parser =
             new JsonParser<{
                 id: number;
             }>();
+
 
         const prefix =
             encoder.encode(
@@ -276,6 +278,7 @@ test(
             encoder.encode(
                 ":ignored"
             );
+
 
         const buffer =
             new Uint8Array(
@@ -309,11 +312,62 @@ test(
                 buffer
             ],
 
-            firstBufferOffset:
+            startOffset:
             prefix.length,
 
             length:
             json.length
+        };
+
+
+        const result =
+            parser.parse(
+                record
+            );
+
+
+        expect(
+            result
+        ).toEqual({
+            id: 123
+        });
+    }
+);
+
+
+test(
+    "parses a record beginning in a later physical buffer",
+    () => {
+        const parser =
+            new JsonParser<{
+                id: number;
+            }>();
+
+
+        const first =
+            encoder.encode(
+                "prefix"
+            );
+
+        const second =
+            encoder.encode(
+                `{"id":123}`
+            );
+
+
+        const record:
+            PhysicalRecordContent = {
+
+            buffers: [
+                first,
+                second
+            ],
+
+            startOffset:
+            first.length,
+
+            length:
+            second.length
         };
 
 
@@ -341,6 +395,7 @@ test(
                 name: string;
             }>();
 
+
         const first =
             encoder.encode(
                 `xxx{"id":"123",`
@@ -366,13 +421,73 @@ test(
                 third
             ],
 
-            firstBufferOffset:
+            startOffset:
                 3,
 
             length:
             encoder.encode(
                 `{"id":"123","name":"Fred"}`
             ).length
+        };
+
+
+        const result =
+            parser.parse(
+                record
+            );
+
+
+        expect(
+            result
+        ).toEqual({
+            id: "123",
+            name: "Fred"
+        });
+    }
+);
+
+
+test(
+    "parses JSON spanning buffers when the first buffer contains only framing",
+    () => {
+        const parser =
+            new JsonParser<{
+                id: string;
+                name: string;
+            }>();
+
+
+        const framing =
+            encoder.encode(
+                "PREFIX"
+            );
+
+        const first =
+            encoder.encode(
+                `{"id":"123",`
+            );
+
+        const second =
+            encoder.encode(
+                `"name":"Fred"}`
+            );
+
+
+        const record:
+            PhysicalRecordContent = {
+
+            buffers: [
+                framing,
+                first,
+                second
+            ],
+
+            startOffset:
+            framing.length,
+
+            length:
+                first.length
+                + second.length
         };
 
 
@@ -410,7 +525,6 @@ test(
         /*
          * Split between the two bytes of the UTF-8 encoding of £.
          */
-
         const split =
             json.indexOf(
                 0xc2
@@ -438,7 +552,7 @@ test(
                 second
             ],
 
-            firstBufferOffset:
+            startOffset:
                 0,
 
             length:
@@ -502,6 +616,7 @@ test(
             1
         );
 
+
         expect(
             result.errors[0]
         ).toContain(
@@ -524,6 +639,7 @@ test(
                 0x28
             ]);
 
+
         const record:
             PhysicalRecordContent = {
 
@@ -531,7 +647,7 @@ test(
                 invalidUtf8
             ],
 
-            firstBufferOffset:
+            startOffset:
                 0,
 
             length:
@@ -570,6 +686,7 @@ test(
         ).toHaveLength(
             1
         );
+
 
         expect(
             result.errors[0]

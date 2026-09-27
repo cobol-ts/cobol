@@ -1395,6 +1395,7 @@ function lineReader(
     };
 }
 
+
 async function* emptyReader():
     RecordCursor {
 
@@ -1417,7 +1418,7 @@ function physicalRecord(
             buffer
         ],
 
-        firstBufferOffset:
+        startOffset:
             0,
 
         length:
@@ -1436,11 +1437,13 @@ function decodeRecord(
         );
 
 
-    let remaining =
-        record.length;
+    const recordEnd =
+        record.startOffset
+        + record.length;
 
-    let sourceOffset =
-        record.firstBufferOffset;
+
+    let logicalOffset =
+        0;
 
     let targetOffset =
         0;
@@ -1450,39 +1453,57 @@ function decodeRecord(
         const buffer
         of record.buffers
         ) {
-        if (
-            remaining === 0
-        ) {
-            break;
-        }
+        const bufferStart =
+            logicalOffset;
+
+        const bufferEnd =
+            logicalOffset
+            + buffer.length;
 
 
-        const length =
+        const copyStart =
+            Math.max(
+                record.startOffset,
+                bufferStart
+            );
+
+        const copyEnd =
             Math.min(
-                remaining,
-                buffer.length
-                - sourceOffset
+                recordEnd,
+                bufferEnd
             );
 
 
-        result.set(
-            buffer.subarray(
-                sourceOffset,
-                sourceOffset
-                + length
-            ),
-            targetOffset
-        );
+        if (
+            copyStart
+            < copyEnd
+        ) {
+            const sourceStart =
+                copyStart
+                - bufferStart;
+
+            const sourceEnd =
+                copyEnd
+                - bufferStart;
 
 
-        remaining -=
-            length;
+            result.set(
+                buffer.subarray(
+                    sourceStart,
+                    sourceEnd
+                ),
+                targetOffset
+            );
 
-        targetOffset +=
-            length;
 
-        sourceOffset =
-            0;
+            targetOffset +=
+                sourceEnd
+                - sourceStart;
+        }
+
+
+        logicalOffset =
+            bufferEnd;
     }
 
 
@@ -1528,3 +1549,601 @@ function compareNumber(
     return left
         - right;
 }
+test(
+    "decorates a thrown parser exception with filename line number and parser name",
+    async () => {
+
+        const parserError =
+            new Error(
+                "parser exploded"
+            );
+
+
+        const parser:
+            Parser<
+                string,
+                undefined
+            > = {
+
+            parse():
+                string {
+
+                throw parserError;
+            }
+        };
+
+
+        const parsers = {
+            text:
+            parser
+        } satisfies ParserMap;
+
+
+        const options =
+            createOptions(
+                parsers,
+                lineReader(
+                    "one"
+                )
+            );
+
+
+        const details:
+            FileDetails<
+                typeof parsers,
+                "text",
+                string,
+                number
+            > = {
+
+            type:
+                "line",
+
+            filename:
+                "test.txt",
+
+            parser:
+                "text",
+
+            cardinality:
+                "many",
+
+            project:
+                value =>
+                    value,
+
+            entityId:
+                () =>
+                    0
+        };
+
+
+        const cursor =
+            createFileCursor(
+                details,
+                options
+            );
+
+
+        await expect(
+            cursor.next()
+        ).rejects.toThrow(
+            'test.txt: line 1: parser "text" failed: parser exploded'
+        );
+    }
+);
+
+
+test(
+    "preserves the original parser exception as cause",
+    async () => {
+
+        const parserError =
+            new Error(
+                "parser exploded"
+            );
+
+
+        const parser:
+            Parser<
+                string,
+                undefined
+            > = {
+
+            parse():
+                string {
+
+                throw parserError;
+            }
+        };
+
+
+        const parsers = {
+            text:
+            parser
+        } satisfies ParserMap;
+
+
+        const options =
+            createOptions(
+                parsers,
+                lineReader(
+                    "one"
+                )
+            );
+
+
+        const details:
+            FileDetails<
+                typeof parsers,
+                "text",
+                string,
+                number
+            > = {
+
+            type:
+                "line",
+
+            filename:
+                "test.txt",
+
+            parser:
+                "text",
+
+            cardinality:
+                "many",
+
+            project:
+                value =>
+                    value,
+
+            entityId:
+                () =>
+                    0
+        };
+
+
+        const cursor =
+            createFileCursor(
+                details,
+                options
+            );
+
+
+        let thrown:
+            unknown;
+
+
+        try {
+            await cursor.next();
+        } catch (
+            error
+            ) {
+            thrown =
+                error;
+        }
+
+
+        expect(
+            thrown
+        ).toBeInstanceOf(
+            Error
+        );
+
+
+        if (
+            !(
+                thrown
+                instanceof Error
+            )
+        ) {
+            throw new Error(
+                "expected parser exception"
+            );
+        }
+
+
+        expect(
+            thrown.cause
+        ).toBe(
+            parserError
+        );
+    }
+);
+
+
+test(
+    "decorates a thrown preparation exception with filename line number and parser name",
+    async () => {
+
+        const parser:
+            Parser<
+                string,
+                undefined,
+                string
+            > = {
+
+            prepare():
+                string {
+
+                throw new Error(
+                    "preparation exploded"
+                );
+            },
+
+            parse():
+                string {
+
+                throw new Error(
+                    "parse must not be called"
+                );
+            }
+        };
+
+
+        const parsers = {
+            prepared:
+            parser
+        } satisfies ParserMap;
+
+
+        const options =
+            createOptions(
+                parsers,
+                lineReader(
+                    "header",
+                    "data"
+                )
+            );
+
+
+        const details:
+            FileDetails<
+                typeof parsers,
+                "prepared",
+                string,
+                number
+            > = {
+
+            type:
+                "line",
+
+            filename:
+                "test.csv",
+
+            parser:
+                "prepared",
+
+            parserConfig:
+            undefined,
+
+            cardinality:
+                "many",
+
+            project:
+                value =>
+                    value,
+
+            entityId:
+                () =>
+                    0
+        };
+
+
+        const cursor =
+            createFileCursor(
+                details,
+                options
+            );
+
+
+        await expect(
+            cursor.next()
+        ).rejects.toThrow(
+            'test.csv: line 1: parser "prepared" preparation failed: preparation exploded'
+        );
+    }
+);
+
+
+test(
+    "uses record rather than line when a parser throws for a fixed file",
+    async () => {
+
+        const parser:
+            Parser<
+                string,
+                undefined
+            > = {
+
+            parse():
+                string {
+
+                throw new Error(
+                    "parser exploded"
+                );
+            }
+        };
+
+
+        const parsers = {
+            text:
+            parser
+        } satisfies ParserMap;
+
+
+        const readers:
+            RecordReaderMap = {
+
+            line:
+            emptyReader,
+
+            fixed:
+                async function* () {
+
+                    yield physicalRecord(
+                        "xxxx"
+                    );
+                },
+
+            "length-prefixed":
+            emptyReader
+        };
+
+
+        const options:
+            CursorOptions<
+                typeof parsers,
+                number
+            > = {
+
+            parsers,
+
+            recordReaders:
+            readers,
+
+            compareEntityId:
+            compareNumber
+        };
+
+
+        const details:
+            FileDetails<
+                typeof parsers,
+                "text",
+                string,
+                number
+            > = {
+
+            type:
+                "fixed",
+
+            filename:
+                "test.dat",
+
+            recordSize:
+                4,
+
+            parser:
+                "text",
+
+            cardinality:
+                "many",
+
+            project:
+                value =>
+                    value,
+
+            entityId:
+                () =>
+                    0
+        };
+
+
+        const cursor =
+            createFileCursor(
+                details,
+                options
+            );
+
+
+        await expect(
+            cursor.next()
+        ).rejects.toThrow(
+            'test.dat: record 1: parser "text" failed: parser exploded'
+        );
+    }
+);
+
+
+test(
+    "does not wrap projection exceptions as parser exceptions",
+    async () => {
+
+        const parser:
+            Parser<
+                string,
+                undefined
+            > = {
+
+            parse(
+                record
+            ): string {
+
+                return decodeRecord(
+                    record
+                );
+            }
+        };
+
+
+        const parsers = {
+            text:
+            parser
+        } satisfies ParserMap;
+
+
+        const options =
+            createOptions(
+                parsers,
+                lineReader(
+                    "one"
+                )
+            );
+
+
+        const details:
+            FileDetails<
+                typeof parsers,
+                "text",
+                string,
+                number
+            > = {
+
+            type:
+                "line",
+
+            filename:
+                "test.txt",
+
+            parser:
+                "text",
+
+            cardinality:
+                "many",
+
+            project():
+                string {
+
+                throw new Error(
+                    "projection exploded"
+                );
+            },
+
+            entityId:
+                () =>
+                    0
+        };
+
+
+        const cursor =
+            createFileCursor(
+                details,
+                options
+            );
+
+
+        await expect(
+            cursor.next()
+        ).rejects.toThrow(
+            "projection exploded"
+        );
+
+
+        try {
+            await createFileCursor(
+                details,
+                options
+            ).next();
+        } catch (
+            error
+            ) {
+            expect(
+                error
+            ).toBeInstanceOf(
+                Error
+            );
+
+
+            if (
+                error
+                instanceof Error
+            ) {
+                expect(
+                    error.message
+                ).toBe(
+                    "projection exploded"
+                );
+            }
+        }
+    }
+);
+
+
+test(
+    "decorates a non-Error value thrown by the parser",
+    async () => {
+
+        const parser:
+            Parser<
+                string,
+                undefined
+            > = {
+
+            parse():
+                string {
+
+                throw "parser exploded";
+            }
+        };
+
+
+        const parsers = {
+            text:
+            parser
+        } satisfies ParserMap;
+
+
+        const options =
+            createOptions(
+                parsers,
+                lineReader(
+                    "one"
+                )
+            );
+
+
+        const details:
+            FileDetails<
+                typeof parsers,
+                "text",
+                string,
+                number
+            > = {
+
+            type:
+                "line",
+
+            filename:
+                "test.txt",
+
+            parser:
+                "text",
+
+            cardinality:
+                "many",
+
+            project:
+                value =>
+                    value,
+
+            entityId:
+                () =>
+                    0
+        };
+
+
+        const cursor =
+            createFileCursor(
+                details,
+                options
+            );
+
+
+        await expect(
+            cursor.next()
+        ).rejects.toThrow(
+            'test.txt: line 1: parser "text" failed: parser exploded'
+        );
+    }
+);

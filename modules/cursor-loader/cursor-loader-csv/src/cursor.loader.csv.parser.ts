@@ -1,10 +1,6 @@
-import {
-    type Errors
-} from "@cobol-ts/errors";
+import {type Errors} from "@cobol-ts/errors";
 
-import {
-    type PhysicalRecordContent
-} from "@cobol-ts/cursor-loader-types";
+import {type PhysicalRecordContent} from "@cobol-ts/cursor-loader-types";
 
 import {
     type CsvParser,
@@ -760,15 +756,21 @@ function scanRecord<Context>(
     let escapeOffset =
         -1;
 
-    let remaining =
-        record.length;
+
+    const recordEnd =
+        record.startOffset
+        + record.length;
+
+
+    let bufferLogicalStart =
+        0;
 
 
     for (
         let bufferIndex = 0;
         bufferIndex
         < record.buffers.length
-        && remaining > 0;
+        && logicalOffset < record.length;
         bufferIndex++
     ) {
         const buffer =
@@ -776,81 +778,220 @@ function scanRecord<Context>(
                 bufferIndex
                 ];
 
-        const bufferStart =
-            bufferIndex === 0
-                ? record.firstBufferOffset
-                : 0;
+        const bufferLogicalEnd =
+            bufferLogicalStart
+            + buffer.length;
+
+
+        const scanStart =
+            Math.max(
+                record.startOffset,
+                bufferLogicalStart
+            );
+
+        const scanEnd =
+            Math.min(
+                recordEnd,
+                bufferLogicalEnd
+            );
 
 
         if (
-            bufferStart < 0
-            || bufferStart > buffer.length
+            scanStart < scanEnd
         ) {
-            throw new Error(
-                `Physical record metadata is inconsistent: firstBufferOffset is ${
-                    record.firstBufferOffset
-                }, but the first buffer contains only ${
-                    buffer.length
-                } ${
-                    buffer.length === 1
-                        ? "byte"
-                        : "bytes"
-                }.`
-            );
-        }
+            const bufferStart =
+                scanStart
+                - bufferLogicalStart;
+
+            const bufferEnd =
+                scanEnd
+                - bufferLogicalStart;
 
 
-        const byteCount =
-            Math.min(
-                buffer.length
-                - bufferStart,
-                remaining
-            );
-
-        const bufferEnd =
-            bufferStart
-            + byteCount;
-
-
-        for (
-            let bufferOffset =
-                bufferStart;
-            bufferOffset
-            < bufferEnd;
-            bufferOffset++
-        ) {
-            const value =
-                buffer[
-                    bufferOffset
-                    ];
-
-
-            /*
-             * A quote was encountered inside a quoted field.
-             *
-             * The current byte tells us whether that quote was the first
-             * half of:
-             *
-             *     ""
-             *
-             * or whether it closed the field.
-             */
-
-            if (
-                quotePending
+            for (
+                let bufferOffset =
+                    bufferStart;
+                bufferOffset
+                < bufferEnd;
+                bufferOffset++
             ) {
+                const value =
+                    buffer[
+                        bufferOffset
+                        ];
+
+
                 /*
-                 * Doubled quote -> one literal quote.
+                 * A quote was encountered inside a quoted field.
+                 *
+                 * The current byte tells us whether that quote was the first
+                 * half of:
+                 *
+                 *     ""
+                 *
+                 * or whether it closed the field.
                  */
 
                 if (
-                    value === quoteByte
+                    quotePending
                 ) {
-                    escaped =
+                    /*
+                     * Doubled quote -> one literal quote.
+                     */
+
+                    if (
+                        value === quoteByte
+                    ) {
+                        escaped =
+                            true;
+
+                        quotePending =
+                            false;
+
+                        logicalOffset++;
+
+                        continue;
+                    }
+
+
+                    /*
+                     * The previous quote closed the field.
+                     *
+                     * At this point only a separator is legal. End of record
+                     * is handled after the scan.
+                     */
+
+                    if (
+                        value !== separatorByte
+                    ) {
+                        return syntaxError(
+                            source,
+                            physicalColumn,
+                            logicalOffset,
+                            `found ${
+                                formatByte(
+                                    value
+                                )
+                            } after the closing quote at byte ${
+                                quoteOffset
+                            }; expected separator ${
+                                formatByte(
+                                    separatorByte
+                                )
+                            } or end of record`
+                        );
+                    }
+
+
+                    field(
+                        context,
+                        physicalColumn,
+                        fieldStart,
+                        quoteOffset,
+                        escaped
+                    );
+
+
+                    physicalColumn++;
+
+                    logicalOffset++;
+
+                    fieldStart =
+                        logicalOffset;
+
+                    atFieldStart =
                         true;
+
+                    quoted =
+                        false;
+
+                    escaped =
+                        false;
 
                     quotePending =
                         false;
+
+                    openingQuoteOffset =
+                        -1;
+
+                    continue;
+                }
+
+
+                /*
+                 * Inside a quoted field.
+                 */
+
+                if (
+                    quoted
+                ) {
+                    /*
+                     * The previous byte was a distinct escape character.
+                     *
+                     * This byte is therefore data regardless of whether it
+                     * would otherwise be a quote or separator.
+                     */
+
+                    if (
+                        escapeNext
+                    ) {
+                        escapeNext =
+                            false;
+
+                        logicalOffset++;
+
+                        continue;
+                    }
+
+
+                    /*
+                     * A separate configured escape character.
+                     */
+
+                    if (
+                        escapeByte !== undefined
+                        && escapeByte !== quoteByte
+                        && value === escapeByte
+                    ) {
+                        escaped =
+                            true;
+
+                        escapeNext =
+                            true;
+
+                        escapeOffset =
+                            logicalOffset;
+
+                        logicalOffset++;
+
+                        continue;
+                    }
+
+
+                    /*
+                     * Could be either:
+                     *
+                     *     closing quote
+                     *
+                     * or:
+                     *
+                     *     first half of doubled quote
+                     */
+
+                    if (
+                        value === quoteByte
+                    ) {
+                        quotePending =
+                            true;
+
+                        quoteOffset =
+                            logicalOffset;
+
+                        logicalOffset++;
+
+                        continue;
+                    }
+
 
                     logicalOffset++;
 
@@ -859,260 +1000,112 @@ function scanRecord<Context>(
 
 
                 /*
-                 * The previous quote closed the field.
-                 *
-                 * At this point only a separator is legal. End of record
-                 * is handled after the scan.
+                 * Opening quote.
                  */
 
                 if (
-                    value !== separatorByte
+                    quoteByte !== undefined
+                    && atFieldStart
+                    && value === quoteByte
+                ) {
+                    quoted =
+                        true;
+
+                    atFieldStart =
+                        false;
+
+                    openingQuoteOffset =
+                        logicalOffset;
+
+                    logicalOffset++;
+
+                    fieldStart =
+                        logicalOffset;
+
+                    continue;
+                }
+
+
+                /*
+                 * A quote has no valid meaning once an unquoted field has
+                 * already begun.
+                 */
+
+                if (
+                    quoteByte !== undefined
+                    && value === quoteByte
                 ) {
                     return syntaxError(
                         source,
                         physicalColumn,
                         logicalOffset,
-                        `found ${
+                        `found quote ${
                             formatByte(
                                 value
                             )
-                        } after the closing quote at byte ${
-                            quoteOffset
-                        }; expected separator ${
-                            formatByte(
-                                separatorByte
-                            )
-                        } or end of record`
+                        } inside an unquoted field; a quoted field must begin with the quote as its first byte`
                     );
                 }
 
 
-                field(
-                    context,
-                    physicalColumn,
-                    fieldStart,
-                    quoteOffset,
-                    escaped
-                );
-
-
-                physicalColumn++;
-
-                logicalOffset++;
-
-                fieldStart =
-                    logicalOffset;
-
-                atFieldStart =
-                    true;
-
-                quoted =
-                    false;
-
-                escaped =
-                    false;
-
-                quotePending =
-                    false;
-
-                openingQuoteOffset =
-                    -1;
-
-                continue;
-            }
-
-
-            /*
-             * Inside a quoted field.
-             */
-
-            if (
-                quoted
-            ) {
                 /*
-                 * The previous byte was a distinct escape character.
-                 *
-                 * This byte is therefore data regardless of whether it
-                 * would otherwise be a quote or separator.
+                 * Separator terminates an unquoted field.
                  */
 
                 if (
-                    escapeNext
+                    value === separatorByte
                 ) {
-                    escapeNext =
+                    field(
+                        context,
+                        physicalColumn,
+                        fieldStart,
+                        logicalOffset,
+                        false
+                    );
+
+
+                    physicalColumn++;
+
+                    logicalOffset++;
+
+                    fieldStart =
+                        logicalOffset;
+
+                    atFieldStart =
+                        true;
+
+                    escaped =
                         false;
 
-                    logicalOffset++;
+                    openingQuoteOffset =
+                        -1;
 
                     continue;
                 }
 
-
-                /*
-                 * A separate configured escape character.
-                 */
-
-                if (
-                    escapeByte !== undefined
-                    && escapeByte !== quoteByte
-                    && value === escapeByte
-                ) {
-                    escaped =
-                        true;
-
-                    escapeNext =
-                        true;
-
-                    escapeOffset =
-                        logicalOffset;
-
-                    logicalOffset++;
-
-                    continue;
-                }
-
-
-                /*
-                 * Could be either:
-                 *
-                 *     closing quote
-                 *
-                 * or:
-                 *
-                 *     first half of doubled quote
-                 */
-
-                if (
-                    value === quoteByte
-                ) {
-                    quotePending =
-                        true;
-
-                    quoteOffset =
-                        logicalOffset;
-
-                    logicalOffset++;
-
-                    continue;
-                }
-
-
-                logicalOffset++;
-
-                continue;
-            }
-
-
-            /*
-             * Opening quote.
-             */
-
-            if (
-                quoteByte !== undefined
-                && atFieldStart
-                && value === quoteByte
-            ) {
-                quoted =
-                    true;
 
                 atFieldStart =
                     false;
 
-                openingQuoteOffset =
-                    logicalOffset;
-
                 logicalOffset++;
-
-                fieldStart =
-                    logicalOffset;
-
-                continue;
             }
-
-
-            /*
-             * A quote has no valid meaning once an unquoted field has
-             * already begun.
-             */
-
-            if (
-                quoteByte !== undefined
-                && value === quoteByte
-            ) {
-                return syntaxError(
-                    source,
-                    physicalColumn,
-                    logicalOffset,
-                    `found quote ${
-                        formatByte(
-                            value
-                        )
-                    } inside an unquoted field; a quoted field must begin with the quote as its first byte`
-                );
-            }
-
-
-            /*
-             * Separator terminates an unquoted field.
-             */
-
-            if (
-                value === separatorByte
-            ) {
-                field(
-                    context,
-                    physicalColumn,
-                    fieldStart,
-                    logicalOffset,
-                    false
-                );
-
-
-                physicalColumn++;
-
-                logicalOffset++;
-
-                fieldStart =
-                    logicalOffset;
-
-                atFieldStart =
-                    true;
-
-                escaped =
-                    false;
-
-                openingQuoteOffset =
-                    -1;
-
-                continue;
-            }
-
-
-            atFieldStart =
-                false;
-
-            logicalOffset++;
         }
 
 
-        remaining -=
-            byteCount;
+        bufferLogicalStart =
+            bufferLogicalEnd;
     }
 
 
     /*
-     * The PhysicalRecordContent contract says record.length logical bytes
-     * exist in the supplied buffers.
+     * The PhysicalRecordContent contract says record.length bytes exist
+     * beginning at record.startOffset across the supplied buffers.
      */
 
     if (
-        remaining !== 0
+        logicalOffset
+        !== record.length
     ) {
-        const available =
-            record.length
-            - remaining;
-
-
         throw new Error(
             `Physical record metadata is inconsistent: record.length declares ${
                 record.length
@@ -1121,12 +1114,14 @@ function scanRecord<Context>(
                     ? "byte"
                     : "bytes"
             }, but the supplied buffers contain only ${
-                available
-            } logical ${
-                available === 1
+                logicalOffset
+            } record ${
+                logicalOffset === 1
                     ? "byte"
                     : "bytes"
-            } from firstBufferOffset.`
+            } from startOffset ${
+                record.startOffset
+            }.`
         );
     }
 
@@ -2276,8 +2271,13 @@ function locatePosition(
     }
 
 
-    let remaining =
-        logicalOffset;
+    const absoluteOffset =
+        record.startOffset
+        + logicalOffset;
+
+
+    let bufferStart =
+        0;
 
 
     for (
@@ -2291,39 +2291,35 @@ function locatePosition(
                 bufferIndex
                 ];
 
-        const start =
-            bufferIndex === 0
-                ? record.firstBufferOffset
-                : 0;
-
-        const available =
-            buffer.length
-            - start;
+        const bufferEnd =
+            bufferStart
+            + buffer.length;
 
 
         if (
-            remaining < available
+            absoluteOffset
+            < bufferEnd
         ) {
             return {
                 bufferIndex,
 
                 bufferOffset:
-                    start
-                    + remaining
+                    absoluteOffset
+                    - bufferStart
             };
         }
 
 
-        remaining -=
-            available;
+        bufferStart =
+            bufferEnd;
     }
 
 
     throw new Error(
         `Physical record metadata is inconsistent: logical byte ${
             logicalOffset
-        } should exist within record length ${
-            record.length
+        } resolves to absolute offset ${
+            absoluteOffset
         }, but the supplied buffers do not contain it.`
     );
 }

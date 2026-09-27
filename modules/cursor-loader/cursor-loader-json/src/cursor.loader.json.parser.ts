@@ -35,13 +35,16 @@ export class JsonParser<
 }
 
 
-/*
+/**
  * Decode the logical bytes of a physical record as UTF-8.
  *
- * The record may begin part way through its first buffer and may span
- * several buffers.
+ * startOffset is a logical offset across all supplied buffers.
+ *
+ * The record may begin in any buffer and may span several buffers.
+ *
+ * TextDecoder is used in streaming mode so that a multi-byte UTF-8
+ * character may itself span physical buffers.
  */
-
 function decodeRecord(
     record: PhysicalRecordContent
 ): string {
@@ -50,76 +53,77 @@ function decodeRecord(
         new TextDecoder(
             "utf-8",
             {
-                fatal: true
+                fatal:
+                    true
             }
         );
 
 
-    /*
-     * Common case: the complete record is in one buffer.
-     */
-
-    if (
-        record.buffers.length === 1
-    ) {
-        return decoder.decode(
-            record.buffers[0].subarray(
-                record.firstBufferOffset,
-                record.firstBufferOffset
-                + record.length
-            )
-        );
-    }
+    const recordEnd =
+        record.startOffset
+        + record.length;
 
 
-    let remaining =
-        record.length;
+    let logicalOffset =
+        0;
 
     let result =
         "";
 
 
     for (
-        let index = 0;
-        index < record.buffers.length;
-        index++
-    ) {
-        const buffer =
-            record.buffers[index];
+        const buffer
+        of record.buffers
+        ) {
+        const bufferStart =
+            logicalOffset;
 
-        const start =
-            index === 0
-                ? record.firstBufferOffset
-                : 0;
+        const bufferEnd =
+            logicalOffset
+            + buffer.length;
 
-        const available =
-            buffer.length - start;
 
-        const length =
+        const decodeStart =
+            Math.max(
+                record.startOffset,
+                bufferStart
+            );
+
+        const decodeEnd =
             Math.min(
-                available,
-                remaining
+                recordEnd,
+                bufferEnd
             );
 
 
-        result += decoder.decode(
-            buffer.subarray(
-                start,
-                start + length
-            ),
-            {
-                stream:
-                    true
-            }
-        );
+        if (
+            decodeStart
+            < decodeEnd
+        ) {
+            result +=
+                decoder.decode(
+                    buffer.subarray(
+                        decodeStart
+                        - bufferStart,
+
+                        decodeEnd
+                        - bufferStart
+                    ),
+                    {
+                        stream:
+                            true
+                    }
+                );
+        }
 
 
-        remaining -=
-            length;
+        logicalOffset =
+            bufferEnd;
 
 
         if (
-            remaining === 0
+            logicalOffset
+            >= recordEnd
         ) {
             break;
         }

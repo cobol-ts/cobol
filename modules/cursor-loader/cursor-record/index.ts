@@ -1,2 +1,3 @@
-export * from './src/cursor.record.physical.detectors'
-export * from './src/cursor.record.physical.record'
+export * from './src/cursor.fixed.detector'
+export * from './src/cursor.newline.detector'
+export * from './src/cursor.record'

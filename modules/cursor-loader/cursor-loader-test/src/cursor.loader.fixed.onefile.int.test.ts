@@ -1,10 +1,20 @@
-import {mkdtemp, rm, writeFile} from "node:fs/promises";
+import {
+    mkdtemp,
+    rm,
+    writeFile
+} from "node:fs/promises";
 
-import {tmpdir} from "node:os";
+import {
+    tmpdir
+} from "node:os";
 
-import {join} from "node:path";
+import {
+    join
+} from "node:path";
 
-import {isErrors} from "@cobol-ts/errors";
+import {
+    isErrors
+} from "@cobol-ts/errors";
 
 import {
     type CursorOptions,
@@ -14,9 +24,20 @@ import {
     type PhysicalRecordContent,
     type RecordReaderMap
 } from "@cobol-ts/cursor-loader-types";
-import {createFileBufferPool} from "@cobol-ts/cursor-file";
-import {createFileCursor, } from "@cobol-ts/cursor-loader";
-import {createFixedRecordReader, createLineRecordReader} from "@cobol-ts/cursor-record"
+
+import {
+    createFileBufferPool
+} from "@cobol-ts/cursor-file";
+
+import {
+    createFileCursor
+} from "@cobol-ts/cursor-loader";
+
+import {
+    createFixedRecordReader,
+    createLineRecordReader
+} from "@cobol-ts/cursor-record";
+
 
 describe(
     "fixed-width file integration",
@@ -455,9 +476,12 @@ describe(
                 fixed:
                     createFixedRecordReader(
                         undefined,
-                        createFileBufferPool(
-                            bufferSize
-                        )
+                        {
+                            bufferPool:
+                                createFileBufferPool(
+                                    bufferSize
+                                )
+                        }
                     ),
 
                 "length-prefixed":
@@ -532,17 +556,79 @@ function decodeRecord(
     record: PhysicalRecordContent
 ): string {
 
+    if (
+        !Number.isInteger(
+            record.startOffset
+        )
+        || record.startOffset < 0
+    ) {
+        throw new Error(
+            "Physical record metadata is invalid: "
+            + `startOffset is ${record.startOffset}; `
+            + "expected a non-negative integer"
+        );
+    }
+
+
+    if (
+        !Number.isInteger(
+            record.length
+        )
+        || record.length < 0
+    ) {
+        throw new Error(
+            "Physical record metadata is invalid: "
+            + `length is ${record.length}; `
+            + "expected a non-negative integer"
+        );
+    }
+
+
+    let totalLength =
+        0;
+
+
+    for (
+        const buffer
+        of record.buffers
+        ) {
+        totalLength +=
+            buffer.length;
+    }
+
+
+    const recordEnd =
+        record.startOffset
+        + record.length;
+
+
+    if (
+        recordEnd
+        > totalLength
+    ) {
+        throw new Error(
+            "Physical record metadata is inconsistent: "
+            + `startOffset is ${record.startOffset}, `
+            + `length is ${record.length}, `
+            + `so the record requires logical bytes [${
+                record.startOffset
+            }, ${
+                recordEnd
+            }), but the supplied buffers contain only ${
+                totalLength
+            } bytes`
+        );
+    }
+
+
     const result =
         new Uint8Array(
             record.length
         );
 
 
-    let remaining =
-        record.length;
-
-    let sourceOffset =
-        record.firstBufferOffset;
+    let logicalOffset =
+        0;
 
     let targetOffset =
         0;
@@ -552,49 +638,75 @@ function decodeRecord(
         const buffer
         of record.buffers
         ) {
-        if (
-            remaining === 0
-        ) {
-            break;
-        }
+        const bufferStart =
+            logicalOffset;
+
+        const bufferEnd =
+            logicalOffset
+            + buffer.length;
 
 
-        const length =
+        const copyStart =
+            Math.max(
+                record.startOffset,
+                bufferStart
+            );
+
+        const copyEnd =
             Math.min(
-                remaining,
-                buffer.length
-                - sourceOffset
+                recordEnd,
+                bufferEnd
             );
 
 
-        result.set(
-            buffer.subarray(
-                sourceOffset,
-                sourceOffset
-                + length
-            ),
-            targetOffset
-        );
+        if (
+            copyStart
+            < copyEnd
+        ) {
+            const sourceStart =
+                copyStart
+                - bufferStart;
+
+            const sourceEnd =
+                copyEnd
+                - bufferStart;
 
 
-        remaining -=
-            length;
+            result.set(
+                buffer.subarray(
+                    sourceStart,
+                    sourceEnd
+                ),
+                targetOffset
+            );
 
-        targetOffset +=
-            length;
 
-        sourceOffset =
-            0;
+            targetOffset +=
+                sourceEnd
+                - sourceStart;
+        }
+
+
+        logicalOffset =
+            bufferEnd;
+
+
+        if (
+            logicalOffset
+            >= recordEnd
+        ) {
+            break;
+        }
     }
 
 
     if (
-        remaining !== 0
+        targetOffset
+        !== record.length
     ) {
         throw new Error(
-            `Physical record exposes ${
-                record.length - remaining
-            } bytes but declares length ${
+            "Physical record metadata is inconsistent: "
+            + `decoded ${targetOffset} bytes but record.length declares ${
                 record.length
             }`
         );

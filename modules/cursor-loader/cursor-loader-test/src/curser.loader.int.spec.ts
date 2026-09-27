@@ -21,17 +21,19 @@ import {
     type RecordReaderMap
 } from "@cobol-ts/cursor-loader-types";
 
-
-
-
-
 import {
     createFileCursor
 } from "@cobol-ts/cursor-loader/src/cursor.loader.file.cursor";
-import {createFileBufferPool} from "@cobol-ts/cursor-file";
+
+import {
+    createFileBufferPool
+} from "@cobol-ts/cursor-file";
+
 import {
     createFixedRecordReader,
-    createFixedWidthRecordBoundaryDetector, createLineRecordReader, newlineRecordBoundaryDetector
+    createFixedWidthRecordBoundaryDetector,
+    createLineRecordReader,
+    newlineRecordBoundaryDetector
 } from "@cobol-ts/cursor-record";
 
 
@@ -624,9 +626,12 @@ describe(
             const lineReader =
                 createLineRecordReader(
                     newlineRecordBoundaryDetector,
-                    createFileBufferPool(
-                        bufferSize
-                    )
+                    {
+                        bufferPool:
+                            createFileBufferPool(
+                                bufferSize
+                            )
+                    }
                 );
 
 
@@ -756,9 +761,12 @@ describe(
                     createFixedWidthRecordBoundaryDetector(
                         recordSize
                     ),
-                    createFileBufferPool(
-                        bufferSize
-                    )
+                    {
+                        bufferPool:
+                            createFileBufferPool(
+                                bufferSize
+                            )
+                    }
                 );
 
 
@@ -907,11 +915,13 @@ function decodeRecord(
         );
 
 
-    let remaining =
-        record.length;
+    const recordEnd =
+        record.startOffset
+        + record.length;
 
-    let sourceOffset =
-        record.firstBufferOffset;
+
+    let logicalOffset =
+        0;
 
     let targetOffset =
         0;
@@ -921,48 +931,75 @@ function decodeRecord(
         const buffer
         of record.buffers
         ) {
-        if (
-            remaining === 0
-        ) {
-            break;
-        }
+        const bufferStart =
+            logicalOffset;
+
+        const bufferEnd =
+            logicalOffset
+            + buffer.length;
 
 
-        const length =
+        const copyStart =
+            Math.max(
+                record.startOffset,
+                bufferStart
+            );
+
+        const copyEnd =
             Math.min(
-                remaining,
-                buffer.length
-                - sourceOffset
+                recordEnd,
+                bufferEnd
             );
 
 
-        result.set(
-            buffer.subarray(
-                sourceOffset,
-                sourceOffset
-                + length
-            ),
-            targetOffset
-        );
+        if (
+            copyStart
+            < copyEnd
+        ) {
+            const sourceStart =
+                copyStart
+                - bufferStart;
+
+            const sourceEnd =
+                copyEnd
+                - bufferStart;
 
 
-        remaining -=
-            length;
+            result.set(
+                buffer.subarray(
+                    sourceStart,
+                    sourceEnd
+                ),
+                targetOffset
+            );
 
-        targetOffset +=
-            length;
 
-        sourceOffset =
-            0;
+            targetOffset +=
+                sourceEnd
+                - sourceStart;
+        }
+
+
+        logicalOffset =
+            bufferEnd;
+
+
+        if (
+            logicalOffset
+            >= recordEnd
+        ) {
+            break;
+        }
     }
 
 
     if (
-        remaining !== 0
+        targetOffset
+        !== record.length
     ) {
         throw new Error(
             `Physical record exposes ${
-                record.length - remaining
+                targetOffset
             } bytes but declares length ${
                 record.length
             }`

@@ -3,7 +3,7 @@ import {
 } from "node:fs/promises";
 
 import {
-    type FileLineBufferPool
+    type FileBufferPool
 } from "@cobol-ts/cursor-loader-types";
 
 
@@ -28,7 +28,7 @@ export type FileByteCursor =
  */
 export function createFileBufferPool(
     bufferSize: number = FILE_BUFFER_SIZE
-): FileLineBufferPool {
+): FileBufferPool {
 
     if (
         !Number.isInteger(
@@ -99,7 +99,7 @@ export function createFileBufferPool(
 export async function* createFileByteCursor(
     filename: string,
     bufferPool:
-    FileLineBufferPool
+    FileBufferPool
 ): FileByteCursor {
 
     const file =

@@ -85,12 +85,12 @@ export const NO_VALIDATION_ERRORS =
  *
  * The record may span one or more byte buffers.
  *
- * firstBufferOffset is the offset of the first record byte within the
+ * startOffset is the offset of the first record byte within the
  * first buffer.
  *
  * length is the total number of record bytes across all buffers.
  *
- * Buffers are densely packed after firstBufferOffset. Every intermediate
+ * Buffers are densely packed after startOffset. Every intermediate
  * buffer is used to its end; length determines where the record ends in
  * the final buffer.
  *
@@ -98,19 +98,24 @@ export const NO_VALIDATION_ERRORS =
  *
  * The content remains valid until the cursor is advanced or closed.
  */
-
 export interface PhysicalRecordContent {
+
     readonly buffers:
         readonly Uint8Array[];
 
-    readonly firstBufferOffset:
+    /**
+     * Logical offset of the first parser-visible record byte across `buffers`,
+     * treating the supplied buffers as one contiguous byte sequence.
+     *
+     * This is not necessarily an offset within `buffers[0]`: framing bytes may
+     * occupy part or all of one or more earlier buffers.
+     */
+    readonly startOffset:
         number;
 
     readonly length:
         number;
 }
-
-
 /*
  * Record readers
  *
@@ -177,14 +182,27 @@ export type RecordReaderMap = {
     [TDetails in PhysicalFileDetails as TDetails["type"]]:
     RecordReader<TDetails>;
 };
-
 /**
  * Describes how physical record boundaries are located within a sequence
  * of byte buffers.
  *
- * All offsets used by this interface are logical offsets across the
- * supplied buffers, as though the buffers had been concatenated into one
- * continuous byte sequence.
+ * The supplied buffers are treated as one logical contiguous byte sequence.
+ * All offsets passed to or returned from this interface are offsets into
+ * that logical sequence, not offsets into an individual Uint8Array.
+ *
+ * A physical record may contain framing bytes which are not part of the
+ * data presented to the parser.
+ *
+ * For example:
+ *
+ *     fixed:
+ *         [record data]
+ *
+ *     line:
+ *         [record data][CR][LF]
+ *
+ *     length-prefixed:
+ *         [prefix][record data]
  *
  * No method may modify the supplied buffers.
  *
@@ -194,182 +212,138 @@ export type RecordReaderMap = {
 export interface RecordBoundaryDetector {
 
     /**
-     * Find the first byte of the record following the current record.
+     * Find the logical offset at which the next physical record starts.
      *
      * @param buffers
      * The currently available physical byte buffers.
      *
-     * Logical offset 0 refers to buffers[0][0]. Offsets then continue
-     * through each subsequent buffer.
-     *
-     * @param recordStart
-     * The logical offset of the first byte of the current record.
-     *
-     * This remains unchanged while additional physical buffers are acquired
-     * for the current record.
+     * @param frameStart
+     * The logical offset of the first byte of the current physical record,
+     * including any prefix framing.
      *
      * @param searchStart
      * The logical offset of the first byte which has not already been
-     * examined while locating the boundary of the current record.
+     * examined while locating the end of the current physical record.
      *
-     * searchStart is always greater than or equal to recordStart.
+     * When this method returns -1, the caller may append more buffers and
+     * call it again with searchStart advanced past bytes already examined.
      *
-     * When nextRecordStart() returns -1, the caller may later invoke it
-     * again after adding more buffers. The caller will then advance
-     * searchStart so that bytes already examined need not be searched again.
+     * Detectors which search for a terminator should therefore begin at
+     * searchStart rather than frameStart.
      *
-     * A detector which searches for a terminator should therefore begin its
-     * search at searchStart rather than recordStart.
-     *
-     * A detector which does not search, such as a fixed-width detector, may
-     * ignore searchStart and calculate its boundary directly from
-     * recordStart.
+     * Detectors which can calculate the boundary directly, such as
+     * fixed-width or length-prefixed detectors, may ignore searchStart.
      *
      * @returns
-     * The logical offset of the first byte of the next record.
+     * The logical offset of the first byte of the next physical record.
      *
-     * Return -1 when the complete boundary between the current record and
-     * the next record is not yet present in buffers.
-     *
-     * The number of physical bytes consumed by the current record,
-     * including any framing bytes, is:
-     *
-     *     nextRecordStart - recordStart
+     * Returns -1 when the currently supplied buffers do not yet contain a
+     * complete current record.
      *
      * Examples:
      *
-     * Fixed-width record of four bytes:
+     * Fixed-width:
      *
-     *     a b c d W X Y Z
-     *     0 1 2 3 4 5 6 7
+     *     [a b c d][W X Y Z]
+     *      ^        ^
+     *      |        nextRecordStart
+     *      frameStart
      *
-     *     recordStart     = 0
-     *     nextRecordStart = 4
+     * Line-oriented:
      *
-     * LF-terminated record:
+     *     [a b c][CR][LF][W X Y Z]
+     *      ^             ^
+     *      |             nextRecordStart
+     *      frameStart
      *
-     *     a b c \n W X Y Z
-     *     0 1 2  3 4 5 6 7
+     * Length-prefixed:
      *
-     *     recordStart     = 0
-     *     nextRecordStart = 4
-     *
-     * CRLF-terminated record:
-     *
-     *     a b c \r \n W X Y Z
-     *     0 1 2  3  4 5 6 7 8
-     *
-     *     recordStart     = 0
-     *     nextRecordStart = 5
-     *
-     * A record terminator may span physical buffers. For example:
-     *
-     *     buffers[0] = "abc\r"
-     *     buffers[1] = "\nXYZ"
-     *
-     * is logically equivalent to:
-     *
-     *     "abc\r\nXYZ"
-     *
-     * and nextRecordStart must still return 5.
-     *
-     * Incremental searching may proceed without rescanning previously
-     * examined bytes. For example, after searching:
-     *
-     *     buffers[0] = "abc\r"
-     *
-     * without finding LF:
-     *
-     *     recordStart = 0
-     *     searchStart = 0
-     *
-     * the caller may append:
-     *
-     *     buffers[1] = "\nXYZ"
-     *
-     * and invoke the detector again with:
-     *
-     *     recordStart = 0
-     *     searchStart = 4
-     *
-     * The detector then needs to search only the newly available bytes.
+     *     [prefix][a b c d][next prefix]
+     *      ^              ^
+     *      |              nextRecordStart
+     *      frameStart
      */
     nextRecordStart(
         buffers: readonly Uint8Array[],
-        recordStart: number,
+        frameStart: number,
         searchStart: number
     ): number;
 
 
     /**
-     * Find the logical offset of the final data byte belonging to the
-     * current record.
+     * Find the logical offset of the first byte of record data.
+     *
+     * `frameStart` identifies the beginning of the physical record,
+     * including any prefix framing.
+     *
+     * For fixed-width and line-oriented records there is no prefix, so the
+     * record starts at frameStart:
+     *
+     *     [record data]
+     *      ^
+     *
+     *     [record data][LF]
+     *      ^
+     *
+     * For a length-prefixed record the prefix is framing and is excluded
+     * from the data presented to the parser:
+     *
+     *     [prefix][record data]
+     *             ^
+     *
+     * The returned offset must be greater than or equal to frameStart.
+     */
+    recordStart(
+        frameStart: number
+    ): number;
+
+
+    /**
+     * Find the logical offset of the final byte of record data.
      *
      * This method is called only after nextRecordStart() has successfully
-     * returned the start of the following record.
+     * returned the beginning of the following physical record.
      *
      * @param buffers
-     * The same logical byte sequence used to locate the record boundary.
+     * The logical byte sequence containing the complete current record.
      *
      * @param nextRecordStart
      * The logical offset previously returned by nextRecordStart().
      *
      * @returns
-     * The logical offset of the final byte which belongs to the current
-     * record's data.
+     * The logical offset of the final byte belonging to the current record's
+     * data.
      *
-     * Physical framing bytes, such as LF or CRLF, are not part of the
-     * record data and must therefore be excluded.
+     * Any suffix framing bytes are excluded.
      *
-     * Examples:
+     * Fixed-width:
      *
-     * Fixed-width record of four bytes:
+     *     [record data][next record]
+     *                 ^
+     *                 nextRecordStart
      *
-     *     a b c d W X Y Z
-     *     0 1 2 3 4 5 6 7
+     *     recordEnd = nextRecordStart - 1
      *
-     *     nextRecordStart = 4
-     *     recordEnd       = 3
+     * Line-oriented:
      *
-     * LF-terminated record:
+     *     [record data][CR][LF][next record]
+     *                         ^
+     *                         nextRecordStart
      *
-     *     a b c \n W X Y Z
-     *     0 1 2  3 4 5 6 7
+     *     recordEnd is the byte immediately before CR.
      *
-     *     nextRecordStart = 4
-     *     recordEnd       = 2
+     * Length-prefixed:
      *
-     * CRLF-terminated record:
+     *     [prefix][record data][next prefix]
+     *                          ^
+     *                          nextRecordStart
      *
-     *     a b c \r \n W X Y Z
-     *     0 1 2  3  4 5 6 7 8
+     *     recordEnd = nextRecordStart - 1
      *
-     *     nextRecordStart = 5
-     *     recordEnd       = 2
+     * The result is inclusive.
      *
-     * Empty records are valid.
-     *
-     * For an empty LF-terminated record:
-     *
-     *     \n
-     *     0
-     *
-     *     recordStart     = 0
-     *     nextRecordStart = 1
-     *     recordEnd       = -1
-     *
-     * Therefore recordEnd may legitimately be one less than the first
-     * byte of the current record.
-     *
-     * Record length is consequently calculated as:
-     *
-     *     recordEnd - recordStart + 1
-     *
-     * which correctly produces zero for an empty record.
-     *
-     * This method must not search for a later record boundary. Its purpose
-     * is only to translate the already-known next-record boundary into the
-     * inclusive end of the current record's data.
+     * An empty record is valid where the framing format permits it. In that
+     * case recordEnd may be one less than recordStart().
      */
     recordEnd(
         buffers: readonly Uint8Array[],
@@ -377,6 +351,7 @@ export interface RecordBoundaryDetector {
     ): number;
 }
 
+export const nullRecordStart = (frameStart: number)=> frameStart;
 /*
  * Parser
  *
@@ -776,9 +751,39 @@ export type EntityCursorBlock<
     EntityCursor<TConfig>
 ) => Promise<R>;
 
+/*
+ * Physical file byte cursor
+ *
+ * A byte cursor yields physical file buffers.
+ *
+ * Ownership of each yielded buffer transfers to the consumer. The consumer
+ * must eventually return it to the FileBufferPool supplied when the
+ * cursor was created.
+ */
+
+export type FileByteCursor =
+    AsyncGenerator<
+        Uint8Array,
+        void,
+        unknown
+    >;
+
 
 /*
- * File-line byte buffer pool
+ * Physical file byte cursor factory
+ *
+ * Creates a byte cursor for one physical file using the supplied buffer pool.
+ *
+ * This contract allows higher physical layers, such as record readers, to
+ * depend on byte I/O without depending directly on its implementation.
+ */
+
+export type FileByteCursorFactory = (
+    filename: string,
+    bufferPool: FileBufferPool
+) => FileByteCursor;
+/*
+ * File byte buffer pool
  *
  * End-of-line cursors use fixed-size Uint8Array buffers while reading.
  *
@@ -786,7 +791,7 @@ export type EntityCursorBlock<
  * current or future physical record can refer to them.
  */
 
-export interface FileLineBufferPool {
+export interface FileBufferPool {
     acquire():
         Uint8Array;
 
