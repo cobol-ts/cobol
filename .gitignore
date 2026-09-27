@@ -21,6 +21,8 @@ json_directory/
 
 node_modules/
 coverage/
+*.zip
+testcount/
 
 .idea/
 

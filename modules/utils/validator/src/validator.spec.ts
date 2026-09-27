@@ -1,6 +1,6 @@
 import {
     combineValidators,
-    composeOr,
+    composeOr, composeTypedOr,
     mustBeArrayOf,
     mustBeArrayOfIfPresent,
     mustBeBoolean,
@@ -9,7 +9,7 @@ import {
     mustBeNumberIfPresent,
     mustBeObjectWithFields,
     mustBeString,
-    mustBeStringIfPresent,
+    mustBeStringIfPresent, mustBeValue,
     Validator
 } from './validator';
 
@@ -308,3 +308,442 @@ describe('validation options', () => {
     });
 
 });
+describe(
+    "composeTypedOr",
+    () => {
+
+        type Value =
+            | {
+            type:
+                "string";
+
+            value:
+                string;
+        }
+            | {
+            type:
+                "number";
+
+            value:
+                number;
+        };
+
+
+        const stringValidator:
+            Validator<Value> =
+            ctx =>
+                value =>
+                    value.type === "string"
+                        ? []
+                        : [
+                            `${ctx} must be a string value`
+                        ];
+
+
+        const numberValidator:
+            Validator<Value> =
+            ctx =>
+                value =>
+                    value.type === "number"
+                        ? []
+                        : [
+                            `${ctx} must be a number value`
+                        ];
+
+
+        const validators = {
+            string:
+            stringValidator,
+
+            number:
+            numberValidator
+        };
+
+
+        test(
+            "uses the validator selected by typeFn",
+            () => {
+
+                const validator =
+                    composeTypedOr(
+                        value =>
+                            value.type,
+                        validators
+                    );
+
+
+                expect(
+                    validator(
+                        "value"
+                    )({
+                        type:
+                            "string",
+
+                        value:
+                            "hello"
+                    })
+                ).toEqual(
+                    []
+                );
+
+
+                expect(
+                    validator(
+                        "value"
+                    )({
+                        type:
+                            "number",
+
+                        value:
+                            42
+                    })
+                ).toEqual(
+                    []
+                );
+            }
+        );
+
+
+        test(
+            "returns an error when typeFn returns no type",
+            () => {
+
+                const validator =
+                    composeTypedOr(
+                        () =>
+                            undefined as any,
+                        validators
+                    );
+
+
+                expect(
+                    validator(
+                        "value"
+                    )({
+                        type:
+                            "string",
+
+                        value:
+                            "hello"
+                    })
+                ).toEqual([
+                    "value has no valid type"
+                ]);
+            }
+        );
+
+
+        test(
+            "returns an error for an illegal type",
+            () => {
+
+                const validator =
+                    composeTypedOr(
+                        () =>
+                            "illegal" as any,
+                        validators
+                    );
+
+
+                expect(
+                    validator(
+                        "value"
+                    )({
+                        type:
+                            "string",
+
+                        value:
+                            "hello"
+                    })
+                ).toEqual([
+                    "value has illegal type illegal. Legal values are: number, string"
+                ]);
+            }
+        );
+    }
+);
+
+
+describe(
+    "mustBeValue",
+    () => {
+
+        test(
+            "returns no errors when value matches",
+            () => {
+
+                const validator =
+                    mustBeValue(
+                        "expected"
+                    );
+
+
+                expect(
+                    validator(
+                        "value"
+                    )(
+                        "expected"
+                    )
+                ).toEqual(
+                    []
+                );
+            }
+        );
+
+
+        test(
+            "returns an error when value does not match",
+            () => {
+
+                const validator =
+                    mustBeValue(
+                        "expected"
+                    );
+
+
+                expect(
+                    validator(
+                        "value"
+                    )(
+                        "actual"
+                    )
+                ).toEqual([
+                    "value must be expected but was actual"
+                ]);
+            }
+        );
+
+
+        test(
+            "uses strict equality",
+            () => {
+
+                const expected = {
+                    value:
+                        1
+                };
+
+
+                const validator =
+                    mustBeValue(
+                        expected
+                    );
+
+
+                expect(
+                    validator(
+                        "value"
+                    )(
+                        expected
+                    )
+                ).toEqual(
+                    []
+                );
+
+
+                expect(
+                    validator(
+                        "value"
+                    )({
+                        value:
+                            1
+                    })
+                ).toEqual([
+                    "value must be [object Object] but was [object Object]"
+                ]);
+            }
+        );
+    }
+);
+
+
+describe(
+    "mustBeObjectWithFields required handling",
+    () => {
+
+        interface Dummy {
+            value:
+                string;
+        }
+
+
+        const optional =
+            mustBeObjectWithFields<Dummy>({
+                value:
+                mustBeString
+            });
+
+
+        const required =
+            mustBeObjectWithFields<Dummy>(
+                {
+                    value:
+                    mustBeString
+                },
+                true
+            );
+
+
+        test(
+            "allows undefined when object is optional",
+            () => {
+
+                expect(
+                    optional(
+                        "object"
+                    )(
+                        undefined as any
+                    )
+                ).toEqual(
+                    []
+                );
+            }
+        );
+
+
+        test(
+            "allows null when object is optional",
+            () => {
+
+                expect(
+                    optional(
+                        "object"
+                    )(
+                        null as any
+                    )
+                ).toEqual(
+                    []
+                );
+            }
+        );
+
+
+        test(
+            "rejects undefined when object is required",
+            () => {
+
+                expect(
+                    required(
+                        "object"
+                    )(
+                        undefined as any
+                    )
+                ).toEqual([
+                    "object must be an object"
+                ]);
+            }
+        );
+
+
+        test(
+            "rejects null when object is required",
+            () => {
+
+                expect(
+                    required(
+                        "object"
+                    )(
+                        null as any
+                    )
+                ).toEqual([
+                    "object must be an object"
+                ]);
+            }
+        );
+    }
+);
+
+
+describe(
+    "mustBeNameAnd additional cases",
+    () => {
+
+        const validator =
+            mustBeNameAnd(
+                mustBeString
+            );
+
+
+        const required =
+            mustBeNameAnd(
+                mustBeString,
+                true
+            );
+
+
+        test(
+            "rejects arrays",
+            () => {
+
+                expect(
+                    validator(
+                        "context"
+                    )(
+                        [
+                            "one",
+                            "two"
+                        ] as any
+                    )
+                ).toEqual([
+                    "context must be a NameAnd object, not an array"
+                ]);
+            }
+        );
+
+
+        test(
+            "accepts an empty object",
+            () => {
+
+                expect(
+                    validator(
+                        "context"
+                    )(
+                        {}
+                    )
+                ).toEqual(
+                    []
+                );
+            }
+        );
+
+
+        test(
+            "accepts an empty required object",
+            () => {
+
+                expect(
+                    required(
+                        "context"
+                    )(
+                        {}
+                    )
+                ).toEqual(
+                    []
+                );
+            }
+        );
+
+
+        test(
+            "collects errors from several values",
+            () => {
+
+                expect(
+                    validator(
+                        "context"
+                    )({
+                        first:
+                            10 as any,
+
+                        second:
+                            false as any
+                    })
+                ).toEqual([
+                    "context.first must be a string",
+                    "context.second must be a string"
+                ]);
+            }
+        );
+    }
+);

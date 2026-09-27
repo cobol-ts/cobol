@@ -28,5 +28,10 @@
     "<rootDir>/dist/"
   ],
 
+  "coveragePathIgnorePatterns": [
+    "<rootDir>/dist/",
+    "cursor\\.loader\\.fixture\\.ts$"
+  ],
+
   "testTimeout": 30000
 }
