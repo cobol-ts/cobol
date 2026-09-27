@@ -1,7 +1,7 @@
 import {
     type FileBufferPool,
     type FileByteCursorFactory,
-    type FixedFile,
+    type FixedFile, LengthPrefixedFile,
     type LineFile,
     type PhysicalRecordContent,
     type RecordBoundaryDetector,
@@ -21,6 +21,7 @@ import {
 import {
     createFixedWidthRecordBoundaryDetector
 } from "./cursor.fixed.detector";
+import {createLengthPrefixedRecordBoundaryDetector} from "./cursor.prefixed.detector";
 
 
 type EndOfFileBehaviour =
@@ -123,7 +124,54 @@ export function createFixedRecordReader(
             fileByteCursorFactory
         );
 }
+/**
+ * Create a length-prefixed physical record reader.
+ *
+ * By default the boundary detector is created from details.prefixSize
+ * and details.recordLength.
+ *
+ * The prefix is physical framing and is excluded from the parser-visible
+ * record.
+ *
+ * EOF with an incomplete prefix or record is reported as a physical
+ * record error.
+ */
+export function createLengthPrefixedRecordReader(
+    boundaryDetector:
+        RecordBoundaryDetector
+        | undefined =
+    undefined,
 
+    options:
+    RecordReaderOptions = {}
+): RecordReader<LengthPrefixedFile> {
+
+    const bufferPool =
+        options.bufferPool
+        ?? createFileBufferPool();
+
+    const createByteCursor =
+        options.createFileByteCursor
+        ?? createFileByteCursor;
+
+
+    return details =>
+        createRecordCursor(
+            details.filename,
+
+            boundaryDetector
+            ?? createLengthPrefixedRecordBoundaryDetector(
+                details.prefixSize,
+                details.recordLength
+            ),
+
+            "incomplete-record-error",
+
+            bufferPool,
+
+            createByteCursor
+        );
+}
 
 /**
  * Read one file as complete physical records.

@@ -9,6 +9,7 @@ import {
 
 import {
     createFixedRecordReader,
+    createLengthPrefixedRecordReader,
     createLineRecordReader
 } from "./cursor.record";
 
@@ -1470,6 +1471,49 @@ function readRecordBytes(
 }
 
 
+function byteAt(
+    buffers:
+    readonly Uint8Array[],
+
+    offset:
+    number
+): number {
+
+    let logicalOffset =
+        0;
+
+
+    for (
+        const buffer
+        of buffers
+        ) {
+        const bufferEnd =
+            logicalOffset
+            + buffer.length;
+
+
+        if (
+            offset
+            < bufferEnd
+        ) {
+            return buffer[
+            offset
+            - logicalOffset
+                ];
+        }
+
+
+        logicalOffset =
+            bufferEnd;
+    }
+
+
+    throw new Error(
+        `Byte offset ${offset} is outside buffered data`
+    );
+}
+
+
 function totalLength(
     buffers:
     readonly Uint8Array[]
@@ -1493,7 +1537,8 @@ function totalLength(
 
 
 function bytes(
-    value: string
+    value:
+    string
 ): Uint8Array {
 
     return new TextEncoder()
@@ -1501,3 +1546,422 @@ function bytes(
             value
         );
 }
+
+
+describe(
+    "length-prefixed records",
+    () => {
+
+        const recordLength = (
+            buffers:
+            readonly Uint8Array[],
+
+            prefixStart:
+            number
+        ): number =>
+            (
+                byteAt(
+                    buffers,
+                    prefixStart
+                )
+                - "0".charCodeAt(
+                    0
+                )
+            )
+            * 10
+            + (
+                byteAt(
+                    buffers,
+                    prefixStart + 1
+                )
+                - "0".charCodeAt(
+                    0
+                )
+            );
+
+
+        it(
+            "yields several length-prefixed records",
+            async () => {
+
+                const reader =
+                    createLengthPrefixedRecordReader(
+                        undefined,
+                        testOptions(
+                            "03abc02de04wxyz"
+                        )
+                    );
+
+
+                const results =
+                    await collect(
+                        reader({
+                            type:
+                                "length-prefixed",
+
+                            filename:
+                                "test.dat",
+
+                            prefixSize:
+                                2,
+
+                            recordLength
+                        })
+                    );
+
+
+                expect(
+                    recordStrings(
+                        results
+                    )
+                ).toEqual(
+                    [
+                        "abc",
+                        "de",
+                        "wxyz"
+                    ]
+                );
+            }
+        );
+
+
+        it(
+            "handles a prefix split across physical buffers",
+            async () => {
+
+                const reader =
+                    createLengthPrefixedRecordReader(
+                        undefined,
+                        testOptions(
+                            "0",
+                            "3a",
+                            "bc",
+                            "0",
+                            "2",
+                            "de"
+                        )
+                    );
+
+
+                const results =
+                    await collect(
+                        reader({
+                            type:
+                                "length-prefixed",
+
+                            filename:
+                                "test.dat",
+
+                            prefixSize:
+                                2,
+
+                            recordLength
+                        })
+                    );
+
+
+                expect(
+                    recordStrings(
+                        results
+                    )
+                ).toEqual(
+                    [
+                        "abc",
+                        "de"
+                    ]
+                );
+            }
+        );
+
+
+        it(
+            "handles a record spanning many physical buffers",
+            async () => {
+
+                const reader =
+                    createLengthPrefixedRecordReader(
+                        undefined,
+                        testOptions(
+                            "08",
+                            "ab",
+                            "cd",
+                            "ef",
+                            "gh"
+                        )
+                    );
+
+
+                const results =
+                    await collect(
+                        reader({
+                            type:
+                                "length-prefixed",
+
+                            filename:
+                                "test.dat",
+
+                            prefixSize:
+                                2,
+
+                            recordLength
+                        })
+                    );
+
+
+                expect(
+                    recordStrings(
+                        results
+                    )
+                ).toEqual(
+                    [
+                        "abcdefgh"
+                    ]
+                );
+            }
+        );
+
+
+        it(
+            "handles prefixes and records across unrelated buffer boundaries",
+            async () => {
+
+                const reader =
+                    createLengthPrefixedRecordReader(
+                        undefined,
+                        testOptions(
+                            "03a",
+                            "bc0",
+                            "5de",
+                            "fgh",
+                            "02",
+                            "ij"
+                        )
+                    );
+
+
+                const results =
+                    await collect(
+                        reader({
+                            type:
+                                "length-prefixed",
+
+                            filename:
+                                "test.dat",
+
+                            prefixSize:
+                                2,
+
+                            recordLength
+                        })
+                    );
+
+
+                expect(
+                    recordStrings(
+                        results
+                    )
+                ).toEqual(
+                    [
+                        "abc",
+                        "defgh",
+                        "ij"
+                    ]
+                );
+            }
+        );
+
+
+        it(
+            "supports zero-length records",
+            async () => {
+
+                const reader =
+                    createLengthPrefixedRecordReader(
+                        undefined,
+                        testOptions(
+                            "0003abc00"
+                        )
+                    );
+
+
+                const results =
+                    await collect(
+                        reader({
+                            type:
+                                "length-prefixed",
+
+                            filename:
+                                "test.dat",
+
+                            prefixSize:
+                                2,
+
+                            recordLength
+                        })
+                    );
+
+
+                expect(
+                    recordStrings(
+                        results
+                    )
+                ).toEqual(
+                    [
+                        "",
+                        "abc",
+                        ""
+                    ]
+                );
+            }
+        );
+
+
+        it(
+            "reports an incomplete final prefix",
+            async () => {
+
+                const reader =
+                    createLengthPrefixedRecordReader(
+                        undefined,
+                        testOptions(
+                            "03abc0"
+                        )
+                    );
+
+
+                const results =
+                    await collect(
+                        reader({
+                            type:
+                                "length-prefixed",
+
+                            filename:
+                                "test.dat",
+
+                            prefixSize:
+                                2,
+
+                            recordLength
+                        })
+                    );
+
+
+                expect(
+                    recordStrings(
+                        results
+                    )
+                ).toEqual(
+                    [
+                        "abc"
+                    ]
+                );
+
+
+                expect(
+                    results[
+                        1
+                        ]
+                ).toEqual(
+                    [
+                        "Incomplete physical record at end of file: "
+                        + "1 byte(s) remain but do not form "
+                        + "a complete physical record"
+                    ]
+                );
+            }
+        );
+
+
+        it(
+            "reports an incomplete final payload",
+            async () => {
+
+                const reader =
+                    createLengthPrefixedRecordReader(
+                        undefined,
+                        testOptions(
+                            "03abc05xy"
+                        )
+                    );
+
+
+                const results =
+                    await collect(
+                        reader({
+                            type:
+                                "length-prefixed",
+
+                            filename:
+                                "test.dat",
+
+                            prefixSize:
+                                2,
+
+                            recordLength
+                        })
+                    );
+
+
+                expect(
+                    recordStrings(
+                        results
+                    )
+                ).toEqual(
+                    [
+                        "abc"
+                    ]
+                );
+
+
+                expect(
+                    results[
+                        1
+                        ]
+                ).toEqual(
+                    [
+                        "Incomplete physical record at end of file: "
+                        + "4 byte(s) remain but do not form "
+                        + "a complete physical record"
+                    ]
+                );
+            }
+        );
+
+
+        it(
+            "produces no records for an empty file",
+            async () => {
+
+                const reader =
+                    createLengthPrefixedRecordReader(
+                        undefined,
+                        testOptions()
+                    );
+
+
+                const results =
+                    await collect(
+                        reader({
+                            type:
+                                "length-prefixed",
+
+                            filename:
+                                "test.dat",
+
+                            prefixSize:
+                                2,
+
+                            recordLength
+                        })
+                    );
+
+
+                expect(
+                    results
+                ).toEqual(
+                    []
+                );
+            }
+        );
+    }
+);

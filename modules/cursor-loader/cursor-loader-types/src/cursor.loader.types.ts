@@ -41,7 +41,6 @@ export interface FixedFile {
         number;
 }
 
-
 export interface LengthPrefixedFile {
     readonly type:
         "length-prefixed";
@@ -53,10 +52,13 @@ export interface LengthPrefixedFile {
         number;
 
     readonly recordLength: (
-        prefix: Uint8Array
+        buffers:
+        readonly Uint8Array[],
+
+        prefixStart:
+        number
     ) => number;
 }
-
 
 export type PhysicalFileDetails =
     | LineFile

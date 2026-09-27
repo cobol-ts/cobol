@@ -1064,22 +1064,92 @@ const invalidFixedConfig = {
 
 const lengthPrefixedConfig = {
     customer: {
-        type: "length-prefixed",
-        filename: "customers.dat",
-        prefixSize: 4,
+        type:
+            "length-prefixed",
+
+        filename:
+            "customers.dat",
+
+        prefixSize:
+            4,
 
         recordLength: (
-            prefix: Uint8Array
+            buffers:
+            readonly Uint8Array[],
+
+            prefixStart:
+            number
         ) =>
             (
                 (
-                    prefix[0]
+                    buffers[
+                        0
+                        ][
+                        prefixStart
+                        ]
                     << 8
                 )
-                | prefix[1]
+                | buffers[
+                    0
+                    ][
+                prefixStart + 1
+                    ]
             ),
 
-        parser: "customer",
+        parser:
+            "customer",
+
+        project: (
+            row: CustomerRow
+        ): Customer => ({
+            id:
+            row.id,
+
+            displayName:
+            row.name
+        }),
+
+        entityId: (
+            customer: Customer
+        ) =>
+            customer.id,
+
+        cardinality:
+            "one"
+    }
+} satisfies CursorLoaderConfig<
+    Parsers,
+    string
+>;
+
+
+/*
+ * Length-prefixed recordLength receives physical buffers and logical
+ * prefix start rather than a copied contiguous prefix.
+ */
+
+const invalidLengthPrefixedRecordLength = {
+    customer: {
+        type:
+            "length-prefixed",
+
+        filename:
+            "customers.dat",
+
+        prefixSize:
+            4,
+
+        // @ts-expect-error recordLength receives buffers and prefixStart
+        recordLength: (
+            prefix:
+            Uint8Array
+        ): number =>
+            prefix[
+                0
+                ],
+
+        parser:
+            "customer",
 
         project: (
             row: CustomerRow
@@ -1272,15 +1342,26 @@ const lengthPrefixedReaderUsesDetails:
     async function* (
         details
     ) {
-        const prefixSize: number =
+        const prefixSize:
+            number =
             details.prefixSize;
 
-        const length: number =
+
+        const buffers:
+            readonly Uint8Array[] = [
+            new Uint8Array(
+                prefixSize
+            )
+        ];
+
+
+        const length:
+            number =
             details.recordLength(
-                new Uint8Array(
-                    prefixSize
-                )
+                buffers,
+                0
             );
+
 
         yield physicalRecord(
             new Uint8Array(
