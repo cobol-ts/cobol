@@ -11,11 +11,21 @@ import {
 
 export class JsonParser<
     Representation = unknown
-> implements Parser<Representation> {
+> implements Parser<
+    Representation,
+    undefined,
+    undefined,
+    undefined
+> {
 
     parse(
-        record: PhysicalRecordContent
-    ): ParserResult<Representation> {
+        record:
+        PhysicalRecordContent<
+            undefined
+        >
+    ): ParserResult<
+        Representation
+    > {
 
         try {
             return JSON.parse(
@@ -46,7 +56,10 @@ export class JsonParser<
  * character may itself span physical buffers.
  */
 function decodeRecord(
-    record: PhysicalRecordContent
+    record:
+    PhysicalRecordContent<
+        undefined
+    >
 ): string {
 
     const decoder =

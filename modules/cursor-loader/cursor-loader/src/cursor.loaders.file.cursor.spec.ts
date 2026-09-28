@@ -28,6 +28,8 @@ describe(
                 const parser:
                     Parser<
                         string,
+                        undefined,
+                        undefined,
                         undefined
                     > = {
 
@@ -117,6 +119,8 @@ describe(
                 const parser:
                     Parser<
                         string,
+                        undefined,
+                        undefined,
                         undefined
                     > = {
 
@@ -138,7 +142,7 @@ describe(
 
 
                 const readers:
-                    RecordReaderMap = {
+                    RecordReaderMap<undefined> = {
 
                     line:
                         async function* () {
@@ -250,6 +254,143 @@ describe(
 
 
         test(
+            "passes parser-specific record state to the selected parser",
+            async () => {
+
+                interface TestRecordState {
+                    readonly marker:
+                        number;
+                }
+
+
+                const parser:
+                    Parser<
+                        string,
+                        undefined,
+                        undefined,
+                        TestRecordState
+                    > = {
+
+                    parse(
+                        record
+                    ): string {
+
+                        return `${
+                            record.recordState.marker
+                        }:${
+                            decodeRecord(
+                                record
+                            )
+                        }`;
+                    }
+                };
+
+
+                const parsers = {
+                    text:
+                    parser
+                } satisfies ParserMap;
+
+
+                const statefulLineReader =
+                    async function* () {
+
+                        const buffer =
+                            new TextEncoder().encode(
+                                "one"
+                            );
+
+
+                        yield {
+                            buffers: [
+                                buffer
+                            ],
+
+                            startOffset:
+                                0,
+
+                            length:
+                            buffer.length,
+
+                            recordState: {
+                                marker:
+                                    7
+                            }
+                        };
+                    };
+
+
+                const options:
+                    CursorOptions<
+                        typeof parsers,
+                        number
+                    > = {
+
+                    parsers,
+
+                    recordReaders: {
+                        line:
+                        statefulLineReader,
+
+                        fixed:
+                        emptyReader,
+
+                        "length-prefixed":
+                        emptyReader
+                    },
+
+                    compareEntityId:
+                    compareNumber
+                };
+
+
+                const details:
+                    FileDetails<
+                        typeof parsers,
+                        "text",
+                        string,
+                        number
+                    > = {
+
+                    type:
+                        "line",
+
+                    filename:
+                        "test.txt",
+
+                    parser:
+                        "text",
+
+                    cardinality:
+                        "many",
+
+                    project:
+                        value =>
+                            value,
+
+                    entityId:
+                        () =>
+                            0
+                };
+
+
+                expect(
+                    await collect(
+                        createFileCursor(
+                            details,
+                            options
+                        )
+                    )
+                ).toEqual(
+                    [
+                        "7:one"
+                    ]
+                );
+            }
+        );
+
+
+        test(
             "uses the first physical record for parser preparation",
             async () => {
 
@@ -263,7 +404,8 @@ describe(
                     Parser<
                         string,
                         undefined,
-                        Prepared
+                        Prepared,
+                        undefined
                     > = {
 
                     prepare(
@@ -367,7 +509,8 @@ describe(
                     Parser<
                         string,
                         undefined,
-                        string
+                        string,
+                        undefined
                     > = {
 
                     prepare():
@@ -479,7 +622,8 @@ describe(
                     Parser<
                         string,
                         undefined,
-                        string
+                        string,
+                        undefined
                     > = {
 
                     prepare():
@@ -587,6 +731,8 @@ describe(
                 const parser:
                     Parser<
                         string,
+                        undefined,
+                        undefined,
                         undefined
                     > = {
 
@@ -696,6 +842,8 @@ describe(
                 const parser:
                     Parser<
                         string,
+                        undefined,
+                        undefined,
                         undefined
                     > = {
 
@@ -811,6 +959,8 @@ describe(
                 const parser:
                     Parser<
                         string,
+                        undefined,
+                        undefined,
                         undefined
                     > = {
 
@@ -919,6 +1069,8 @@ describe(
                 const parser:
                     Parser<
                         string,
+                        undefined,
+                        undefined,
                         undefined
                     > = {
 
@@ -1006,7 +1158,8 @@ describe(
                     Parser<
                         string,
                         undefined,
-                        string
+                        string,
+                        undefined
                     > = {
 
                     prepare():
@@ -1106,6 +1259,8 @@ describe(
                 const parser:
                     Parser<
                         string,
+                        undefined,
+                        undefined,
                         undefined
                     > = {
 
@@ -1128,7 +1283,7 @@ describe(
 
 
                 const readers:
-                    RecordReaderMap = {
+                    RecordReaderMap<undefined> = {
 
                     line:
                     emptyReader,
@@ -1232,7 +1387,7 @@ describe(
 
 
                 const reader:
-                    RecordReaderMap["line"] =
+                    RecordReaderMap<undefined>["line"] =
                     async function* () {
 
                         currentRecordValid =
@@ -1256,6 +1411,8 @@ describe(
                 const parser:
                     Parser<
                         string,
+                        undefined,
+                        undefined,
                         undefined
                     > = {
 
@@ -1353,7 +1510,7 @@ function createOptions<
 >(
     parsers: TParsers,
     line:
-    RecordReaderMap["line"]
+    RecordReaderMap<undefined>["line"]
 ): CursorOptions<
     TParsers,
     number
@@ -1380,7 +1537,7 @@ function createOptions<
 
 function lineReader(
     ...records: string[]
-): RecordReaderMap["line"] {
+): RecordReaderMap<undefined>["line"] {
 
     return async function* () {
 
@@ -1397,7 +1554,7 @@ function lineReader(
 
 
 async function* emptyReader():
-    RecordCursor {
+    RecordCursor<undefined> {
 
     return;
 }
@@ -1405,7 +1562,7 @@ async function* emptyReader():
 
 function physicalRecord(
     value: string
-): PhysicalRecordContent {
+): PhysicalRecordContent<undefined> {
 
     const buffer =
         new TextEncoder().encode(
@@ -1422,13 +1579,19 @@ function physicalRecord(
             0,
 
         length:
-        buffer.length
+        buffer.length,
+
+        recordState:
+        undefined
     };
 }
 
 
-function decodeRecord(
-    record: PhysicalRecordContent
+function decodeRecord<TRecordState>(
+    record:
+    PhysicalRecordContent<
+        TRecordState
+    >
 ): string {
 
     const result =
@@ -1512,7 +1675,6 @@ function decodeRecord(
     );
 }
 
-
 async function collect<T>(
     cursor:
     AsyncGenerator<
@@ -1562,6 +1724,8 @@ test(
         const parser:
             Parser<
                 string,
+                undefined,
+                undefined,
                 undefined
             > = {
 
@@ -1647,6 +1811,8 @@ test(
         const parser:
             Parser<
                 string,
+                undefined,
+                undefined,
                 undefined
             > = {
 
@@ -1760,7 +1926,8 @@ test(
             Parser<
                 string,
                 undefined,
-                string
+                string,
+                undefined
             > = {
 
             prepare():
@@ -1853,6 +2020,8 @@ test(
         const parser:
             Parser<
                 string,
+                undefined,
+                undefined,
                 undefined
             > = {
 
@@ -1873,7 +2042,7 @@ test(
 
 
         const readers:
-            RecordReaderMap = {
+            RecordReaderMap<undefined> = {
 
             line:
             emptyReader,
@@ -1963,6 +2132,8 @@ test(
         const parser:
             Parser<
                 string,
+                undefined,
+                undefined,
                 undefined
             > = {
 
@@ -2077,6 +2248,8 @@ test(
         const parser:
             Parser<
                 string,
+                undefined,
+                undefined,
                 undefined
             > = {
 

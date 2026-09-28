@@ -2,9 +2,7 @@
  * Cursor Loader — shared public and internal types
  */
 
-import {
-    type Errors
-} from "@cobol-ts/errors";
+import {type Errors} from "@cobol-ts/errors";
 
 
 /*
@@ -54,7 +52,6 @@ export interface LengthPrefixedFile {
     readonly recordLength: (
         buffers:
         readonly Uint8Array[],
-
         prefixStart:
         number
     ) => number;
@@ -83,24 +80,38 @@ export const NO_VALIDATION_ERRORS =
 /*
  * Physical record content
  *
- * A read-only view of one complete physical record.
+ * A borrowed view of one complete physical record together with the
+ * parser-specific state associated with that record.
+ *
+ * TRecordState is deliberately required. There is no default state type:
+ * every caller which handles physical records must make the record-state
+ * ownership explicit. Parsers which require no per-record state should use
+ * `undefined`.
  *
  * The record may span one or more byte buffers.
  *
- * startOffset is the offset of the first record byte within the
- * first buffer.
+ * startOffset is the logical offset of the first parser-visible record byte
+ * across `buffers`, treating them as one contiguous byte sequence.
  *
- * length is the total number of record bytes across all buffers.
+ * length is the total number of parser-visible record bytes.
  *
- * Buffers are densely packed after startOffset. Every intermediate
- * buffer is used to its end; length determines where the record ends in
- * the final buffer.
+ * Buffers are densely packed after startOffset. Every intermediate buffer is
+ * used to its end; length determines where the record ends in the final
+ * buffer.
+ *
+ * recordState contains mutable or immutable parser-specific information which
+ * describes this particular record. The property reference is read-only, but
+ * the state object itself may be mutable and reused when the pooled physical
+ * record holder is safely rebound.
  *
  * The buffers are owned by the RecordCursor, not by this object.
  *
- * The content remains valid until the cursor is advanced or closed.
+ * The bytes and recordState remain valid until the cursor is advanced or
+ * closed.
  */
-export interface PhysicalRecordContent {
+export interface PhysicalRecordContent<
+    TRecordState
+> {
 
     readonly buffers:
         readonly Uint8Array[];
@@ -117,25 +128,46 @@ export interface PhysicalRecordContent {
 
     readonly length:
         number;
+
+    /**
+     * Parser-specific state describing this physical record.
+     *
+     * Examples include CSV field start/end offsets and flags derived while
+     * recognising the record.
+     *
+     * State which is invariant for the opened file belongs in ParserDetails
+     * instead. Temporary machinery which does not describe this record belongs
+     * in parser/reader scratch rather than here.
+     */
+    readonly recordState:
+        TRecordState;
 }
+
+
 /*
  * Record readers
  *
  * A record reader turns one configured physical file into a cursor of
  * complete physical records or recoverable record-level errors.
  *
+ * TRecordState is the state carried by every successful physical record
+ * yielded by that cursor.
+ *
  * Operational failures that prevent reliable continued processing are
  * reported by throwing.
  */
 
-export type RecordReaderResult =
-    | PhysicalRecordContent
+export type RecordReaderResult<
+    TRecordState
+> =
+    | PhysicalRecordContent<TRecordState>
     | ValidationErrors;
 
 
 /*
- * The RecordCursor owns the storage referenced by each
- * PhysicalRecordContent.
+ * The RecordCursor owns the byte storage referenced by each
+ * PhysicalRecordContent and controls the borrowed lifetime of its
+ * recordState.
  *
  * A yielded record remains valid only until the cursor is advanced
  * to the next result or the cursor is closed.
@@ -145,9 +177,11 @@ export type RecordReaderResult =
  * outlive the current record.
  */
 
-export type RecordCursor =
+export type RecordCursor<
+    TRecordState
+> =
     AsyncGenerator<
-        RecordReaderResult,
+        RecordReaderResult<TRecordState>,
         void,
         unknown
     >;
@@ -159,34 +193,50 @@ export type RecordCursor =
  * Each physical-file implementation creates its own RecordCursor.
  *
  * Reader-specific dependencies are supplied when the RecordReader itself
- * is constructed.
+ * is constructed. Those dependencies are responsible for ensuring that
+ * every yielded PhysicalRecordContent carries the declared TRecordState.
  *
- * For example, a line reader may be constructed with a RecordEndDetector
- * and a shared byte-buffer pool. Those details are deliberately hidden
- * from consumers of the RecordReader.
+ * For simple readers this state may be `undefined`. Format-aware readers may
+ * populate parser-specific structural state while recognising the record.
+ *
+ * The mechanism used to create, reset and pool record state is deliberately
+ * hidden from consumers of the RecordReader.
  */
 
 export type RecordReader<
-    TDetails extends PhysicalFileDetails
+    TDetails extends PhysicalFileDetails,
+    TRecordState
 > = (
     details: TDetails
-) => RecordCursor;
+) => RecordCursor<TRecordState>;
 
 
 /*
- * The reader map is derived from PhysicalFileDetails.
+ * The reader map is derived from PhysicalFileDetails and parameterised by
+ * the state carried by its physical records.
  *
  * This means that every known physical file type must have exactly the
- * appropriately typed reader entry.
+ * appropriately typed reader entry, and that all consumers of the map must
+ * explicitly propagate the record-state type.
  */
 
-export type RecordReaderMap = {
+export type RecordReaderMap<
+    TRecordState
+> = {
     [TDetails in PhysicalFileDetails as TDetails["type"]]:
-    RecordReader<TDetails>;
+    RecordReader<
+        TDetails,
+        TRecordState
+    >;
 };
+
 /**
- * Describes how physical record boundaries are located within a sequence
- * of byte buffers.
+ * Optional helper for record readers whose physical record boundary can be
+ * located independently of parser-specific structural state.
+ *
+ * It is not a universal parser boundary. A format-aware RecordReader may
+ * bypass RecordBoundaryDetector completely when record recognition and
+ * structural parsing should be fused; CSV is the primary example.
  *
  * The supplied buffers are treated as one logical contiguous byte sequence.
  * All offsets passed to or returned from this interface are offsets into
@@ -353,11 +403,11 @@ export interface RecordBoundaryDetector {
     ): number;
 }
 
-export const nullRecordStart = (frameStart: number)=> frameStart;
+export const nullRecordStart = (frameStart: number) => frameStart;
 /*
  * Parser
  *
- * A parser has three associated types:
+ * A parser has four associated types:
  *
  * Representation
  *     The successfully parsed representation produced for each data record.
@@ -366,7 +416,7 @@ export const nullRecordStart = (frameStart: number)=> frameStart;
  *     Static source-specific configuration supplied in FileDetails.
  *
  * ParserDetails
- *     Runtime details used while parsing this particular file.
+ *     Opened-file details used while parsing this particular file.
  *
  *     These may simply be the ParserConfig, but they are allowed to be a
  *     different type derived from it.
@@ -375,14 +425,25 @@ export const nullRecordStart = (frameStart: number)=> frameStart;
  *     separator rules with information read from the header row to produce
  *     prepared details containing the resolved physical column positions.
  *
- * For simple parsers, ParserDetails defaults to ParserConfig.
+ *     ParserDetails must not contain mutable structural state describing the
+ *     current data record. That belongs in TRecordState.
+ *
+ * TRecordState
+ *     Parser-specific state whose lifetime is exactly the lifetime of one
+ *     PhysicalRecordContent.
+ *
+ *     Examples include CSV field start/end offsets and field flags.
+ *
+ *     This type is deliberately required and has no default. Parsers which
+ *     require no per-record state should use `undefined` explicitly.
  *
  * A parser may optionally consume the first physical record to prepare its
  * ParserDetails. This supports formats where the first record contains file
  * metadata, such as a CSV header.
  *
- * Parsers receive PhysicalRecordContent rather than assuming that every
- * physical record is represented by one contiguous Uint8Array.
+ * Parsers receive PhysicalRecordContent<TRecordState> rather than assuming
+ * that every physical record is represented by one contiguous Uint8Array or
+ * that current-record structural state is held separately from the record.
  *
  * Successful operations return their value directly.
  * Recoverable data failures return Errors.
@@ -397,18 +458,23 @@ export type ParserResult<T> =
 
 
 export interface Parser<
-    Representation = unknown,
-    ParserConfig = undefined,
-    ParserDetails = ParserConfig
+    Representation,
+    ParserConfig,
+    ParserDetails,
+    TRecordState
 > {
     prepare?: (
-        firstRecord: PhysicalRecordContent,
-        config: ParserConfig
+        firstRecord:
+        PhysicalRecordContent<TRecordState>,
+        config:
+        ParserConfig
     ) => ParserResult<ParserDetails>;
 
     parse(
-        record: PhysicalRecordContent,
-        details: ParserDetails
+        record:
+        PhysicalRecordContent<TRecordState>,
+        details:
+        ParserDetails
     ): ParserResult<Representation>;
 }
 
@@ -416,7 +482,12 @@ export interface Parser<
 export type ParserMap =
     Record<
         string,
-        Parser<any, any, any>
+        Parser<
+            any,
+            any,
+            any,
+            any
+        >
     >;
 
 
@@ -428,7 +499,8 @@ export type ParserRepresentation<TParser> =
     TParser extends Parser<
             infer Representation,
             infer _Config,
-            infer _Details
+            infer _Details,
+            infer _RecordState
         >
         ? Representation
         : never;
@@ -438,7 +510,8 @@ export type ParserConfig<TParser> =
     TParser extends Parser<
             infer _Representation,
             infer Config,
-            infer _Details
+            infer _Details,
+            infer _RecordState
         >
         ? Config
         : never;
@@ -448,9 +521,21 @@ export type ParserDetails<TParser> =
     TParser extends Parser<
             infer _Representation,
             infer _Config,
-            infer Details
+            infer Details,
+            infer _RecordState
         >
         ? Details
+        : never;
+
+
+export type ParserRecordState<TParser> =
+    TParser extends Parser<
+            infer _Representation,
+            infer _Config,
+            infer _Details,
+            infer RecordState
+        >
+        ? RecordState
         : never;
 
 
@@ -466,8 +551,11 @@ export type ParserDetails<TParser> =
  * Parsers with a concrete configuration type require parserConfig and
  * retain that parser-specific type.
  *
- * Prepared ParserDetails are runtime state and are not part of
+ * Prepared ParserDetails are opened-file state and are not part of
  * FileDetails.
+ *
+ * Current-record parser state is represented separately by
+ * ParserRecordState<TParser> and lives inside PhysicalRecordContent.
  */
 
 export type FileParserConfig<TParser> =
@@ -699,19 +787,30 @@ export type MutableEntityDataSet<TConfig> =
     & EntityDataSetMutation<TConfig>;
 
 
-/*
+/**
  * Cursor options
  *
- * Parsers interpret complete physical records.
+ * Parsers interpret complete physical records together with their associated
+ * parser-specific record state.
  *
- * RecordReaders perform physical I/O and record framing.
+ * RecordReaders perform physical I/O and logical record recognition. A
+ * format-aware reader may also populate parser-specific structural state
+ * while recognising a record.
+ *
+ * Record readers may carry different record-state types. CursorOptions is
+ * therefore a heterogeneous registry boundary: there is no single
+ * TRecordState shared by every entry in RecordReaderMap.
+ *
+ * The registry exposes those entries as RecordReaderMap<unknown>. Once a
+ * particular source selects both a parser and a record reader, higher-level
+ * cursor code recovers the concrete relationship between that parser's
+ * record-state type and the selected reader.
  *
  * The supplied RecordReaderMap contains already-configured physical reader
  * implementations. Reader-specific dependencies such as record-boundary
- * detectors and byte-buffer pools are therefore not concerns of the
- * higher-level cursor.
+ * detectors, record-state or pool factories, and byte-buffer pools are
+ * therefore not concerns of the higher-level cursor.
  */
-
 export interface CursorOptions<
     TParsers extends ParserMap,
     EntityId
@@ -720,14 +819,15 @@ export interface CursorOptions<
         TParsers;
 
     readonly recordReaders:
-        RecordReaderMap;
+        RecordReaderMap<
+            unknown
+        >;
 
     readonly compareEntityId: (
         left: EntityId,
         right: EntityId
     ) => number;
 }
-
 
 /*
  * Entity cursor
@@ -784,10 +884,11 @@ export type FileByteCursorFactory = (
     filename: string,
     bufferPool: FileBufferPool
 ) => FileByteCursor;
+
 /*
  * File byte buffer pool
  *
- * End-of-line cursors use fixed-size Uint8Array buffers while reading.
+ * Physical file cursors use fixed-size Uint8Array buffers while reading.
  *
  * Buffers are shared between cursors and returned to the pool once no
  * current or future physical record can refer to them.

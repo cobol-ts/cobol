@@ -18,6 +18,31 @@ import {
 } from "./cursor.newline.detector";
 
 
+/*
+ * These record readers perform physical framing only.
+ *
+ * They do not derive parser-specific record state, so their records carry
+ * an explicit undefined state.
+ */
+
+type StatelessPhysicalRecord =
+    PhysicalRecordContent<
+        undefined
+    >;
+
+
+type StatelessRecordReaderResult =
+    RecordReaderResult<
+        undefined
+    >;
+
+
+type StatelessRecordCursor =
+    RecordCursor<
+        undefined
+    >;
+
+
 describe(
     "physical record readers",
     () => {
@@ -531,6 +556,68 @@ describe(
                                 "",
                                 ""
                             ]
+                        );
+                    }
+                );
+            }
+        );
+
+
+        describe(
+            "record state",
+            () => {
+
+                it(
+                    "carries explicit undefined record state",
+                    async () => {
+
+                        const reader =
+                            createFixedRecordReader(
+                                undefined,
+                                testOptions(
+                                    "abcd"
+                                )
+                            );
+
+
+                        const results =
+                            await collect(
+                                reader({
+                                    type:
+                                        "fixed",
+
+                                    filename:
+                                        "test.dat",
+
+                                    recordSize:
+                                        4
+                                })
+                            );
+
+
+                        const result =
+                            results[
+                                0
+                                ];
+
+
+                        if (
+                            !(
+                                "buffers"
+                                in result
+                            )
+                        ) {
+                            throw new Error(
+                                "Expected a physical record"
+                            );
+                        }
+
+
+                        expect(
+                            result
+                        ).toHaveProperty(
+                            "recordState",
+                            undefined
                         );
                     }
                 );
@@ -1301,13 +1388,13 @@ const testBufferPool:
 
 async function collect(
     cursor:
-    RecordCursor
+    StatelessRecordCursor
 ): Promise<
-    RecordReaderResult[]
+    StatelessRecordReaderResult[]
 > {
 
     const results:
-        RecordReaderResult[] =
+        StatelessRecordReaderResult[] =
         [];
 
 
@@ -1338,8 +1425,8 @@ async function collect(
 
 function detachRecord(
     record:
-    PhysicalRecordContent
-): PhysicalRecordContent {
+    StatelessPhysicalRecord
+): StatelessPhysicalRecord {
 
     const content =
         readRecordBytes(
@@ -1356,21 +1443,24 @@ function detachRecord(
             0,
 
         length:
-        content.length
+        content.length,
+
+        recordState:
+        record.recordState
     };
 }
 
 
 function recordStrings(
     results:
-    readonly RecordReaderResult[]
+    readonly StatelessRecordReaderResult[]
 ): string[] {
 
     return results
         .filter(
             (
                 result
-            ): result is PhysicalRecordContent =>
+            ): result is StatelessPhysicalRecord =>
                 "buffers"
                 in result
         )
@@ -1388,7 +1478,7 @@ function recordStrings(
 
 function readRecordBytes(
     record:
-    PhysicalRecordContent
+    StatelessPhysicalRecord
 ): Uint8Array {
 
     const result =

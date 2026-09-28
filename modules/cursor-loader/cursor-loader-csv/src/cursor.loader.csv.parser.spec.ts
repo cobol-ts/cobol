@@ -23,7 +23,7 @@ const encoder =
 
 function record(
     value: string
-): PhysicalRecordContent {
+): PhysicalRecordContent<undefined> {
 
     const buffer =
         encoder.encode(
@@ -40,7 +40,10 @@ function record(
             0,
 
         length:
-        buffer.length
+        buffer.length,
+
+        recordState:
+        undefined
     };
 }
 
@@ -51,7 +54,7 @@ function record(
 
 function splitRecord(
     ...parts: string[]
-): PhysicalRecordContent {
+): PhysicalRecordContent<undefined> {
 
     const buffers =
         parts.map(
@@ -80,7 +83,10 @@ function splitRecord(
         startOffset:
             0,
 
-        length
+        length,
+
+        recordState:
+        undefined
     };
 }
 
@@ -92,7 +98,7 @@ function splitRecord(
 function offsetRecord(
     prefix: string,
     value: string
-): PhysicalRecordContent {
+): PhysicalRecordContent<undefined> {
 
     const prefixBytes =
         encoder.encode(
@@ -131,7 +137,10 @@ function offsetRecord(
         prefixBytes.length,
 
         length:
-        valueBytes.length
+        valueBytes.length,
+
+        recordState:
+        undefined
     };
 }
 
@@ -145,7 +154,7 @@ function offsetRecord(
 function prefixedSplitRecord(
     prefixParts: readonly string[],
     ...recordParts: string[]
-): PhysicalRecordContent {
+): PhysicalRecordContent<undefined> {
 
     const prefixBuffers =
         prefixParts.map(
@@ -198,14 +207,17 @@ function prefixedSplitRecord(
 
         startOffset,
 
-        length
+        length,
+
+        recordState:
+        undefined
     };
 }
 
 
 function prepare(
     details: CsvParserDetails,
-    header: PhysicalRecordContent
+    header: PhysicalRecordContent<undefined>
 ): CsvPreparedDetails {
 
     const result =
@@ -234,7 +246,7 @@ function prepare(
 
 function parse(
     prepared: CsvPreparedDetails,
-    physicalRecord: PhysicalRecordContent
+    physicalRecord: PhysicalRecordContent<undefined>
 ): CsvRow {
 
     const result =

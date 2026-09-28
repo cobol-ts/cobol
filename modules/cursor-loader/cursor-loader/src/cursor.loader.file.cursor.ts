@@ -9,6 +9,7 @@ import {
     NO_VALIDATION_ERRORS,
     type ParserDetails,
     type ParserMap,
+    type ParserRecordState,
     type PhysicalFileDetails,
     type RecordReader
 } from "@cobol-ts/cursor-loader-types";
@@ -51,12 +52,22 @@ export async function* createFileCursor<
      * discriminated PhysicalFileDetails union and the corresponding
      * mapped reader parameter through the indexed lookup, so the selected
      * reader is asserted back to the reader for this details type.
+     *
+     * The selected reader must carry the same record-state type as the
+     * selected parser. That relationship is preserved explicitly here so
+     * PhysicalRecordContent<TRecordState> reaches parser preparation and
+     * parsing without weakening the type.
      */
     const recordReader =
         options.recordReaders[
             details.type
             ] as RecordReader<
-            typeof details
+            typeof details,
+            ParserRecordState<
+                TParsers[
+                    TParserName
+                    ]
+            >
         >;
 
 
@@ -478,3 +489,4 @@ function errorMessage(
         error
     );
 }
+

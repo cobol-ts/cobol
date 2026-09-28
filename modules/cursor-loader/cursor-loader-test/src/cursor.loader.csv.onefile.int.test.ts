@@ -56,7 +56,7 @@ const encoder =
  */
 
 const recordReaders:
-    RecordReaderMap = {
+    RecordReaderMap<undefined> = {
 
     line:
         async function* (
@@ -95,7 +95,7 @@ const recordReaders:
                     );
 
                 const record:
-                    PhysicalRecordContent = {
+                    PhysicalRecordContent<undefined> = {
 
                     buffers: [
                         bytes
@@ -105,7 +105,10 @@ const recordReaders:
                         0,
 
                     length:
-                    bytes.length
+                    bytes.length,
+
+                    recordState:
+                    undefined
                 };
 
 
@@ -1271,7 +1274,7 @@ test(
     async () => {
 
         const productionRecordReaders:
-            RecordReaderMap = {
+            RecordReaderMap<undefined> = {
 
             line:
                 createLineRecordReader(

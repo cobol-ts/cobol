@@ -69,7 +69,7 @@ export const csvParser:
  */
 
 function prepareCsv(
-    headerRecord: PhysicalRecordContent,
+    headerRecord: PhysicalRecordContent<undefined>,
     parserDetails: CsvParserDetails
 ): CsvPreparedDetails | Errors {
 
@@ -609,7 +609,7 @@ function prepareCsv(
  */
 
 function parseCsvRecord(
-    record: PhysicalRecordContent,
+    record: PhysicalRecordContent<undefined>,
     details: CsvPreparedDetails
 ): MutableCsvRow | Errors {
 
@@ -707,7 +707,7 @@ function parseCsvRecord(
  */
 
 function scanRecord<Context>(
-    record: PhysicalRecordContent,
+    record: PhysicalRecordContent<undefined>,
     separatorByte: number,
     quoteByte: number | undefined,
     escapeByte: number | undefined,
@@ -1400,7 +1400,7 @@ function createCsvRow(
 
 
     let record:
-        PhysicalRecordContent
+        PhysicalRecordContent<undefined>
         | undefined;
 
 
@@ -1416,7 +1416,7 @@ function createCsvRow(
 
         reset(
             nextRecord:
-            PhysicalRecordContent
+            PhysicalRecordContent<undefined>
         ): void {
 
             record =
@@ -1642,7 +1642,7 @@ function createCsvRow(
 
 function columnRange(
     record:
-        PhysicalRecordContent
+        PhysicalRecordContent<undefined>
         | undefined,
     starts: Int32Array,
     ends: Int32Array,
@@ -1650,7 +1650,7 @@ function columnRange(
     index: number
 ): {
     readonly record:
-        PhysicalRecordContent;
+        PhysicalRecordContent<undefined>;
 
     readonly start:
         number;
@@ -1727,7 +1727,7 @@ function columnRange(
  */
 
 function decodeField(
-    record: PhysicalRecordContent,
+    record: PhysicalRecordContent<undefined>,
     start: number,
     end: number,
     escaped: boolean,
@@ -1764,7 +1764,7 @@ function decodeField(
  */
 
 function decodeEscapedField(
-    record: PhysicalRecordContent,
+    record: PhysicalRecordContent<undefined>,
     start: number,
     end: number,
     quoteByte: number | undefined,
@@ -1950,7 +1950,7 @@ function decodeEscapedField(
  */
 
 function firstUnescapedByte(
-    record: PhysicalRecordContent,
+    record: PhysicalRecordContent<undefined>,
     start: number,
     end: number,
     quoteByte: number | undefined,
@@ -2006,7 +2006,7 @@ function firstUnescapedByte(
  */
 
 function parseInteger(
-    record: PhysicalRecordContent,
+    record: PhysicalRecordContent<undefined>,
     start: number,
     end: number
 ): number {
@@ -2125,7 +2125,7 @@ function parseInteger(
  */
 
 function decodeRange(
-    record: PhysicalRecordContent,
+    record: PhysicalRecordContent<undefined>,
     start: number,
     end: number
 ): string {
@@ -2219,7 +2219,7 @@ function decodeRange(
  */
 
 function byteAt(
-    record: PhysicalRecordContent,
+    record: PhysicalRecordContent<undefined>,
     logicalOffset: number
 ): number {
 
@@ -2243,7 +2243,7 @@ function byteAt(
  */
 
 function locatePosition(
-    record: PhysicalRecordContent,
+    record: PhysicalRecordContent<undefined>,
     logicalOffset: number
 ): {
     readonly bufferIndex:
@@ -2475,3 +2475,4 @@ function errorMessage(
         error
     );
 }
+

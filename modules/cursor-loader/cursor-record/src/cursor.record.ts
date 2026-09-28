@@ -1,7 +1,8 @@
 import {
     type FileBufferPool,
     type FileByteCursorFactory,
-    type FixedFile, LengthPrefixedFile,
+    type FixedFile,
+    type LengthPrefixedFile,
     type LineFile,
     type PhysicalRecordContent,
     type RecordBoundaryDetector,
@@ -21,7 +22,10 @@ import {
 import {
     createFixedWidthRecordBoundaryDetector
 } from "./cursor.fixed.detector";
-import {createLengthPrefixedRecordBoundaryDetector} from "./cursor.prefixed.detector";
+
+import {
+    createLengthPrefixedRecordBoundaryDetector
+} from "./cursor.prefixed.detector";
 
 
 type EndOfFileBehaviour =
@@ -42,6 +46,10 @@ export interface RecordReaderOptions {
 /**
  * Create a line-oriented physical record reader.
  *
+ * This reader performs physical framing only and therefore carries no
+ * parser-specific record state. Its PhysicalRecordContent recordState is
+ * explicitly undefined.
+ *
  * The default boundary detector recognises LF and CRLF records.
  *
  * EOF without a physical record terminator is treated as a valid final
@@ -58,7 +66,10 @@ export function createLineRecordReader(
 
     options:
     RecordReaderOptions = {}
-): RecordReader<LineFile> {
+): RecordReader<
+    LineFile,
+    undefined
+> {
 
     const bufferPool =
         options.bufferPool
@@ -83,6 +94,10 @@ export function createLineRecordReader(
 /**
  * Create a fixed-width physical record reader.
  *
+ * This reader performs physical framing only and therefore carries no
+ * parser-specific record state. Its PhysicalRecordContent recordState is
+ * explicitly undefined.
+ *
  * By default the boundary detector is created from details.recordSize.
  *
  * EOF with bytes remaining which do not form a complete record is reported
@@ -98,7 +113,10 @@ export function createFixedRecordReader(
 
     options:
     RecordReaderOptions = {}
-): RecordReader<FixedFile> {
+): RecordReader<
+    FixedFile,
+    undefined
+> {
 
     const bufferPool =
         options.bufferPool
@@ -124,8 +142,14 @@ export function createFixedRecordReader(
             fileByteCursorFactory
         );
 }
+
+
 /**
  * Create a length-prefixed physical record reader.
+ *
+ * This reader performs physical framing only and therefore carries no
+ * parser-specific record state. Its PhysicalRecordContent recordState is
+ * explicitly undefined.
  *
  * By default the boundary detector is created from details.prefixSize
  * and details.recordLength.
@@ -144,7 +168,10 @@ export function createLengthPrefixedRecordReader(
 
     options:
     RecordReaderOptions = {}
-): RecordReader<LengthPrefixedFile> {
+): RecordReader<
+    LengthPrefixedFile,
+    undefined
+> {
 
     const bufferPool =
         options.bufferPool
@@ -173,8 +200,13 @@ export function createLengthPrefixedRecordReader(
         );
 }
 
+
 /**
  * Read one file as complete physical records.
+ *
+ * This cursor performs physical framing only. It does not derive
+ * parser-specific structural state, so every yielded PhysicalRecordContent
+ * carries recordState: undefined.
  *
  * The reader:
  *
@@ -233,7 +265,7 @@ async function* createRecordCursor(
     endOfFileBehaviour: EndOfFileBehaviour,
     bufferPool: FileBufferPool,
     fileByteCursorFactory: FileByteCursorFactory
-): RecordCursor {
+): RecordCursor<undefined> {
 
     const buffers:
         Uint8Array[] =
@@ -352,7 +384,9 @@ async function* createRecordCursor(
 
 
                 const record:
-                    PhysicalRecordContent = {
+                    PhysicalRecordContent<
+                        undefined
+                    > = {
 
                     buffers,
 
@@ -360,13 +394,17 @@ async function* createRecordCursor(
                     recordStart,
 
                     length:
-                    recordLength
+                    recordLength,
+
+                    recordState:
+                    undefined
                 };
 
 
                 /**
                  * The generator is suspended while the consumer uses this
-                 * record, so all referenced buffers remain valid.
+                 * record, so all referenced buffers and recordState remain
+                 * valid.
                  *
                  * Framing bytes remain retained as well. There is no need to
                  * release prefix or suffix framing separately from the record.
@@ -443,7 +481,10 @@ async function* createRecordCursor(
 
                     length:
                         bufferedLength
-                        - recordStart
+                        - recordStart,
+
+                    recordState:
+                    undefined
                 };
             } else {
                 /**

@@ -17,7 +17,7 @@ const encoder =
 
 function bytes(
     value: string
-): PhysicalRecordContent {
+): PhysicalRecordContent<undefined> {
 
     const content =
         encoder.encode(
@@ -34,7 +34,10 @@ function bytes(
             0,
 
         length:
-        content.length
+        content.length,
+
+        recordState:
+        undefined
     };
 }
 
@@ -306,7 +309,7 @@ test(
 
 
         const record:
-            PhysicalRecordContent = {
+            PhysicalRecordContent<undefined> = {
 
             buffers: [
                 buffer
@@ -316,7 +319,10 @@ test(
             prefix.length,
 
             length:
-            json.length
+            json.length,
+
+            recordState:
+            undefined
         };
 
 
@@ -356,7 +362,7 @@ test(
 
 
         const record:
-            PhysicalRecordContent = {
+            PhysicalRecordContent<undefined> = {
 
             buffers: [
                 first,
@@ -367,7 +373,10 @@ test(
             first.length,
 
             length:
-            second.length
+            second.length,
+
+            recordState:
+            undefined
         };
 
 
@@ -413,7 +422,7 @@ test(
 
 
         const record:
-            PhysicalRecordContent = {
+            PhysicalRecordContent<undefined> = {
 
             buffers: [
                 first,
@@ -427,7 +436,10 @@ test(
             length:
             encoder.encode(
                 `{"id":"123","name":"Fred"}`
-            ).length
+            ).length,
+
+            recordState:
+            undefined
         };
 
 
@@ -474,7 +486,7 @@ test(
 
 
         const record:
-            PhysicalRecordContent = {
+            PhysicalRecordContent<undefined> = {
 
             buffers: [
                 framing,
@@ -487,7 +499,10 @@ test(
 
             length:
                 first.length
-                + second.length
+                + second.length,
+
+            recordState:
+            undefined
         };
 
 
@@ -545,7 +560,7 @@ test(
 
 
         const record:
-            PhysicalRecordContent = {
+            PhysicalRecordContent<undefined> = {
 
             buffers: [
                 first,
@@ -556,7 +571,10 @@ test(
                 0,
 
             length:
-            json.length
+            json.length,
+
+            recordState:
+            undefined
         };
 
 
@@ -641,7 +659,7 @@ test(
 
 
         const record:
-            PhysicalRecordContent = {
+            PhysicalRecordContent<undefined> = {
 
             buffers: [
                 invalidUtf8
@@ -651,7 +669,10 @@ test(
                 0,
 
             length:
-            invalidUtf8.length
+            invalidUtf8.length,
+
+            recordState:
+            undefined
         };
 
 

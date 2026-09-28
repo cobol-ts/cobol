@@ -1,11 +1,13 @@
 import {
     type CursorLoaderConfig,
+    type CursorOptions,
     type EntityDataSet,
     type FixedFile,
     type LengthPrefixedFile,
     type LineFile,
     type Parser,
     type ParserMap,
+    type ParserRecordState,
     type PhysicalRecordContent,
     type RecordReaderMap
 } from "./cursor.loader.types";
@@ -59,14 +61,29 @@ interface DelimitedParserDetails {
 
 
 /*
+ * Parser-specific per-record state
+ */
+
+interface DelimitedRecordState {
+    readonly starts: Int32Array;
+    readonly ends: Int32Array;
+}
+
+
+/*
  * Valid parsers
  *
- * These parsers require no source-specific parser configuration
- * or prepared details.
+ * These parsers require no source-specific parser configuration,
+ * prepared details or per-record state.
  */
 
 const customerParser:
-    Parser<CustomerRow> = {
+    Parser<
+        CustomerRow,
+        undefined,
+        undefined,
+        undefined
+    > = {
 
     parse: () => ({
         id: "customer-1",
@@ -76,7 +93,12 @@ const customerParser:
 
 
 const transactionParser:
-    Parser<TransactionRow> = {
+    Parser<
+        TransactionRow,
+        undefined,
+        undefined,
+        undefined
+    > = {
 
     parse: () => ({
         customerId: "customer-1",
@@ -93,7 +115,8 @@ const delimitedCustomerParser:
     Parser<
         CustomerRow,
         DelimitedParserConfig,
-        DelimitedParserDetails
+        DelimitedParserDetails,
+        DelimitedRecordState
     > = {
 
     prepare: (
@@ -109,17 +132,23 @@ const delimitedCustomerParser:
     }),
 
     parse: (
-        _record,
+        record,
         details
-    ) => ({
-        id:
-            String(
-                details.separatorByte
-            ),
+    ) => {
+        const firstStart: number =
+            record.recordState.starts[0];
 
-        name:
-        details.config.separator
-    })
+        return {
+            id:
+                String(
+                    details.separatorByte
+                    + firstStart
+                ),
+
+            name:
+            details.config.separator
+        };
+    }
 };
 
 
@@ -140,11 +169,59 @@ type Parsers =
 
 
 /*
+ * Parser record-state associated type
+ */
+
+type CustomerRecordState =
+    ParserRecordState<
+        typeof customerParser
+    >;
+
+
+const customerRecordState:
+    CustomerRecordState =
+    undefined;
+
+
+// @ts-expect-error customer parser has no per-record state
+const invalidCustomerRecordState:
+    CustomerRecordState = {
+    starts: new Int32Array(1),
+    ends: new Int32Array(1)
+};
+
+
+type DelimitedCustomerRecordState =
+    ParserRecordState<
+        typeof delimitedCustomerParser
+    >;
+
+
+declare const delimitedRecordState:
+    DelimitedCustomerRecordState;
+
+
+const delimitedFirstStart: number =
+    delimitedRecordState.starts[0];
+
+
+// @ts-expect-error delimited parser requires DelimitedRecordState
+const invalidDelimitedRecordState:
+    undefined =
+    delimitedRecordState;
+
+
+/*
  * Parser implementation must satisfy its declared representation
  */
 
 const invalidCustomerParser:
-    Parser<CustomerRow> = {
+    Parser<
+        CustomerRow,
+        undefined,
+        undefined,
+        undefined
+    > = {
 
     // @ts-expect-error parser must return CustomerRow
     parse: () => ({
@@ -162,7 +239,8 @@ const parserUsesDetails:
     Parser<
         CustomerRow,
         DelimitedParserConfig,
-        DelimitedParserDetails
+        DelimitedParserDetails,
+        DelimitedRecordState
     > = {
 
     prepare: (
@@ -208,7 +286,8 @@ const parserUsesConfig:
     Parser<
         CustomerRow,
         DelimitedParserConfig,
-        DelimitedParserDetails
+        DelimitedParserDetails,
+        DelimitedRecordState
     > = {
 
     prepare: (
@@ -251,7 +330,8 @@ const invalidPrepareResult:
     Parser<
         CustomerRow,
         DelimitedParserConfig,
-        DelimitedParserDetails
+        DelimitedParserDetails,
+        DelimitedRecordState
     > = {
 
     // @ts-expect-error prepare must return DelimitedParserDetails
@@ -268,6 +348,35 @@ const invalidPrepareResult:
         name: "Customer One"
     })
 };
+
+
+/*
+ * A parser accepts only physical records carrying its declared state.
+ */
+
+declare const noStatePhysicalRecord:
+    PhysicalRecordContent<undefined>;
+
+
+declare const delimitedPhysicalRecord:
+    PhysicalRecordContent<DelimitedRecordState>;
+
+
+declare const delimitedPreparedDetails:
+    DelimitedParserDetails;
+
+
+delimitedCustomerParser.parse(
+    delimitedPhysicalRecord,
+    delimitedPreparedDetails
+);
+
+
+delimitedCustomerParser.parse(
+    // @ts-expect-error delimited parser requires DelimitedRecordState
+    noStatePhysicalRecord,
+    delimitedPreparedDetails
+);
 
 
 /*
@@ -1211,6 +1320,80 @@ const invalidPhysicalTypeConfig = {
 
 
 /*
+ * CursorOptions is a heterogeneous record-reader registry boundary.
+ *
+ * Individual RecordReader entries remain strongly typed, but different
+ * entries may carry different TRecordState types. CursorOptions therefore
+ * exposes the registry as RecordReaderMap<unknown>.
+ */
+
+const heterogeneousRecordReaders = {
+    line:
+        async function* (
+            _details: LineFile
+        ) {
+            yield physicalRecord(
+                new Uint8Array(0),
+                undefined
+            );
+        },
+
+    fixed:
+        async function* (
+            _details: FixedFile
+        ) {
+            yield physicalRecord(
+                new Uint8Array(0),
+                {
+                    starts:
+                        new Int32Array(
+                            1
+                        ),
+
+                    ends:
+                        new Int32Array(
+                            1
+                        )
+                } satisfies DelimitedRecordState
+            );
+        },
+
+    "length-prefixed":
+        async function* (
+            _details:
+            LengthPrefixedFile
+        ) {
+            yield physicalRecord(
+                new Uint8Array(0),
+                undefined
+            );
+        }
+};
+
+
+const heterogeneousCursorOptions:
+    CursorOptions<
+        Parsers,
+        string
+    > = {
+
+    parsers,
+
+    recordReaders:
+    heterogeneousRecordReaders,
+
+    compareEntityId:
+        (
+            left,
+            right
+        ) =>
+            left.localeCompare(
+                right
+            )
+};
+
+
+/*
  * Record reader map must contain every physical file type
  */
 
@@ -1232,7 +1415,7 @@ const completeRecordReaders = {
             _details
         ) {
         }
-} satisfies RecordReaderMap;
+} satisfies RecordReaderMap<undefined>;
 
 
 /*
@@ -1253,7 +1436,7 @@ const missingRecordReader = {
         }
 
 // @ts-expect-error every physical file type must have a record reader
-} satisfies RecordReaderMap;
+} satisfies RecordReaderMap<undefined>;
 
 
 /*
@@ -1280,7 +1463,7 @@ const invalidRecordReaderDetails = {
             LengthPrefixedFile
         ) {
         }
-} satisfies RecordReaderMap;
+} satisfies RecordReaderMap<undefined>;
 
 
 /*
@@ -1293,9 +1476,10 @@ const invalidRecordReaderDetails = {
  * offset zero.
  */
 
-function physicalRecord(
-    bytes: Uint8Array
-): PhysicalRecordContent {
+function physicalRecord<TRecordState>(
+    bytes: Uint8Array,
+    recordState: TRecordState
+): PhysicalRecordContent<TRecordState> {
 
     return {
         buffers: [
@@ -1306,9 +1490,30 @@ function physicalRecord(
             0,
 
         length:
-        bytes.length
+        bytes.length,
+
+        recordState
     };
 }
+
+
+/*
+ * Physical records require an explicit record state.
+ */
+
+// @ts-expect-error recordState is required even when its type is undefined
+const missingPhysicalRecordState:
+    PhysicalRecordContent<undefined> = {
+    buffers: [
+        new Uint8Array(0)
+    ],
+
+    startOffset:
+        0,
+
+    length:
+        0
+};
 
 
 /*
@@ -1316,7 +1521,7 @@ function physicalRecord(
  */
 
 const fixedReaderUsesRecordSize:
-    RecordReaderMap["fixed"] =
+    RecordReaderMap<undefined>["fixed"] =
     async function* (
         details
     ) {
@@ -1326,7 +1531,8 @@ const fixedReaderUsesRecordSize:
         yield physicalRecord(
             new Uint8Array(
                 size
-            )
+            ),
+            undefined
         );
     };
 
@@ -1336,7 +1542,7 @@ const fixedReaderUsesRecordSize:
  */
 
 const lengthPrefixedReaderUsesDetails:
-    RecordReaderMap[
+    RecordReaderMap<undefined>[
         "length-prefixed"
         ] =
     async function* (
@@ -1366,7 +1572,8 @@ const lengthPrefixedReaderUsesDetails:
         yield physicalRecord(
             new Uint8Array(
                 length
-            )
+            ),
+            undefined
         );
     };
 
@@ -1376,7 +1583,7 @@ const lengthPrefixedReaderUsesDetails:
  */
 
 const lineReaderHasOnlyLineDetails:
-    RecordReaderMap["line"] =
+    RecordReaderMap<undefined>["line"] =
     async function* (
         details
     ) {
@@ -1389,6 +1596,7 @@ const lineReaderHasOnlyLineDetails:
         yield physicalRecord(
             new Uint8Array(
                 filename.length
-            )
+            ),
+            undefined
         );
     };

@@ -4,7 +4,7 @@ import {
 } from "@cobol-ts/cursor-loader-types";
 
 
-/*
+/**
  * CSV column types
  */
 
@@ -15,7 +15,7 @@ export type CsvColumnType =
     | "character";
 
 
-/*
+/**
  * CSV column metadata
  */
 
@@ -26,7 +26,7 @@ export interface CsvColumn {
 }
 
 
-/*
+/**
  * CSV parser details
  *
  * These are the static source-specific details supplied by the consumer
@@ -40,17 +40,21 @@ export interface CsvColumn {
  */
 
 export interface CsvParserDetails {
-    readonly columns: readonly CsvColumn[];
+    readonly columns:
+        readonly CsvColumn[];
 
-    readonly separator: string;
+    readonly separator:
+        string;
 
-    readonly quote?: string;
+    readonly quote?:
+        string;
 
-    readonly escape?: string;
+    readonly escape?:
+        string;
 }
 
 
-/*
+/**
  * Prepared CSV details
  *
  * Runtime details created once for a particular CSV file by combining
@@ -74,33 +78,38 @@ export interface CsvParserDetails {
  */
 
 export interface CsvPreparedDetails {
-    readonly parserDetails: CsvParserDetails;
+    readonly parserDetails:
+        CsvParserDetails;
 
-    /*
+    /**
      * Physical CSV column -> logical configured column.
      *
      * -1 means the physical column is not required.
      */
+    readonly physicalToLogical:
+        Int32Array;
 
-    readonly physicalToLogical: Int32Array;
+    readonly physicalColumnCount:
+        number;
 
-    readonly physicalColumnCount: number;
+    readonly separatorByte:
+        number;
 
-    readonly separatorByte: number;
+    readonly quoteByte?:
+        number;
 
-    readonly quoteByte?: number;
+    readonly escapeByte?:
+        number;
 
-    readonly escapeByte?: number;
-
-    /*
+    /**
      * One reusable representation for this file.
      */
-
-    readonly row: MutableCsvRow;
+    readonly row:
+        MutableCsvRow;
 }
 
 
-/*
+/**
  * CSV row
  *
  * The row is a view over the current physical record.
@@ -117,7 +126,8 @@ export interface CsvPreparedDetails {
  */
 
 export interface CsvRow {
-    readonly details: CsvPreparedDetails;
+    readonly details:
+        CsvPreparedDetails;
 
     integer(
         index: number
@@ -137,7 +147,7 @@ export interface CsvRow {
 }
 
 
-/*
+/**
  * Mutable CSV row
  *
  * Used internally by the parser.
@@ -158,7 +168,10 @@ export interface MutableCsvRow
     extends CsvRow {
 
     reset(
-        record: PhysicalRecordContent
+        record:
+        PhysicalRecordContent<
+            undefined
+        >
     ): void;
 
     setColumn(
@@ -169,7 +182,7 @@ export interface MutableCsvRow
 }
 
 
-/*
+/**
  * CSV parser
  *
  * CsvParserDetails are supplied by FileDetails as parserConfig.
@@ -178,11 +191,16 @@ export interface MutableCsvRow
  *
  * parse() then uses those prepared details for every subsequent
  * physical data record.
+ *
+ * The current CSV implementation does not yet store parser-specific
+ * structural state in PhysicalRecordContent, so its TRecordState is
+ * explicitly undefined.
  */
 
 export type CsvParser =
     Parser<
         CsvRow,
         CsvParserDetails,
-        CsvPreparedDetails
+        CsvPreparedDetails,
+        undefined
     >;

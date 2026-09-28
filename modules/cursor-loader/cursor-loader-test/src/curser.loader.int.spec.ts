@@ -603,6 +603,8 @@ describe(
             const parser:
                 Parser<
                     string,
+                    undefined,
+                    undefined,
                     undefined
                 > = {
 
@@ -636,7 +638,7 @@ describe(
 
 
             const recordReaders:
-                RecordReaderMap = {
+                RecordReaderMap<undefined> = {
 
                 line:
                 lineReader,
@@ -736,6 +738,8 @@ describe(
             const parser:
                 Parser<
                     string,
+                    undefined,
+                    undefined,
                     undefined
                 > = {
 
@@ -771,7 +775,7 @@ describe(
 
 
             const recordReaders:
-                RecordReaderMap = {
+                RecordReaderMap<undefined> = {
 
                 line:
                     async function* () {
@@ -906,7 +910,10 @@ describe(
 
 
 function decodeRecord(
-    record: PhysicalRecordContent
+    record:
+    PhysicalRecordContent<
+        undefined
+    >
 ): string {
 
     const result =
