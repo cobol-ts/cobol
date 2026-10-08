@@ -4,6 +4,9 @@
 
 import {type Errors} from "@cobol-ts/errors";
 
+import {type RefCountedPool} from "@cobol-ts/ref_counted_pool";
+import {type HasByteBuffers} from "./debug.string";
+
 
 /*
  * Cardinality
@@ -23,8 +26,7 @@ export interface LineFile {
     readonly type:
         "line";
 
-    readonly filename:
-        string;
+    readonly filename: string;
 }
 
 
@@ -32,22 +34,19 @@ export interface FixedFile {
     readonly type:
         "fixed";
 
-    readonly filename:
-        string;
+    readonly filename: string;
 
-    readonly recordSize:
-        number;
+    readonly recordSize: number;
 }
+
 
 export interface LengthPrefixedFile {
     readonly type:
         "length-prefixed";
 
-    readonly filename:
-        string;
+    readonly filename: string;
 
-    readonly prefixSize:
-        number;
+    readonly prefixSize: number;
 
     readonly recordLength: (
         buffers:
@@ -56,6 +55,7 @@ export interface LengthPrefixedFile {
         number
     ) => number;
 }
+
 
 export type PhysicalFileDetails =
     | LineFile
@@ -78,378 +78,469 @@ export const NO_VALIDATION_ERRORS =
 
 
 /*
- * Physical record content
+ * Physical record data
  *
- * A borrowed view of one complete physical record together with the
- * parser-specific state associated with that record.
+ * buffers contains the physical byte buffers required to keep the current
+ * record alive. A record may begin part way through its first buffer, span any
+ * number of buffers, and end in a buffer which also contains bytes belonging to
+ * later records.
  *
- * TRecordState is deliberately required. There is no default state type:
- * every caller which handles physical records must make the record-state
- * ownership explicit. Parsers which require no per-record state should use
- * `undefined`.
- *
- * The record may span one or more byte buffers.
- *
- * startOffset is the logical offset of the first parser-visible record byte
- * across `buffers`, treating them as one contiguous byte sequence.
- *
- * length is the total number of parser-visible record bytes.
- *
- * Buffers are densely packed after startOffset. Every intermediate buffer is
- * used to its end; length determines where the record ends in the final
- * buffer.
- *
- * recordState contains mutable or immutable parser-specific information which
- * describes this particular record. The property reference is read-only, but
- * the state object itself may be mutable and reused when the pooled physical
- * record holder is safely rebound.
- *
- * The buffers are owned by the RecordCursor, not by this object.
- *
- * The bytes and recordState remain valid until the cursor is advanced or
- * closed.
+ * recordState contains parser-specific state associated with this physical
+ * record. Generic cursor and lifetime machinery do not interpret or reset it.
  */
-export interface PhysicalRecordContent<
-    TRecordState
-> {
-
-    readonly buffers:
-        readonly Uint8Array[];
-
-    /**
-     * Logical offset of the first parser-visible record byte across `buffers`,
-     * treating the supplied buffers as one contiguous byte sequence.
-     *
-     * This is not necessarily an offset within `buffers[0]`: framing bytes may
-     * occupy part or all of one or more earlier buffers.
-     */
-    readonly startOffset:
-        number;
-
-    readonly length:
-        number;
-
-    /**
-     * Parser-specific state describing this physical record.
-     *
-     * Examples include CSV field start/end offsets and flags derived while
-     * recognising the record.
-     *
-     * State which is invariant for the opened file belongs in ParserDetails
-     * instead. Temporary machinery which does not describe this record belongs
-     * in parser/reader scratch rather than here.
-     */
-    readonly recordState:
-        TRecordState;
+export interface PhysicalRecordData<TRecordState> {
+    readonly buffers: readonly Uint8Array[];
+    readonly recordState: TRecordState;
 }
 
 
 /*
- * Record readers
+ * Physical record range
  *
- * A record reader turns one configured physical file into a cursor of
- * complete physical records or recoverable record-level errors.
+ * startByte
+ *     Inclusive logical byte offset at which the current record begins.
  *
- * TRecordState is the state carried by every successful physical record
- * yielded by that cursor.
+ * endByte
+ *     Exclusive logical byte offset at which the completed record ends.
+ *     The parser establishes this value.
  *
- * Operational failures that prevent reliable continued processing are
- * reported by throwing.
+ * lastValidByte
+ *     Exclusive logical end of bytes currently known to have been read.
+ *     readMore() advances it and the parser must not inspect beyond it.
+ *
+ * All offsets are across buffers treated as one contiguous byte sequence.
+ * endByte may be less than lastValidByte when bytes for later records have
+ * already been read.
  */
-
-export type RecordReaderResult<
-    TRecordState
-> =
-    | PhysicalRecordContent<TRecordState>
-    | ValidationErrors;
+export interface PhysicalRecordRange {
+    startByte: number;
+    endByte: number;
+    lastValidByte: number;
+}
 
 
 /*
- * The RecordCursor owns the byte storage referenced by each
- * PhysicalRecordContent and controls the borrowed lifetime of its
- * recordState.
+ * Physical file state
  *
- * A yielded record remains valid only until the cursor is advanced
- * to the next result or the cursor is closed.
+ * fileFinished means lastValidByte is the end of the underlying file and no
+ * future readMore() call can make more bytes available.
+ */
+export interface PhysicalRecordFileState {
+    fileFinished: boolean;
+}
+
+
+/*
+ * Physical record lifetime
+ */
+export interface PhysicalRecordLifetime {
+    /**
+     * Finish using the current lease of this physical record.
+     *
+     * close() releases this record's references to its physical byte buffers
+     * and returns the physical-record object to its pool.
+     *
+     * The current lease must be closed exactly once. After close() the caller
+     * must not use this object again; the same pooled JavaScript object may
+     * subsequently represent another physical record.
+     */
+    close(): void;
+}
+
+
+/*
+ * Physical record diagnostic context
  *
- * Consumers must therefore finish parsing, validation and projection
- * before advancing the cursor, and must copy any data that needs to
- * outlive the current record.
+ * source identifies the physical source.
+ *
+ * recordNumber is one-based within that source.
+ *
+ * The internal pooled view is mutable because the same JavaScript object is
+ * reused. Parser and completed/public views expose this context as readonly.
+ */
+export interface PhysicalRecordContext {
+    source: string;
+    recordNumber: number;
+}
+
+
+/*
+ * Completed physical record
+ *
+ * This is the public/downstream view. Parsing has completed, so range, file
+ * state and provenance are readonly. buffers and recordState remain valid until
+ * close() is called.
+ */
+export type PhysicalRecordContent<TRecordState> =
+    PhysicalRecordData<TRecordState>
+    & Readonly<PhysicalRecordRange>
+    & Readonly<PhysicalRecordFileState>
+    & PhysicalRecordLifetime
+    & Readonly<PhysicalRecordContext>;
+
+
+/*
+ * Physical record reader capability
+ *
+ * readMore() acquires another pooled byte buffer, fills it from the current file
+ * position, appends that exact buffer to buffers, advances lastValidByte and
+ * sets fileFinished when EOF is discovered.
+ *
+ * readMore() does not modify startByte or endByte. The cursor establishes
+ * startByte; the parser establishes endByte.
+ *
+ * The parser remains inside one prepare() or parse() invocation while further
+ * I/O occurs, so ordinary parser-local state does not need to be serialised and
+ * reconstructed.
+ */
+export interface PhysicalRecordReader {
+    readMore(): Promise<void>;
+}
+
+
+/*
+ * Parser construction capability for a physical record.
+ *
+ * This is the common mutable physical capability used by both the parser view
+ * and the internal pooled view. It deliberately excludes provenance so the
+ * parser can receive provenance readonly while the cursor retains a mutable
+ * view.
+ *
+ * This is still one JavaScript object. No wrapper is created.
+ */
+type PhysicalRecordParserContent<TRecordState> =
+    PhysicalRecordData<TRecordState>
+    & PhysicalRecordRange
+    & PhysicalRecordFileState
+    & PhysicalRecordLifetime
+    & PhysicalRecordReader;
+
+
+/*
+ * Parser view of a physical record
+ *
+ * The parser may mutate range/file state as part of recognition and parsing,
+ * call readMore(), and read source/recordNumber for diagnostics.
+ *
+ * Provenance is readonly: the cursor owns source identity and record numbering.
+ *
+ * The parser does not see pool implementation details.
+ */
+export type ParserPhysicalRecordContent<TRecordState> =
+    PhysicalRecordParserContent<TRecordState>
+    & Readonly<PhysicalRecordContext>;
+
+
+/*
+ * File byte buffer pool
+ */
+export type FileBufferPool = RefCountedPool<Uint8Array>;
+
+
+/*
+ * Internal pooled physical-record state
+ *
+ * buffers is mutable internally so readMore() can append buffers, the cursor
+ * can transfer the carried final buffer into a new record, and close() can
+ * clear references without replacing the array object.
+ *
+ * Pool references are permanent dependencies of the pooled object.
+ */
+export interface PooledPhysicalRecordState<TRecordState> {
+    buffers: Uint8Array[];
+    readonly byteBufferPool: FileBufferPool;
+    readonly physicalContentPool: PhysicalContentPool<TRecordState>;
+}
+
+
+/*
+ * Internal cursor/lifetime view
+ *
+ * This is the same JavaScript object with the additional mutable capabilities
+ * required by cursor and lifetime code.
+ */
+export type PooledPhysicalRecordContent<TRecordState> =
+    PhysicalRecordParserContent<TRecordState>
+    & PooledPhysicalRecordState<TRecordState>
+    & PhysicalRecordContext;
+
+
+/*
+ * Physical record object pool
+ */
+export type PhysicalContentPool<TRecordState> =
+    RefCountedPool<PooledPhysicalRecordContent<TRecordState>>;
+
+
+/*
+ * Physical byte-buffer fill operation
+ *
+ * Fill the supplied pooled Uint8Array from the current position of file.
+ *
+ * The implementation must continue reading until either:
+ *
+ *     - buffer is completely full; or
+ *     - end of file is reached.
+ *
+ * The returned number is therefore:
+ *
+ *     buffer.length
+ *         a completely filled physical byte buffer;
+ *
+ *     1 .. buffer.length - 1
+ *         the final partially-filled physical byte buffer;
+ *
+ *     0
+ *         EOF before any additional bytes were read.
+ *
+ * A short result therefore means EOF.
+ *
+ * The supplied Uint8Array must remain the same object. Implementations must
+ * not replace it with a subarray, slice or another view.
+ *
+ * readMore() consumes this returned count internally and advances
+ * lastValidByte by that amount.
+ *
+ * If the returned count is less than buffer.length, readMore() also sets
+ * fileFinished.
+ *
+ * The parser does not require the byte count as a separate readMore() return
+ * value.
+ *
+ * The Promise deliberately leaks through this abstraction.
+ *
+ * This is an intentional trade-off. It creates asynchronous garbage at
+ * physical-buffer granularity rather than forcing callback-style continuation
+ * throughout the parser and cursor stack.
+ */
+
+export type FillFileBuffer<TFile> = (
+    file:
+    TFile,
+    buffer:
+    Uint8Array
+) => Promise<
+    number
+>;
+
+
+/*
+ * Record cursor dependencies
+ *
+ * TFile is deliberately opaque to the shared cursor types.
+ *
+ * A Node implementation may use FileHandle. Tests may supply a much smaller
+ * in-memory file abstraction.
+ *
+ * This keeps the physical cursor independent of Node-specific file types while
+ * retaining a fully typed relationship between the file and its fill
+ * operation.
+ */
+
+export interface RecordCursorOptions<
+    TRecordState,
+    TFile
+> {
+
+    readonly source: string;
+
+    readonly byteBufferPool: FileBufferPool;
+
+    readonly physicalContentPool:
+        PhysicalContentPool<
+            TRecordState
+        >;
+
+    readonly fillFileBuffer:
+        FillFileBuffer<
+            TFile
+        >;
+}
+
+
+/*
+ * Record cursor result
+ *
+ * result is the representation produced by the parser.
+ *
+ * physicalRecord is the completed physical record from which that
+ * representation was produced.
+ *
+ * This is the same physical-record object used by the parser. No physical
+ * record wrapper is allocated and no bytes are copied.
+ *
+ * The client owns the lifetime of physicalRecord and calls close() when it no
+ * longer requires the physical bytes or anything borrowing from them.
+ */
+
+export interface RecordCursorResult<
+    TRepresentation,
+    TRecordState
+> {
+
+    readonly result:
+        ParserResult<
+            TRepresentation
+        >;
+
+    readonly physicalRecord:
+        PhysicalRecordContent<
+            TRecordState
+        >;
+}
+
+
+/*
+ * Record cursor
+ *
+ * The cursor supplies pooled physical-record objects.
+ *
+ * It does not understand physical record syntax.
+ *
+ * In particular the cursor has no knowledge of:
+ *
+ *     - line endings;
+ *     - fixed-width records;
+ *     - length prefixes;
+ *     - CSV quoting;
+ *     - RecordBoundaryDetector.
+ *
+ * The cursor establishes startByte for each physical record.
+ *
+ * The parser:
+ *
+ *     - examines bytes from startByte up to lastValidByte;
+ *     - calls record.readMore() when it needs more bytes;
+ *     - establishes endByte when it finds the current physical-record
+ *       boundary.
+ *
+ * readMore():
+ *
+ *     - appends byte buffers;
+ *     - advances lastValidByte;
+ *     - establishes fileFinished when it discovers EOF.
+ *
+ * Between records, the cursor retains one additional reference only:
+ *
+ *     the final byte buffer of the previous physical record.
+ *
+ * That exact Uint8Array is transferred into the next physical record.
+ *
+ * The cursor also transfers the valid-byte range associated with that carried
+ * buffer so the next parser can immediately inspect already-read bytes.
+ *
+ * The cursor does not close yielded physical records. Their lifetime belongs
+ * to the client.
+ *
+ * Operational I/O failures are reported by throwing.
  */
 
 export type RecordCursor<
+    TRepresentation,
     TRecordState
 > =
     AsyncGenerator<
-        RecordReaderResult<TRecordState>,
+        RecordCursorResult<
+            TRepresentation,
+            TRecordState
+        >,
         void,
-        unknown
+        void
     >;
 
 
 /*
- * Record reader
+ * Optional physical-record boundary helper
  *
- * Each physical-file implementation creates its own RecordCursor.
+ * This is an optional parser implementation helper.
  *
- * Reader-specific dependencies are supplied when the RecordReader itself
- * is constructed. Those dependencies are responsible for ensuring that
- * every yielded PhysicalRecordContent carries the declared TRecordState.
+ * The generic RecordCursor has no visibility of this interface and must not
+ * import or depend upon it.
  *
- * For simple readers this state may be `undefined`. Format-aware readers may
- * populate parser-specific structural state while recognising the record.
+ * Parsers whose physical boundary can be located independently of their other
+ * parsing work may use a RecordBoundaryDetector.
  *
- * The mechanism used to create, reset and pool record state is deliberately
- * hidden from consumers of the RecordReader.
- */
-
-export type RecordReader<
-    TDetails extends PhysicalFileDetails,
-    TRecordState
-> = (
-    details: TDetails
-) => RecordCursor<TRecordState>;
-
-
-/*
- * The reader map is derived from PhysicalFileDetails and parameterised by
- * the state carried by its physical records.
- *
- * This means that every known physical file type must have exactly the
- * appropriately typed reader entry, and that all consumers of the map must
- * explicitly propagate the record-state type.
- */
-
-export type RecordReaderMap<
-    TRecordState
-> = {
-    [TDetails in PhysicalFileDetails as TDetails["type"]]:
-    RecordReader<
-        TDetails,
-        TRecordState
-    >;
-};
-
-/**
- * Optional helper for record readers whose physical record boundary can be
- * located independently of parser-specific structural state.
- *
- * It is not a universal parser boundary. A format-aware RecordReader may
- * bypass RecordBoundaryDetector completely when record recognition and
- * structural parsing should be fused; CSV is the primary example.
+ * Parsers for which boundary detection and structural parsing should be fused
+ * may ignore it completely. CSV is the primary example.
  *
  * The supplied buffers are treated as one logical contiguous byte sequence.
- * All offsets passed to or returned from this interface are offsets into
- * that logical sequence, not offsets into an individual Uint8Array.
  *
- * A physical record may contain framing bytes which are not part of the
- * data presented to the parser.
+ * lastValidByte is the exclusive logical end of bytes which currently exist.
  *
- * For example:
- *
- *     fixed:
- *         [record data]
- *
- *     line:
- *         [record data][CR][LF]
- *
- *     length-prefixed:
- *         [prefix][record data]
+ * Implementations must never inspect bytes at or beyond lastValidByte.
  *
  * No method may modify the supplied buffers.
  *
- * Implementations should not allocate per record. This interface is used
- * on the physical-record hot path.
+ * Implementations should not allocate per record.
  */
+
 export interface RecordBoundaryDetector {
 
     /**
      * Find the logical offset at which the next physical record starts.
      *
-     * @param buffers
-     * The currently available physical byte buffers.
+     * frameStart is the beginning of the current physical frame, including
+     * any prefix framing.
      *
-     * @param frameStart
-     * The logical offset of the first byte of the current physical record,
-     * including any prefix framing.
+     * searchStart is the first byte not already examined while searching for
+     * the physical boundary.
      *
-     * @param searchStart
-     * The logical offset of the first byte which has not already been
-     * examined while locating the end of the current physical record.
+     * lastValidByte is the exclusive logical end of currently available file
+     * bytes.
      *
-     * When this method returns -1, the caller may append more buffers and
-     * call it again with searchStart advanced past bytes already examined.
-     *
-     * Detectors which search for a terminator should therefore begin at
-     * searchStart rather than frameStart.
-     *
-     * Detectors which can calculate the boundary directly, such as
-     * fixed-width or length-prefixed detectors, may ignore searchStart.
-     *
-     * @returns
-     * The logical offset of the first byte of the next physical record.
-     *
-     * Returns -1 when the currently supplied buffers do not yet contain a
-     * complete current record.
-     *
-     * Examples:
-     *
-     * Fixed-width:
-     *
-     *     [a b c d][W X Y Z]
-     *      ^        ^
-     *      |        nextRecordStart
-     *      frameStart
-     *
-     * Line-oriented:
-     *
-     *     [a b c][CR][LF][W X Y Z]
-     *      ^             ^
-     *      |             nextRecordStart
-     *      frameStart
-     *
-     * Length-prefixed:
-     *
-     *     [prefix][a b c d][next prefix]
-     *      ^              ^
-     *      |              nextRecordStart
-     *      frameStart
+     * Returns -1 when the currently available bytes do not yet contain a
+     * complete physical record.
      */
     nextRecordStart(
-        buffers: readonly Uint8Array[],
-        frameStart: number,
-        searchStart: number
+        buffers:
+        readonly Uint8Array[],
+        frameStart:
+        number,
+        searchStart:
+        number,
+        lastValidByte:
+        number
     ): number;
 
 
     /**
-     * Find the logical offset of the first byte of record data.
+     * Find the logical offset of the first parser-visible byte within the
+     * physical frame.
      *
-     * `frameStart` identifies the beginning of the physical record,
-     * including any prefix framing.
-     *
-     * For fixed-width and line-oriented records there is no prefix, so the
-     * record starts at frameStart:
-     *
-     *     [record data]
-     *      ^
-     *
-     *     [record data][LF]
-     *      ^
-     *
-     * For a length-prefixed record the prefix is framing and is excluded
-     * from the data presented to the parser:
-     *
-     *     [prefix][record data]
-     *             ^
-     *
-     * The returned offset must be greater than or equal to frameStart.
+     * For a format with no prefix framing this will normally be frameStart.
      */
     recordStart(
-        frameStart: number
+        frameStart:
+        number
     ): number;
 
 
     /**
-     * Find the logical offset of the final byte of record data.
+     * Find the inclusive logical offset of the final parser-visible byte
+     * within the physical frame.
      *
-     * This method is called only after nextRecordStart() has successfully
-     * returned the beginning of the following physical record.
-     *
-     * @param buffers
-     * The logical byte sequence containing the complete current record.
-     *
-     * @param nextRecordStart
-     * The logical offset previously returned by nextRecordStart().
-     *
-     * @returns
-     * The logical offset of the final byte belonging to the current record's
-     * data.
-     *
-     * Any suffix framing bytes are excluded.
-     *
-     * Fixed-width:
-     *
-     *     [record data][next record]
-     *                 ^
-     *                 nextRecordStart
-     *
-     *     recordEnd = nextRecordStart - 1
-     *
-     * Line-oriented:
-     *
-     *     [record data][CR][LF][next record]
-     *                         ^
-     *                         nextRecordStart
-     *
-     *     recordEnd is the byte immediately before CR.
-     *
-     * Length-prefixed:
-     *
-     *     [prefix][record data][next prefix]
-     *                          ^
-     *                          nextRecordStart
-     *
-     *     recordEnd = nextRecordStart - 1
-     *
-     * The result is inclusive.
-     *
-     * An empty record is valid where the framing format permits it. In that
-     * case recordEnd may be one less than recordStart().
+     * An empty parser-visible record may be represented by a result one less
+     * than recordStart().
      */
     recordEnd(
-        buffers: readonly Uint8Array[],
-        nextRecordStart: number
+        buffers:
+        readonly Uint8Array[],
+        nextRecordStart:
+        number
     ): number;
 }
 
-export const nullRecordStart = (frameStart: number) => frameStart;
+
+export const nullRecordStart =
+    (
+        frameStart:
+        number
+    ) =>
+        frameStart;
+
+
 /*
- * Parser
- *
- * A parser has four associated types:
- *
- * Representation
- *     The successfully parsed representation produced for each data record.
- *
- * ParserConfig
- *     Static source-specific configuration supplied in FileDetails.
- *
- * ParserDetails
- *     Opened-file details used while parsing this particular file.
- *
- *     These may simply be the ParserConfig, but they are allowed to be a
- *     different type derived from it.
- *
- *     For example, a CSV parser may combine its configured columns and
- *     separator rules with information read from the header row to produce
- *     prepared details containing the resolved physical column positions.
- *
- *     ParserDetails must not contain mutable structural state describing the
- *     current data record. That belongs in TRecordState.
- *
- * TRecordState
- *     Parser-specific state whose lifetime is exactly the lifetime of one
- *     PhysicalRecordContent.
- *
- *     Examples include CSV field start/end offsets and field flags.
- *
- *     This type is deliberately required and has no default. Parsers which
- *     require no per-record state should use `undefined` explicitly.
- *
- * A parser may optionally consume the first physical record to prepare its
- * ParserDetails. This supports formats where the first record contains file
- * metadata, such as a CSV header.
- *
- * Parsers receive PhysicalRecordContent<TRecordState> rather than assuming
- * that every physical record is represented by one contiguous Uint8Array or
- * that current-record structural state is held separately from the record.
- *
- * Successful operations return their value directly.
- * Recoverable data failures return Errors.
- *
- * This deliberately avoids allocating a success wrapper on the per-record
- * hot path.
+ * Parser result
  */
 
 export type ParserResult<T> =
@@ -457,27 +548,608 @@ export type ParserResult<T> =
     | Errors;
 
 
-export interface Parser<
-    Representation,
-    ParserConfig,
-    ParserDetails,
-    TRecordState
-> {
-    prepare?: (
-        firstRecord:
-        PhysicalRecordContent<TRecordState>,
-        config:
-        ParserConfig
-    ) => ParserResult<ParserDetails>;
+/*
+ * Projection definition
+ *
+ * The authoring form is ergonomic:
+ *
+ *     age: {
+ *         type: "integer"
+ *     }
+ *
+ * The canonical form is explicit:
+ *
+ *     age: {
+ *         type: "integer",
+ *         path: [
+ *             "age"
+ *         ]
+ *     }
+ *
+ * Canonicalisation happens once when configuration is prepared. Runtime
+ * projection code consumes only the canonical form.
+ */
 
-    parse(
-        record:
-        PhysicalRecordContent<TRecordState>,
-        details:
-        ParserDetails
-    ): ParserResult<Representation>;
+
+/*
+ * Supported projected scalar kinds.
+ */
+
+export type ProjectionFieldType =
+    | "integer"
+    | "float"
+    | "character"
+    | "string";
+
+
+/*
+ * Authoring projection field.
+ *
+ * path is optional. When omitted, canonicalisation uses the field name as a
+ * single path component.
+ */
+
+export interface ProjectionFieldAuthoring<
+    TType extends ProjectionFieldType =
+        ProjectionFieldType
+> {
+
+    readonly type: TType;
+
+    readonly path?: readonly string[];
 }
 
+
+/*
+ * Authoring projection.
+ */
+
+export type ProjectionAuthoring =
+    Readonly<
+        Record<
+            string,
+            ProjectionFieldAuthoring
+        >
+    >;
+
+
+/*
+ * Canonical projection field.
+ *
+ * Runtime projection code never needs to handle a missing path.
+ */
+
+export interface ProjectionField<
+    TType extends ProjectionFieldType =
+        ProjectionFieldType
+> {
+
+    readonly type: TType;
+
+    readonly path: readonly string[];
+}
+
+
+/*
+ * Canonical version of an authoring projection.
+ *
+ * The author's exact field names and field types are preserved while every
+ * path becomes explicit.
+ */
+
+export type CanonicalProjection<
+    TProjection extends ProjectionAuthoring
+> = {
+    readonly [K in keyof TProjection]:
+    ProjectionField<
+        TProjection[K]["type"]
+    >;
+};
+
+
+/*
+ * TypeScript value represented by one projection field.
+ */
+
+export type ProjectionFieldValue<
+    TField extends ProjectionFieldAuthoring
+> =
+    TField["type"] extends | "integer"
+        | "float"
+        ? number
+        : TField["type"] extends | "character"
+            | "string"
+            ? string
+            : never;
+
+
+/*
+ * Application-facing projected view.
+ *
+ * Projection fields become lazy accessors rather than materialised values.
+ */
+
+export type ProjectionView<
+    TProjection extends ProjectionAuthoring
+> = {
+    readonly [K in keyof TProjection]:
+    () => ProjectionFieldValue<
+        TProjection[K]
+    >;
+};
+
+
+/*
+ * Projection field compatible with one application-facing accessor.
+ *
+ * The application interface is authoritative. A numeric accessor may be
+ * backed by either an integer or float projection. A string accessor may be
+ * backed by either a character or string projection.
+ */
+
+export type ProjectionFieldFor<TAccessor> =
+    TAccessor extends () => number
+        ? ProjectionFieldAuthoring<
+            | "integer"
+            | "float"
+        >
+        : TAccessor extends () => string
+            ? ProjectionFieldAuthoring<
+                | "character"
+                | "string"
+            >
+            : never;
+
+
+/*
+ * Authoring projection for one application-facing interface.
+ *
+ * Every member of TResult must be represented by one compatible projection
+ * field.
+ */
+
+export type ProjectionDefinition<TResult> = {
+    readonly [K in keyof TResult]:
+    ProjectionFieldFor<
+        TResult[K]
+    >;
+};
+
+/*
+ * Physical-record capability retained by a lazy projection.
+ *
+ * Projection accessors need only:
+ *
+ *     - the physical byte buffers;
+ *     - the completed physical byte range;
+ *     - diagnostic provenance.
+ *
+ * They deliberately do not receive parser-owned recordState, readMore(),
+ * file-state mutation, lifetime operations or pool internals.
+ *
+ * The actual runtime object is still the same PhysicalRecordContent object.
+ * This interface merely exposes the narrower capability required by projection.
+ */
+export interface ProjectionPhysicalRecord
+    extends HasByteBuffers,
+        Readonly<PhysicalRecordRange>,
+        Readonly<PhysicalRecordContext> {
+}
+
+
+/*
+ * Format-specific physical-byte diagnostic rendering.
+ *
+ * Rendering requires only the physical byte buffers and a requested logical
+ * range. It does not require parser-owned record state, provenance, lifetime
+ * operations or I/O capability.
+ *
+ * startByte is inclusive.
+ * endByte is exclusive.
+ */
+export interface PhysicalRecordDebugRenderer {
+
+    toDebugString(
+        record:
+        HasByteBuffers,
+        startByte:
+        number,
+        endByte:
+        number
+    ): string;
+}
+
+/**
+ * Runtime factory for one reusable application-facing projection.
+ *
+ * TProjection
+ *     The application interface exposed to callers, for example Customer.
+ *
+ * TRepresentation
+ *     The parser-specific representation consumed by the projection accessors.
+ *
+ * A projection object is created once and may then be rebound to successive
+ * records.
+ *
+ * Lifecycle:
+ *
+ *     create()
+ *         creates one complete, unbound projection object;
+ *
+ *     bind()
+ *         associates that existing projection with the current parser
+ *         representation and physical record;
+ *
+ *     clear()
+ *         removes those lease-specific references before the projection is
+ *         retained for reuse.
+ *
+ * create() may allocate the projection object and its accessor functions.
+ *
+ * bind() and clear() must not allocate another projection object or change its
+ * runtime shape.
+ *
+ * The supplied physical record is the authoritative source of physical
+ * provenance, including source name and record number.
+ *
+ * A projection must not be bound again until clear() has been called.
+ * Accessing a projection while it is unbound is invalid.
+ */
+export interface ProjectionFactory<
+    TProjection,
+    TRepresentation
+> {
+
+    /**
+     * Create one complete reusable projection object in its unbound state.
+     */
+    create():
+        TProjection;
+
+
+    /**
+     * Bind an existing projection to one logical record.
+     *
+     * The projection borrows both representation and physicalRecord for the
+     * duration of the current lease.
+     */
+    bind(
+        projection:
+        TProjection,
+        representation:
+        TRepresentation,
+        physicalRecord:
+        ProjectionPhysicalRecord
+    ): void;
+
+
+    /**
+     * Return an existing projection to its unbound state.
+     *
+     * All references to the previous representation and physical record must be
+     * removed so neither is retained by the reusable projection.
+     */
+    clear(
+        projection:
+        TProjection
+    ): void;
+}
+
+/*
+ * Projection support
+ *
+ * ProjectionSupport exposes the parser-specific operations required by the
+ * parser-independent projection layer.
+ *
+ * The projection describes a logical field using an already-tokenised path.
+ * The parser decides what that path means for the representation it produces.
+ *
+ * Examples:
+ *
+ *     JSONL
+ *         ["customer", "age"]
+ *         traverses object properties.
+ *
+ *     CSV
+ *         ["AGE"]
+ *         identifies a column.
+ *
+ *     COBOL
+ *         ["CUSTOMER", "PERSON", "AGE"]
+ *         identifies a field through the record layout.
+ *
+ * Paths are supplied as string arrays so implementations do not need to parse
+ * compound path strings such as "customer.person.age" on the processing path.
+ *
+ * ProjectionSupport is deliberately coupled to Parser. It is not an
+ * independently configurable strategy. Each parser has exactly one projection
+ * interpretation for the representation it produces.
+ */
+
+export interface ProjectionSupport<TRepresentation> {
+
+    integer(
+        representation:
+        TRepresentation,
+        path:
+        readonly string[]
+    ): number;
+
+    float(
+        representation:
+        TRepresentation,
+        path:
+        readonly string[]
+    ): number;
+
+    character(
+        representation:
+        TRepresentation,
+        path:
+        readonly string[]
+    ): string;
+
+    string(
+        representation:
+        TRepresentation,
+        path:
+        readonly string[]
+    ): string;
+}
+
+/*
+ * Parser
+ *
+ * A parser has four associated types:
+ *
+ * TRepresentation
+ *     The successfully parsed representation produced for each data record.
+ *
+ * TParserConfig
+ *     Static source-specific configuration supplied for this parser.
+ *
+ * TParserDetails
+ *     Opened-source details derived once for this physical source.
+ *
+ *     These may simply be TParserConfig, but may instead contain information
+ *     derived from a bootstrap physical record.
+ *
+ *     For example, a CSV parser may combine configured column definitions
+ *     with information obtained from a header record.
+ *
+ * TRecordState
+ *     Parser-specific mutable or immutable state associated with one physical
+ *     record.
+ *
+ *     Examples include CSV field start/end offsets and field flags.
+ *
+ *     The state belongs to the parser. Generic cursor and lifetime code do not
+ *     interpret or reset it.
+ *
+ *
+ * Physical input model
+ *
+ * prepare() and parse() are each invoked once for their respective physical
+ * record.
+ *
+ * The parser remains inside that invocation while it determines how much
+ * physical input belongs to the record.
+ *
+ * If more file data is required it calls:
+ *
+ *     await record.readMore()
+ *
+ * and continues directly from the same ordinary local parsing state.
+ *
+ * There is deliberately no separate recognition phase and no need-more-data
+ * result which would require parser state to be dehydrated and reconstructed.
+ *
+ * readMore() may append a physical byte buffer containing bytes belonging to
+ * later records as well as the current one.
+ *
+ * Each readMore() advances lastValidByte by the number of additional physical
+ * file bytes obtained.
+ *
+ * If a read discovers EOF, readMore() also sets fileFinished.
+ *
+ * The parser scans only bytes before lastValidByte.
+ *
+ * Before returning successfully, the parser must set endByte to the exclusive
+ * physical end of the current record.
+ *
+ * endByte may be less than lastValidByte when already-read bytes belong to
+ * later records.
+ *
+ * startByte and endByte describe the physical record including framing.
+ *
+ * Parser-visible ranges within that record belong to parser logic and, where
+ * they must survive parsing, TRecordState.
+ *
+ * Successful operations return their value inside the Promise.
+ *
+ * Recoverable data failures return Errors.
+ *
+ * prepare() and parse() receive readonly source and recordNumber provenance so
+ * parser-specific failures can be fully contextualised where they are created.
+ *
+ * The Promise is intentional. It preserves ordinary parser-local state across
+ * readMore() without requiring callback-style continuation throughout the
+ * parser stack.
+ *
+ *
+ * Projection model
+ *
+ * A parser also supplies ProjectionSupport for the representation it produces.
+ *
+ * This keeps the declarative projection layer independent of physical format.
+ * Projection code asks for typed values at logical paths; the parser owns the
+ * format-specific meaning and execution of those paths.
+ *
+ * ProjectionSupport is part of the parser contract rather than a separately
+ * selectable strategy.
+ *
+ *
+ * Diagnostic rendering
+ *
+ * A parser also supplies PhysicalRecordDebugRenderer because the parser knows
+ * how bytes belonging to its physical format should be represented to a
+ * developer.
+ *
+ * Generic cursor, projection and lifetime code deliberately treats physical
+ * record contents as opaque bytes. It does not know whether those bytes are
+ * UTF-8 JSON, CSV text, EBCDIC COBOL data, binary data, or another future
+ * format.
+ *
+ * Diagnostic rendering deliberately receives only HasByteBuffers plus an
+ * explicit logical range. It does not receive TRecordState and therefore does
+ * not force parser-owned record state through the projection type system.
+ *
+ * startByte is inclusive and endByte is exclusive.
+ *
+ * The method is diagnostic only. It must not modify the physical record,
+ * advance the cursor, perform additional I/O, or change parser state.
+ *
+ * The returned string is raw diagnostic context. Parser and projection code
+ * combine it with readonly physical provenance when constructing errors.
+ */
+
+
+/**
+ * Parser for one logical record format.
+ *
+ * prepare() and parse() receive the parser capability of one physical-record
+ * object:
+ *
+ *     PhysicalRecordData
+ *         &
+ *     mutable PhysicalRecordRange
+ *         &
+ *     mutable PhysicalRecordFileState
+ *         &
+ *     PhysicalRecordLifetime
+ *         &
+ *     PhysicalRecordReader
+ *         &
+ *     readonly PhysicalRecordContext
+ *
+ * This is one JavaScript object. No parser wrapper is allocated.
+ *
+ * The parser also supplies:
+ *
+ *     ProjectionSupport<TRepresentation>
+ *         typed logical access to the representation;
+ *
+ *     PhysicalRecordDebugRenderer
+ *         format-specific rendering of physical bytes.
+ *
+ * PhysicalRecordDebugRenderer is deliberately independent of TRecordState.
+ */
+export type Parser<
+    TRepresentation,
+    TParserConfig,
+    TParserDetails,
+    TRecordState
+> =
+    ProjectionSupport<
+        TRepresentation
+    >
+    & PhysicalRecordDebugRenderer
+    & {
+
+    /**
+     * Prepare this parser for one physical source.
+     *
+     * prepare() is optional because many formats need no bootstrap record.
+     *
+     * When present, the first physical record is supplied here.
+     *
+     * The parser may inspect bytes from firstRecord.startByte up to
+     * firstRecord.lastValidByte and call firstRecord.readMore() as often as
+     * necessary.
+     *
+     * Each readMore() advances lastValidByte and may set fileFinished if that
+     * read discovers EOF.
+     *
+     * Typical work includes:
+     *
+     *     - interpreting a header;
+     *     - validating source-specific structure;
+     *     - mapping physical fields to logical fields;
+     *     - compiling parser configuration into hot-path runtime details.
+     *
+     * Before returning successfully, endByte must describe the exclusive
+     * physical end of this first record.
+     *
+     * The returned TParserDetails are retained and supplied to parse() for
+     * subsequent data records.
+     *
+     * Returning Errors represents a recoverable preparation failure.
+     */
+    readonly prepare?: (
+        firstRecord:
+        ParserPhysicalRecordContent<
+            TRecordState
+        >,
+        config:
+        TParserConfig
+    ) => Promise<
+        ParserResult<
+            TParserDetails
+        >
+    >;
+
+
+    /**
+     * Parse one physical data record.
+     *
+     * parse() owns physical scanning as well as interpretation of this record.
+     *
+     * It may inspect bytes from record.startByte up to record.lastValidByte and
+     * call record.readMore() whenever additional physical input is required.
+     *
+     * readMore() advances lastValidByte as new physical bytes become available.
+     *
+     * record.fileFinished indicates that record.lastValidByte is the end of the
+     * underlying file.
+     *
+     * Parser-local scanning state remains ordinary local state across those
+     * awaits.
+     *
+     * Parser-specific structural facts which must survive with the completed
+     * physical record belong in record.recordState.
+     *
+     * Before returning successfully, record.endByte must describe the exclusive
+     * physical end of the current record.
+     *
+     * record.endByte may be less than record.lastValidByte when bytes belonging
+     * to later records have already been read.
+     *
+     * The returned representation may be materialised or may borrow from the
+     * physical record.
+     *
+     * A borrowed representation remains valid only while the corresponding
+     * PhysicalRecordContent remains open.
+     *
+     * Returning Errors represents a recoverable parsing failure.
+     */
+    readonly parse: (
+        record:
+        ParserPhysicalRecordContent<
+            TRecordState
+        >,
+        details:
+        TParserDetails
+    ) => Promise<
+        ParserResult<
+            TRepresentation
+        >
+    >;
+};
+
+
+/*
+ * Heterogeneous parser registry
+ */
 
 export type ParserMap =
     Record<
@@ -545,28 +1217,22 @@ export type ParserRecordState<TParser> =
  * FileDetails contains the static parser configuration supplied by the
  * consumer.
  *
- * Parsers whose configuration type is undefined do not require
- * parserConfig in the source definition.
+ * Parsers whose configuration type is undefined do not require parserConfig.
  *
- * Parsers with a concrete configuration type require parserConfig and
- * retain that parser-specific type.
+ * Parsers with a concrete configuration type require parserConfig and retain
+ * that parser-specific type.
  *
  * Prepared ParserDetails are opened-file state and are not part of
  * FileDetails.
- *
- * Current-record parser state is represented separately by
- * ParserRecordState<TParser> and lives inside PhysicalRecordContent.
  */
 
 export type FileParserConfig<TParser> =
     [ParserConfig<TParser>] extends [undefined]
         ? {
-            readonly parserConfig?:
-                undefined;
+            readonly parserConfig?: undefined;
         }
         : {
-            readonly parserConfig:
-                ParserConfig<TParser>;
+            readonly parserConfig: ParserConfig<TParser>;
         };
 
 
@@ -575,11 +1241,10 @@ export type FileParserConfig<TParser> =
  */
 
 export interface DataError {
-    readonly source?:
-        string;
 
-    readonly message:
-        string;
+    readonly source?: string;
+
+    readonly message: string;
 }
 
 
@@ -594,26 +1259,31 @@ export type FileDetails<
     EntityId
 > =
     PhysicalFileDetails
-    & FileParserConfig<TParsers[KParser]>
+    & FileParserConfig<
+    TParsers[KParser]
+>
     & {
-    readonly parser:
-        KParser;
+    readonly parser: KParser;
 
     readonly project: (
         representation:
-        ParserRepresentation<TParsers[KParser]>
+        ParserRepresentation<
+            TParsers[KParser]
+        >
     ) => T;
 
-    readonly cardinality:
-        Cardinality;
+    readonly cardinality: Cardinality;
 
     readonly entityId: (
-        value: T
+        value:
+        T
     ) => EntityId;
 
     readonly checkRepresentation?: (
         representation:
-        ParserRepresentation<TParsers[KParser]>
+        ParserRepresentation<
+            TParsers[KParser]
+        >
     ) => ValidationErrors;
 };
 
@@ -668,8 +1338,7 @@ export type ProjectedValue<TDetails> =
 
 export type SourceCardinality<TDetails> =
     TDetails extends {
-            cardinality:
-                infer C extends Cardinality;
+            cardinality: infer C extends Cardinality;
         }
         ? C
         : never;
@@ -699,8 +1368,12 @@ export type ResolveCardinality<
 export type EntityDataSetType<TConfig> = {
     readonly [K in keyof TConfig]:
     ResolveCardinality<
-        ProjectedValue<TConfig[K]>,
-        SourceCardinality<TConfig[K]>
+        ProjectedValue<
+            TConfig[K]
+        >,
+        SourceCardinality<
+            TConfig[K]
+        >
     >;
 };
 
@@ -710,8 +1383,8 @@ export type EntityDataSetType<TConfig> = {
  */
 
 export interface EntityDataSetErrors<TConfig> {
-    hasErrors():
-        boolean;
+
+    hasErrors(): boolean;
 
     errors():
         readonly DataError[];
@@ -729,39 +1402,47 @@ export interface EntityDataSetErrors<TConfig> {
  * A source with cardinality "one" is exposed as T, not T | undefined.
  *
  * A missing value is a data error and is reported through hasErrors()
- * / errors(). The type system deliberately represents the valid logical
- * shape rather than attempting to encode malformed input into every
- * consumer access.
+ * / errors(). The type system represents the valid logical shape rather than
+ * encoding malformed input into every consumer access.
  */
 
 export type EntityDataSet<TConfig> =
-    EntityDataSetType<TConfig>
-    & EntityDataSetErrors<TConfig>;
+    EntityDataSetType<
+        TConfig
+    >
+    & EntityDataSetErrors<
+    TConfig
+>;
 
 
 /*
  * Internal dataset mutation API
- *
- * This is used by the loader/composite cursor and is not intended to be
- * exposed as part of the normal consumer-facing contract.
  */
 
 export interface EntityDataSetMutation<TConfig> {
-    clear():
-        void;
+
+    clear(): void;
 
     set<
         K extends keyof TConfig & string
     >(
-        name: K,
-        value: ProjectedValue<TConfig[K]>
+        name:
+        K,
+        value:
+        ProjectedValue<
+            TConfig[K]
+        >
     ): void;
 
     add<
         K extends keyof TConfig & string
     >(
-        name: K,
-        value: ProjectedValue<TConfig[K]>
+        name:
+        K,
+        value:
+        ProjectedValue<
+            TConfig[K]
+        >
     ): void;
 
     addError(
@@ -783,51 +1464,38 @@ export interface EntityDataSetMutation<TConfig> {
 
 
 export type MutableEntityDataSet<TConfig> =
-    EntityDataSet<TConfig>
-    & EntityDataSetMutation<TConfig>;
+    EntityDataSet<
+        TConfig
+    >
+    & EntityDataSetMutation<
+    TConfig
+>;
 
 
-/**
+/*
  * Cursor options
  *
- * Parsers interpret complete physical records together with their associated
- * parser-specific record state.
+ * The parser registry and entity-id ordering are higher-level concerns.
  *
- * RecordReaders perform physical I/O and logical record recognition. A
- * format-aware reader may also populate parser-specific structural state
- * while recognising a record.
- *
- * Record readers may carry different record-state types. CursorOptions is
- * therefore a heterogeneous registry boundary: there is no single
- * TRecordState shared by every entry in RecordReaderMap.
- *
- * The registry exposes those entries as RecordReaderMap<unknown>. Once a
- * particular source selects both a parser and a record reader, higher-level
- * cursor code recovers the concrete relationship between that parser's
- * record-state type and the selected reader.
- *
- * The supplied RecordReaderMap contains already-configured physical reader
- * implementations. Reader-specific dependencies such as record-boundary
- * detectors, record-state or pool factories, and byte-buffer pools are
- * therefore not concerns of the higher-level cursor.
+ * Physical-record I/O and pooling are configured when the corresponding
+ * RecordCursor is constructed.
  */
+
 export interface CursorOptions<
     TParsers extends ParserMap,
     EntityId
 > {
-    readonly parsers:
-        TParsers;
 
-    readonly recordReaders:
-        RecordReaderMap<
-            unknown
-        >;
+    readonly parsers: TParsers;
 
     readonly compareEntityId: (
-        left: EntityId,
-        right: EntityId
+        left:
+        EntityId,
+        right:
+        EntityId
     ) => number;
 }
+
 
 /*
  * Entity cursor
@@ -835,7 +1503,9 @@ export interface CursorOptions<
 
 export type EntityCursor<TConfig> =
     AsyncGenerator<
-        EntityDataSet<TConfig>,
+        EntityDataSet<
+            TConfig
+        >,
         void,
         unknown
     >;
@@ -850,55 +1520,7 @@ export type EntityCursorBlock<
     R
 > = (
     cursor:
-    EntityCursor<TConfig>
+    EntityCursor<
+        TConfig
+    >
 ) => Promise<R>;
-
-/*
- * Physical file byte cursor
- *
- * A byte cursor yields physical file buffers.
- *
- * Ownership of each yielded buffer transfers to the consumer. The consumer
- * must eventually return it to the FileBufferPool supplied when the
- * cursor was created.
- */
-
-export type FileByteCursor =
-    AsyncGenerator<
-        Uint8Array,
-        void,
-        unknown
-    >;
-
-
-/*
- * Physical file byte cursor factory
- *
- * Creates a byte cursor for one physical file using the supplied buffer pool.
- *
- * This contract allows higher physical layers, such as record readers, to
- * depend on byte I/O without depending directly on its implementation.
- */
-
-export type FileByteCursorFactory = (
-    filename: string,
-    bufferPool: FileBufferPool
-) => FileByteCursor;
-
-/*
- * File byte buffer pool
- *
- * Physical file cursors use fixed-size Uint8Array buffers while reading.
- *
- * Buffers are shared between cursors and returned to the pool once no
- * current or future physical record can refer to them.
- */
-
-export interface FileBufferPool {
-    acquire():
-        Uint8Array;
-
-    release(
-        buffer: Uint8Array
-    ): void;
-}

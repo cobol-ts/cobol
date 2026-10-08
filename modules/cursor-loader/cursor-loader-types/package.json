@@ -17,7 +17,8 @@
     ]
   },
   "dependencies": {
-    "@cobol-ts/errors": "0.0.1"
+    "@cobol-ts/errors": "0.0.1",
+    "@cobol-ts/ref_counted_pool": "0.0.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.1.4",

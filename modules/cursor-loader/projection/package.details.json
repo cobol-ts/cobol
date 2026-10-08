@@ -1,0 +1,26 @@
+{
+  "template": "node",
+  "name": "@cobol-ts/cursor-projection",
+  "description": "Defines declarative projections and projection support contracts for byte-backed cursor representations",
+  "links": [
+    "@cobol-ts/cursor-loader-types"
+  ],
+  "packageJson": {
+    "files": [
+      "build/"
+    ],
+    "dependencies": {
+    },
+    "devDependencies": {
+    },
+    "scripts": {
+      "start": "react-scripts start"
+    }
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true,
+    "react": false
+  }
+}

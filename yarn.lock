@@ -522,6 +522,21 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@cobol-ts/cursor-line-detector@npm:0.0.1, @cobol-ts/cursor-line-detector@workspace:modules/cursor-loader/cursor-line-detector":
+  version: 0.0.0-use.local
+  resolution: "@cobol-ts/cursor-line-detector@workspace:modules/cursor-loader/cursor-line-detector"
+  dependencies:
+    "@cobol-ts/cursor-loader-types": "npm:0.0.1"
+    "@cobol-ts/errors": "npm:0.0.1"
+    "@testing-library/jest-dom": "npm:^6.1.4"
+    "@types/jest": "npm:^29.0.0"
+    "@types/node": "npm:^14.0.0"
+    jest: "npm:^29.0.0"
+    ts-jest: "npm:^29.0.0"
+    typescript: "npm:^5.2.2"
+  languageName: unknown
+  linkType: soft
+
 "@cobol-ts/cursor-loader-csv@npm:0.0.1, @cobol-ts/cursor-loader-csv@workspace:modules/cursor-loader/cursor-loader-csv":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-loader-csv@workspace:modules/cursor-loader/cursor-loader-csv"
@@ -537,11 +552,12 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@cobol-ts/cursor-loader-json@workspace:modules/cursor-loader/cursor-loader-json":
+"@cobol-ts/cursor-loader-json@npm:0.0.1, @cobol-ts/cursor-loader-json@workspace:modules/cursor-loader/cursor-loader-json":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-loader-json@workspace:modules/cursor-loader/cursor-loader-json"
   dependencies:
     "@cobol-ts/cursor-loader-types": "npm:0.0.1"
+    "@cobol-ts/cursor-record": "npm:0.0.1"
     "@cobol-ts/errors": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
     "@types/jest": "npm:^29.0.0"
@@ -559,7 +575,9 @@ __metadata:
     "@cobol-ts/cursor-file": "npm:0.0.1"
     "@cobol-ts/cursor-loader": "npm:0.0.1"
     "@cobol-ts/cursor-loader-csv": "npm:0.0.1"
+    "@cobol-ts/cursor-loader-json": "npm:0.0.1"
     "@cobol-ts/cursor-loader-types": "npm:0.0.1"
+    "@cobol-ts/cursor-projection": "npm:0.0.1"
     "@cobol-ts/cursor-record": "npm:0.0.1"
     "@cobol-ts/errors": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
@@ -576,6 +594,7 @@ __metadata:
   resolution: "@cobol-ts/cursor-loader-types@workspace:modules/cursor-loader/cursor-loader-types"
   dependencies:
     "@cobol-ts/errors": "npm:0.0.1"
+    "@cobol-ts/ref_counted_pool": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
     "@types/jest": "npm:^29.0.0"
     "@types/node": "npm:^14.0.0"
@@ -600,12 +619,28 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@cobol-ts/cursor-projection@npm:0.0.1, @cobol-ts/cursor-projection@workspace:modules/cursor-loader/projection":
+  version: 0.0.0-use.local
+  resolution: "@cobol-ts/cursor-projection@workspace:modules/cursor-loader/projection"
+  dependencies:
+    "@cobol-ts/cursor-loader-types": "npm:0.0.1"
+    "@testing-library/jest-dom": "npm:^6.1.4"
+    "@types/jest": "npm:^29.0.0"
+    "@types/node": "npm:^14.0.0"
+    jest: "npm:^29.0.0"
+    ts-jest: "npm:^29.0.0"
+    typescript: "npm:^5.2.2"
+  languageName: unknown
+  linkType: soft
+
 "@cobol-ts/cursor-record@npm:0.0.1, @cobol-ts/cursor-record@workspace:modules/cursor-loader/cursor-record":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-record@workspace:modules/cursor-loader/cursor-record"
   dependencies:
     "@cobol-ts/cursor-file": "npm:0.0.1"
+    "@cobol-ts/cursor-line-detector": "npm:0.0.1"
     "@cobol-ts/cursor-loader-types": "npm:0.0.1"
+    "@cobol-ts/ref_counted_pool": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
     "@types/jest": "npm:^29.0.0"
     "@types/node": "npm:^14.0.0"
@@ -726,6 +761,21 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@cobol-ts/records@workspace:modules/utils/records"
   dependencies:
+    "@testing-library/jest-dom": "npm:^6.1.4"
+    "@types/jest": "npm:^29.0.0"
+    "@types/node": "npm:^14.0.0"
+    jest: "npm:^29.0.0"
+    ts-jest: "npm:^29.0.0"
+    typescript: "npm:^5.2.2"
+  languageName: unknown
+  linkType: soft
+
+"@cobol-ts/ref_counted_pool@npm:0.0.1, @cobol-ts/ref_counted_pool@workspace:modules/utils/ref-counted-pool":
+  version: 0.0.0-use.local
+  resolution: "@cobol-ts/ref_counted_pool@workspace:modules/utils/ref-counted-pool"
+  dependencies:
+    "@cobol-ts/errors": "npm:0.0.1"
+    "@cobol-ts/records": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
     "@types/jest": "npm:^29.0.0"
     "@types/node": "npm:^14.0.0"

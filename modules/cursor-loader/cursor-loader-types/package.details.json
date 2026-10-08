@@ -3,7 +3,8 @@
   "name": "@cobol-ts/cursor-loader-types",
   "description": "types for the cursor loader package",
   "links": [
-    "@cobol-ts/errors"
+    "@cobol-ts/errors",
+    "@cobol-ts/ref_counted_pool"
   ],
   "packageJson": {
     "files": [

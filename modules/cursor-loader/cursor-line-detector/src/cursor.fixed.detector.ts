@@ -2,10 +2,8 @@ import {
     nullRecordStart,
     type RecordBoundaryDetector
 } from "@cobol-ts/cursor-loader-types";
+import {totalLength} from "./cursor.record.helpers";
 
-import {
-    totalLength
-} from "./cursor.record.helpers";
 
 
 /**

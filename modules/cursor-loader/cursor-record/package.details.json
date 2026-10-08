@@ -4,7 +4,9 @@
   "description": "physical record framing for the @cobol-ts cursor stack",
   "links": [
     "@cobol-ts/cursor-file",
-    "@cobol-ts/cursor-loader-types"
+    "@cobol-ts/cursor-line-detector",
+    "@cobol-ts/cursor-loader-types",
+    "@cobol-ts/ref_counted_pool"
   ],
   "packageJson": {
     "files": [

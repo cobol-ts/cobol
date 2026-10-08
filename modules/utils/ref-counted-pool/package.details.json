@@ -1,0 +1,14 @@
+{
+  "template": "typescript",
+  "name": "@cobol-ts/ref_counted_pool",
+  "description": "A pool of reference-counted objects that can be reused instead of being garbage collected. Checked-out objects are not retained by the pool, so normal garbage collection still works if they are no longer reachable. Objects are returned to the pool for reuse when their reference count reaches zero.",
+  "links": [
+    "@cobol-ts/errors",
+    "@cobol-ts/records"
+  ],
+  "guards": {
+    "publish": true,
+    "test": true,
+    "compile": true
+  }
+}

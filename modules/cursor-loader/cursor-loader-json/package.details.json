@@ -4,7 +4,8 @@
   "description": "parser for json to support the cursor loader package",
   "links": [
     "@cobol-ts/cursor-loader-types",
-    "@cobol-ts/errors"
+    "@cobol-ts/errors",
+    "@cobol-ts/cursor-record"
   ],
   "packageJson": {
     "files": [

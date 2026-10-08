@@ -1600,3 +1600,46 @@ const lineReaderHasOnlyLineDetails:
             undefined
         );
     };
+
+const parserUsesRecordStateInPrepare:
+    Parser<
+        CustomerRow,
+        DelimitedParserConfig,
+        DelimitedParserDetails,
+        DelimitedRecordState
+    > = {
+
+    prepare(
+        record,
+        config
+    ) {
+        const firstStart: number =
+            record.recordState.starts[0];
+
+        return {
+            config,
+            separatorByte:
+                config.separator.charCodeAt(
+                    0
+                )
+        };
+    },
+
+    parse(
+        record,
+        details
+    ) {
+        const firstStart: number =
+            record.recordState.starts[0];
+
+        return {
+            id:
+                String(
+                    firstStart
+                ),
+
+            name:
+            details.config.separator
+        };
+    }
+};

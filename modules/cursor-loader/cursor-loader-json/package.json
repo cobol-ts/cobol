@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@cobol-ts/cursor-loader-types": "0.0.1",
+    "@cobol-ts/cursor-record": "0.0.1",
     "@cobol-ts/errors": "0.0.1"
   },
   "devDependencies": {
