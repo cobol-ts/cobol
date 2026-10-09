@@ -1,695 +1,395 @@
 # @cobol-ts/cursor-record
 
-Physical record framing for the `@cobol-ts` cursor stack.
+Pooled physical-record storage and record-cursor lifetime management for the `@cobol-ts` cursor stack.
 
-This package converts pooled byte buffers from `@cobol-ts/cursor-file` into complete physical records.
+This package does **not** decide where JSONL, CSV, COBOL or other records end.
 
-The current runtime readers support:
+The parser owns physical-record recognition.
+
+The job of this package is to:
+
+- provide a pooled physical-record holder;
+- provide pooled source byte buffers;
+- let the parser request more source bytes while scanning;
+- keep the source bytes alive for the complete borrowed lifetime of the record;
+- preserve parser-defined record state with the record;
+- carry unread bytes into the next record without copying them;
+- and return all reusable storage to pools when the record is closed.
+
+## Position in the pipeline
 
 ```text
-line-oriented files
-fixed-width files
-length-prefixed files
-```
-
-Length-prefixed records support variable-length physical record formats such as COBOL files using a Record Descriptor Word (RDW).
-
-## Position in the cursor stack
-
-```text
-physical file
+physical source
     ↓
-@cobol-ts/cursor-file
-    ↓
-pooled byte buffers
+FillFileBuffer
     ↓
 @cobol-ts/cursor-record
+    ├── pooled Uint8Array buffers
+    ├── pooled physical-record holders
+    └── parser-defined recordState
     ↓
-PhysicalRecordContent
+Parser.parse(record, details)
+    ├── starts at startByte
+    ├── scans available bytes
+    ├── calls await record.readMore() when required
+    └── sets endByte
     ↓
-@cobol-ts/cursor-loader
+RecordCursorResult
 ```
 
-## Responsibilities
-
-`@cobol-ts/cursor-record` is responsible for:
-
-- obtaining physical byte buffers;
-- retaining buffers while a record spans them;
-- detecting physical record boundaries;
-- separating physical framing from parser-visible record data;
-- yielding zero-copy `PhysicalRecordContent`;
-- releasing fully consumed buffers back to the pool;
-- reporting recoverable malformed physical framing.
-
-It does not parse CSV, JSON, COBOL, or application data.
+The record cursor is deliberately format-blind.
 
 ## Public API
 
-The current public API includes:
+The principal exports include:
 
 ```ts
-createLineRecordReader()
-
-createFixedRecordReader()
-
-createLengthPrefixedRecordReader()
-
-newlineRecordBoundaryDetector
-
-createFixedWidthRecordBoundaryDetector()
-
-createLengthPrefixedRecordBoundaryDetector()
+createDefaultPhysicalRecordConfig(...)
+createPhysicalRecord(...)
+createRecordCursor(...)
 ```
 
-## Physical records
+together with the corresponding configuration and cursor types.
 
-A physical record is represented as:
+## Two reusable pools
+
+`createDefaultPhysicalRecordConfig()` establishes two important pools for the opened source/configuration.
+
+```text
+byteBufferPool
+    reusable fixed-capacity Uint8Array objects
+
+physicalContentPool
+    reusable physical-record objects
+```
+
+A physical-record holder retains reusable structures such as:
+
+- its `buffers` array;
+- its parser-defined `recordState`;
+- its pool references;
+- its `readMore()` implementation;
+- its `close()` implementation.
+
+Lease-specific values are rebound when the holder is acquired.
+
+These include:
+
+```text
+startByte
+endByte
+lastValidByte
+fileFinished
+source
+recordNumber
+```
+
+The object graph therefore does not need to be reconstructed for every logical record.
+
+## Parser-specific record state
+
+Pool creation receives a factory such as:
 
 ```ts
-interface PhysicalRecordContent {
-    readonly buffers:
-        readonly Uint8Array[];
-
-    readonly startOffset:
-        number;
-
-    readonly length:
-        number;
-}
+createRecordState:
+    () => TRecordState
 ```
 
-The buffers are treated as one logical contiguous byte sequence.
+That factory is used when a new pooled physical-record holder has to be created.
 
-`startOffset` identifies the first parser-visible record byte across that logical sequence.
+It is not intended to run for every source record.
 
-It is not restricted to `buffers[0]`.
+For JSONL:
+
+```ts
+createRecordState:
+    () => undefined
+```
+
+For a future CSV parser it might create something like:
+
+```ts
+createRecordState:
+    () => ({
+        starts:
+            new Int32Array(requiredColumns),
+
+        ends:
+            new Int32Array(requiredColumns),
+
+        flags:
+            new Uint8Array(requiredColumns)
+    })
+```
+
+The arrays then remain attached to that physical-record holder and are overwritten when the holder is reused.
+
+The generic record layer does not interpret them.
+
+## Record positions
+
+The record cursor establishes:
+
+```ts
+record.startByte
+```
+
+before calling the parser.
+
+The parser discovers the physical boundary and establishes:
+
+```ts
+record.endByte
+```
+
+`endByte` is exclusive.
+
+`record.lastValidByte` describes how many source bytes are currently available across the physical buffers.
+
+The ownership rule is therefore:
+
+```text
+cursor       → startByte
+readMore()   → lastValidByte / fileFinished
+parser       → endByte
+```
+
+## `readMore()`
+
+When the parser cannot yet determine the current physical record's boundary, it may call:
+
+```ts
+await record.readMore();
+```
+
+A call to `readMore()`:
+
+1. acquires a pooled byte buffer;
+2. passes that exact `Uint8Array` to `fillFileBuffer`;
+3. appends that exact buffer object to `record.buffers`;
+4. advances `record.lastValidByte` by the actual number of source bytes read;
+5. sets `record.fileFinished` when EOF is discovered.
+
+There is deliberately:
+
+```text
+no record-sized byte copy
+no slice used as physical storage
+no replacement subarray stored in place of the pooled buffer
+```
+
+The final physical buffer may contain unused capacity.
+
+Its `length` is therefore not the end of valid source content.
+
+`lastValidByte` is authoritative.
+
+## Parser-controlled framing
+
+`createRecordCursor()` does not understand record syntax.
+
+Conceptually it does:
+
+```text
+establish startByte
+    ↓
+invoke parser
+    ↓
+parser scans / readMore()
+    ↓
+parser establishes endByte
+    ↓
+yield parser result + physical record
+```
+
+This permits framing and structural interpretation to be fused where appropriate.
+
+CSV is the important example.
+
+A newline inside a quoted CSV field is not a record boundary. A correct CSV scanner already has to understand quoting in order to decide where the row ends.
+
+Making a generic framing layer scan first and a CSV parser scan again would duplicate work and state.
+
+Other formats can use much simpler recognition.
+
+## Carrying bytes between records
+
+A physical source read commonly contains bytes belonging to more than one logical record.
 
 For example:
 
 ```text
-buffers[0]:
-    [framing]
+physical buffer
 
-buffers[1]:
-    [framing][record data...]
-
-buffers[2]:
-    [...record data]
+┌──────────────────────────────────────────────┐
+│ record A │        record B        │ record C │
+└──────────────────────────────────────────────┘
+           ^
+           record A endByte
 ```
 
-can legitimately yield:
+The final physical buffer of record A may therefore also contain the beginning of record B.
 
-```ts
-{
-    buffers,
-    startOffset:
-        4,
-    length:
-        20
-}
-```
+The cursor retains the required reference to that exact buffer.
 
-The framing bytes remain present in the retained buffers but are outside the parser-visible record range.
+The next physical record can start in that same `Uint8Array`.
 
-This allows framing such as length prefixes to be excluded without slicing or copying the physical buffers.
+Unread source bytes do not need to be copied into a new record-sized buffer.
 
-## Zero-copy representation
+The per-record carry state retained across a yield is intentionally small: principally the carried buffer reference, offsets/flags required to locate the next start position, and the record number.
 
-A record may span one or many physical buffers.
-
-No record-sized byte array is created merely to frame the record.
-
-Instead:
-
-```text
-buffers
-+
-startOffset
-+
-length
-```
-
-identify the parser-visible byte range.
-
-Parsers may consume that range directly.
-
-For length-prefixed records, the small prefix may be copied into reusable scratch storage so that its length can be decoded.
-
-The record payload itself remains zero-copy.
+The generator of course also retains its normal cursor configuration, parser and prepared details.
 
 ## Record lifetime
 
-`PhysicalRecordContent` is owned by the `RecordCursor`.
-
-A yielded physical record remains valid only until the record cursor advances or closes.
-
-In other words:
-
-```text
-yield PhysicalRecordContent
-    ↓
-consumer parses / validates / projects
-    ↓
-consumer advances RecordCursor
-    ↓
-fully consumed buffers may return to the pool
-```
-
-Anything which needs to retain bytes after the cursor advances must copy or otherwise detach them.
-
-## Reader dependencies
-
-Production record readers accept optional physical-I/O dependencies:
+The record cursor yields:
 
 ```ts
-interface RecordReaderOptions {
-    readonly bufferPool?:
-        FileBufferPool;
+interface RecordCursorResult<
+    TRepresentation,
+    TRecordState
+> {
+    readonly result:
+        ParserResult<TRepresentation>;
 
-    readonly createFileByteCursor?:
-        FileByteCursorFactory;
+    readonly physicalRecord:
+        PhysicalRecordContent<TRecordState>;
 }
 ```
 
-Production code can simply use the defaults:
+The physical record becomes the consumer's borrowed resource.
+
+The record cursor does not automatically close a successfully yielded record.
+
+The consuming layer must eventually call:
 
 ```ts
-const reader =
-    createLineRecordReader();
+physicalRecord.close();
 ```
 
-Tests or specialised applications can inject dependencies:
+Higher layers such as `@cobol-ts/cursor-file` normally manage this lifetime on behalf of application code.
+
+## Closing a record
+
+Closing a physical record:
+
+1. releases the byte-buffer references owned by that record;
+2. clears the reusable `buffers` array in place;
+3. returns the physical-record holder to its pool.
+
+The parser-defined `recordState` remains attached to that holder.
+
+Its contents can be overwritten on the next lease.
+
+## Reference-counted buffers
+
+The same physical `Uint8Array` may temporarily be required by both:
+
+- the completed current record;
+- and the cursor as the starting storage for the following record.
+
+Buffers are therefore reference-counted.
+
+A pooled byte buffer becomes reusable only after every owner has released its reference.
+
+This allows one record to remain valid while the cursor retains overlapping physical storage for the next record, without copying source bytes.
+
+## Several live records
+
+The architecture does not require exactly one physical record to exist at a time.
+
+If application processing keeps several results alive, the physical-record and buffer pools can grow to support them.
+
+Memory is therefore intended to be proportional to:
+
+```text
+maximum simultaneously live records
+```
+
+rather than:
+
+```text
+total records processed
+```
+
+This is an important distinction.
+
+Bounded memory assumes the application eventually closes completed results.
+
+## Example
 
 ```ts
-const reader =
-    createLineRecordReader(
+const config =
+    createDefaultPhysicalRecordConfig<
         undefined,
-        {
-            bufferPool,
-            createFileByteCursor
-        }
+        MyFile
+    >({
+        source:
+            "customers.jsonl",
+
+        file,
+
+        bufferSize:
+            64 * 1024,
+
+        fillFileBuffer:
+            async (
+                file,
+                target
+            ) => {
+                return bytesRead;
+            },
+
+        createRecordState:
+            () => undefined
+    });
+
+const cursor =
+    createRecordCursor(
+        jsonParser,
+        undefined,
+        config
     );
-```
 
-This keeps physical framing tests independent of the filesystem when appropriate.
-
-## Line record reader
-
-Create the default line reader with:
-
-```ts
-const reader =
-    createLineRecordReader();
-```
-
-The default boundary detector recognises:
-
-```text
-LF
-
-CR LF
-```
-
-Physical line terminators are excluded from the parser-visible record.
-
-For example:
-
-```text
-physical bytes:
-
-abc\r\n
-
-parser-visible record:
-
-abc
-```
-
-An unterminated final line is considered a valid final physical record.
-
-An LF immediately following a CR excludes both bytes from the record.
-
-## Fixed-width record reader
-
-Create a fixed-width reader with:
-
-```ts
-const reader =
-    createFixedRecordReader();
-```
-
-The record width comes from:
-
-```ts
-FixedFile.recordSize
-```
-
-Fixed-width records contain no framing bytes, so:
-
-```text
-frameStart
-    ==
-recordStart
-```
-
-If EOF is reached with bytes remaining which cannot form a complete record, the reader yields a recoverable physical validation error.
-
-## Length-prefixed record reader
-
-Create a length-prefixed reader with:
-
-```ts
-const reader =
-    createLengthPrefixedRecordReader();
-```
-
-The prefix configuration comes from:
-
-```ts
-LengthPrefixedFile.prefixSize
-
-LengthPrefixedFile.recordLength
-```
-
-The physical layout is:
-
-```text
-[prefix][record data][next prefix]
- ^       ^            ^
- |       |            nextRecordStart
- |       recordStart
- frameStart
-```
-
-The prefix is physical framing.
-
-It is not part of the parser-visible record.
-
-The reader creates a `createLengthPrefixedRecordBoundaryDetector()` from the file configuration and uses the same generic physical-record machinery as line and fixed-width readers.
-
-If EOF occurs before a complete prefix or the complete declared payload has arrived, the reader yields a recoverable incomplete physical-record error.
-
-## Length-prefixed boundary detection
-
-The detector is created with:
-
-```ts
-const detector =
-    createLengthPrefixedRecordBoundaryDetector(
-        prefixSize,
-        recordLength
-    );
-```
-
-For a four-byte prefix and a six-byte payload:
-
-```text
-[p p p p][a b c d e f][next prefix]
- ^        ^            ^
- |        |            nextRecordStart
- |        recordStart
- frameStart
-```
-
-the offsets are:
-
-```text
-recordStart
-    =
-frameStart + 4
-
-nextRecordStart
-    =
-frameStart + 4 + 6
-
-recordEnd
-    =
-nextRecordStart - 1
-```
-
-### Prefix size
-
-`prefixSize` is the number of physical framing bytes which precede each record.
-
-It must be a positive integer.
-
-### Record length function
-
-The supplied function has the form:
-
-```ts
-recordLength: (
-    prefix: Uint8Array
-) => number
-```
-
-It receives exactly `prefixSize` bytes.
-
-It returns the number of parser-visible record bytes following the prefix.
-
-The returned length therefore excludes the prefix itself.
-
-For example, a conventional four-byte COBOL RDW stores the total physical frame length, including the four-byte RDW.
-
-A corresponding decoder can be:
-
-```ts
-const recordLength = (
-    prefix:
-        Uint8Array
-): number =>
-    (
-        (
-            prefix[
-                0
-            ]
-            << 8
-        )
-        | prefix[
-            1
-        ]
-    )
-    - 4;
-```
-
-If the RDW begins:
-
-```text
-00 0E 00 00
-```
-
-then the physical frame contains fourteen bytes:
-
-```text
-4 byte RDW
-+
-10 byte record
-```
-
-and:
-
-```ts
-recordLength(
-    prefix
-)
-```
-
-returns:
-
-```text
-10
-```
-
-The parser therefore sees only the ten record-data bytes.
-
-### Prefixes may span physical buffers
-
-The prefix is not required to fit in one physical read buffer.
-
-For example:
-
-```text
-buffer 0:
-    [first half of prefix]
-
-buffer 1:
-    [rest of prefix][record data...]
-
-buffer 2:
-    [...record data][next prefix...]
-```
-
-is valid.
-
-The detector treats the buffers as one logical byte sequence and reconstructs only the small prefix required to determine the record length.
-
-The payload itself remains zero-copy.
-
-### Incomplete length-prefixed records
-
-If the complete prefix has not yet arrived, the detector reports that no complete record boundary is currently available.
-
-If the prefix is complete but the declared payload has not yet arrived, it likewise waits for further physical buffers.
-
-If EOF occurs before the frame is complete, the reader reports an incomplete physical record.
-
-The decoded record length must be a non-negative integer.
-
-## Physical buffers and logical records are independent
-
-Physical read-buffer boundaries have no relationship to record boundaries.
-
-A line may fit entirely within one buffer:
-
-```text
-buffer:
-
-one\ntwo\nthree\n
-```
-
-or span many:
-
-```text
-buffer 1:
-    abcdefgh
-
-buffer 2:
-    ijklmnop
-
-buffer 3:
-    qrst\n
-```
-
-Fixed-width records behave the same way.
-
-For example:
-
-```text
-physical buffers, size 4:
-
-abcd
-efgh
-ijkl
-mno
-```
-
-may represent:
-
-```text
-logical fixed-width records, size 5:
-
-abcde
-fghij
-klmno
-```
-
-Length-prefixed records are equally independent of physical buffer boundaries.
-
-A prefix may begin in one buffer and end in another, and the record payload may span any number of following buffers.
-
-No logical record boundary is required to coincide with a physical read-buffer boundary.
-
-## Record framing model
-
-The generic framing code distinguishes four important offsets.
-
-### `frameStart`
-
-The first byte of the current physical frame.
-
-This includes prefix framing where such framing exists.
-
-For a length-prefixed record:
-
-```text
-frameStart
-    ↓
-[prefix][record data]
-```
-
-### `recordStart`
-
-The first parser-visible byte of the current record.
-
-For line and fixed-width readers:
-
-```text
-recordStart == frameStart
-```
-
-For a length-prefixed reader:
-
-```text
-recordStart
-    =
-frameStart + prefixSize
-```
-
-so:
-
-```text
-frameStart
-    ↓
-[prefix][record data]
-         ↑
-         recordStart
-```
-
-### `nextRecordStart`
-
-The first byte of the next physical frame.
-
-Everything before this position belongs to the completed frame and can be discarded once the consumer advances.
-
-For a length-prefixed record:
-
-```text
-[prefix][record data][next prefix]
-                       ↑
-                       nextRecordStart
-```
-
-### `searchStart`
-
-The first logical byte which a searching detector has not already examined.
-
-This prevents terminator-based detectors from rescanning old data every time another physical buffer arrives.
-
-Line framing uses this because finding a newline requires searching.
-
-Fixed-width and length-prefixed framing calculate their boundaries from known lengths and therefore do not need to scan record data for a terminator.
-
-## Boundary detector contract
-
-Physical framing policy is represented by:
-
-```ts
-interface RecordBoundaryDetector {
-    nextRecordStart(
-        buffers: readonly Uint8Array[],
-        frameStart: number,
-        searchStart: number
-    ): number;
-
-    recordStart(
-        frameStart: number
-    ): number;
-
-    recordEnd(
-        buffers: readonly Uint8Array[],
-        nextRecordStart: number
-    ): number;
+for await (const row of cursor) {
+    try {
+        // row.result is the parser result.
+    }
+    finally {
+        row.physicalRecord.close();
+    }
 }
 ```
 
-All offsets are logical offsets across the supplied buffers as though those buffers had been concatenated.
+## Allocation and memory model
 
-For example:
+The package is designed around storage required by currently live work, not by total input size.
 
-```text
-buffers[0] = "abc\r"
-buffers[1] = "\nXYZ"
-```
-
-is treated logically as:
+Approximately:
 
 ```text
-"abc\r\nXYZ"
+live memory
+    ≈
+    live physical buffers
+    +
+    live physical-record holders
+    +
+    parser record state in those holders
+    +
+    small cursor state
 ```
 
-The line detector therefore finds exactly the same boundary regardless of the physical buffer split.
+A billion processed records should not imply a billion record objects or a billion sets of structural arrays.
 
-The same rule allows a length prefix to cross physical buffer boundaries.
+The architecture deliberately allows the parser to remain an ordinary sequential algorithm across:
 
-## Incremental searching
-
-A line detector searches for a terminator.
-
-Suppose four-byte buffers arrive:
-
-```text
-buffer 1:
-    abcd
-
-buffer 2:
-    efgh
-
-buffer 3:
-    ij\nX
+```ts
+await record.readMore();
 ```
 
-The detector can search:
+rather than forcing it into an explicit continuation/state-machine API.
 
-```text
-first call:
-    search from 0
-    no boundary
+Whether the resulting asynchronous machinery is significant in practice is a benchmarking question.
 
-second call:
-    search from 4
-    no boundary
+The primary optimisation target is the amount of memory allocated, touched and copied while processing each record.
 
-third call:
-    search from 8
-    boundary found
-```
-
-Previously examined bytes do not need to be rescanned.
-
-Fixed-width framing calculates its boundary directly and therefore ignores `searchStart`.
-
-Length-prefixed framing reads its prefix and calculates its boundary from the decoded payload length, so it also does not scan through record data searching for an end marker.
-
-## Buffer release
-
-Buffers are retained while the current record or a future record can still refer to them.
-
-After a record has been consumed, the reader releases only complete buffers lying wholly before `nextRecordStart`.
-
-It does not need to slice, copy, or aggressively rebase a partially consumed buffer.
-
-This keeps the hot path simple and preserves zero-copy parser access.
-
-This is particularly useful for length-prefixed records because the framing prefix may occupy one buffer while the parser-visible record begins in a later one.
-
-## Error handling
-
-Recoverable physical-format problems are yielded as validation errors.
-
-Examples include:
-
-- incomplete fixed-width record at EOF;
-- incomplete length-prefixed record at EOF.
-
-Invalid detector behaviour and invalid framing configuration throw.
-
-Examples include:
-
-```text
-invalid prefix size
-negative decoded record length
-non-integer decoded record length
-boundary before frameStart
-boundary beyond currently buffered bytes
-invalid recordStart
-invalid recordEnd
-```
-
-Operational failures also throw.
-
-This keeps malformed input separate from programming errors and filesystem failures.
-
-## Design goals
-
-The physical record layer is designed for:
-
-- zero-copy record payloads;
-- pooled storage;
-- records larger than physical read buffers;
-- arbitrary record/buffer boundary alignment;
-- framing bytes excluded without copying record payloads;
-- prefixes which may span physical buffers;
-- incremental boundary scanning where required;
-- explicit buffer lifetime;
-- dependency injection for testing;
-- minimal allocation on the hot path.

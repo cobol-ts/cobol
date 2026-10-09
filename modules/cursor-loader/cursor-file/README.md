@@ -1,166 +1,299 @@
 # @cobol-ts/cursor-file
 
-Efficient pooled byte I/O for the `@cobol-ts` cursor stack.
+Application-facing cursor adapters for the byte-backed `@cobol-ts` pipeline.
 
-This package is the lowest physical I/O layer. It reads files into reusable `Uint8Array` buffers.
+Despite the historical package name, this package is **not** the physical file-reading layer in the current architecture.
 
-It knows nothing about records, lines, CSV, JSON, fixed-width layouts, parsers, or application values.
+It consumes parsed `RecordCursor` results, binds successful parser representations to reusable lazy projections, and exposes those projections through a small application-facing cursor API.
 
-## Position in the cursor stack
+## Position in the pipeline
 
 ```text
-physical file
+RecordCursor
+    ↓
+RecordCursorResult
+    ├── parser representation or Errors
+    └── open physical record
     ↓
 @cobol-ts/cursor-file
     ↓
-pooled Uint8Array buffers
+pooled FileCursorResult
+    ├── reusable bound projection
+    └── close()
     ↓
-@cobol-ts/cursor-record
-    ↓
-physical records
+application code
 ```
 
-## Responsibilities
+This package is the point where physical-record lifetime becomes part of the user-facing result lifetime.
 
-`@cobol-ts/cursor-file` is responsible for:
+## The normal application model
 
-- opening physical files;
-- reading file bytes;
-- pooling physical read buffers;
-- handling short operating-system reads;
-- transferring ownership of yielded buffers to the consumer;
-- closing files correctly when iteration completes or is stopped early.
-
-It is deliberately not responsible for finding physical record boundaries.
-
-## Public API
-
-The main API is:
-
-```ts
-FILE_BUFFER_SIZE
-
-FileByteCursor
-
-createFileBufferPool()
-
-createFileByteCursor()
-```
-
-## Buffer pool
-
-Create a reusable pool with:
-
-```ts
-const pool =
-    createFileBufferPool();
-```
-
-or specify a physical read-buffer size:
-
-```ts
-const pool =
-    createFileBufferPool(
-        4096
-    );
-```
-
-The pool grows to the maximum number of buffers required concurrently and then reuses those buffers.
-
-Buffers are not cleared when returned to the pool. A buffer is overwritten by the next file read before its contents are exposed again.
-
-## File byte cursor
-
-Create a file cursor with:
-
-```ts
-const cursor =
-    createFileByteCursor(
-        filename,
-        pool
-    );
-```
-
-The cursor fills each non-final buffer before yielding it.
-
-This remains true even if the underlying operating-system read returns fewer bytes than requested.
-
-At EOF:
-
-- an empty buffer is returned immediately to the pool;
-- a final partial buffer is yielded as a zero-copy view over the pooled allocation.
-
-## Buffer ownership
-
-A yielded buffer is owned by the consumer.
-
-Advancing the byte cursor does not invalidate buffers which have already been yielded.
-
-The consumer must eventually return each yielded buffer to the same pool:
-
-```ts
-pool.release(
-    buffer
-);
-```
-
-This ownership model is important because a physical record may span several physical file buffers.
+Application code gets a cursor, uses the fields required for its calculation, and closes the result when finished.
 
 For example:
 
-```text
-buffer 1:
-    abcdefgh
-
-buffer 2:
-    ijklmnop
-
-buffer 3:
-    qrst\n
-```
-
-A record reader must be able to retain all three buffers until the physical record has been consumed.
-
-## Example
-
 ```ts
-import {
-    createFileBufferPool,
-    createFileByteCursor
-} from "@cobol-ts/cursor-file";
+for await (const row of cursor) {
+    if (Array.isArray(row)) {
+        // Recoverable parser errors.
+        continue;
+    }
 
-
-const pool =
-    createFileBufferPool();
-
-
-for await (
-    const buffer
-    of createFileByteCursor(
-    "input.dat",
-    pool
-)
-    ) {
     try {
-        // Consume or retain the buffer.
+        console.log(
+            row.result.id(),
+            row.result.name()
+        );
     }
     finally {
-        pool.release(
-            buffer
-        );
+        row.close();
     }
 }
 ```
 
-Higher-level record readers normally retain buffers beyond a single loop iteration and return them only when no current or future physical record can refer to them.
+The projection presents an ordinary application-facing interface:
 
-## Design goals
+```ts
+interface Customer {
+    id(): number;
+    name(): string;
+    balance(): number;
+}
+```
 
-The byte layer is designed for:
+Those methods are lazy accessors.
 
-- low allocation;
-- predictable memory usage;
-- buffer reuse;
-- records larger than a physical read buffer;
-- zero-copy composition with higher layers;
-- explicit ownership.
+For formats such as CSV and COBOL they can eventually result in only the requested fields being interpreted.
+
+## Cursor variants
+
+The package provides several error-handling styles.
+
+### `createFileCursor`
+
+Returns either a successful:
+
+```ts
+FileCursorResult<TProjection>
+```
+
+or recoverable:
+
+```ts
+Errors
+```
+
+result according to the underlying types.
+
+This avoids introducing an additional success-wrapper abstraction around every normal projected row.
+
+### `createErrorsOrFileCursor`
+
+Exposes a uniform `ErrorsOr<FileCursorResult<TProjection>>` result shape.
+
+This can be convenient to callers that prefer an explicit success/error wrapper.
+
+### `createThrowingFileCursor`
+
+Returns successful projected records and converts recoverable parser errors into `ErrorsException`.
+
+### `createIgnoringFileCursor`
+
+Skips recoverable parser errors and continues processing.
+
+An optional callback may be used to observe ignored errors.
+
+## `FileCursorResult`
+
+A successful row has a deliberately small public shape.
+
+Conceptually:
+
+```ts
+interface FileCursorResult<TResult> {
+    readonly result:
+        TResult;
+
+    close():
+        void;
+}
+```
+
+`result` is the application-facing lazy projection.
+
+`close()` ends the borrowed record lifetime.
+
+## Why `close()` is explicit
+
+The projection may still depend on the physical source record.
+
+For a future CSV implementation:
+
+```ts
+customer.balance()
+```
+
+might ultimately read the required byte range from a borrowed CSV representation backed by that physical record.
+
+The physical source therefore has to remain alive for as long as the application is allowed to invoke projection accessors.
+
+`close()` performs the ownership release.
+
+Conceptually:
+
+```text
+application finishes row
+    ↓
+clear projection binding
+    ↓
+release physical record
+    ↓
+return reusable result wrapper to pool
+```
+
+## Result and projection reuse
+
+`FileCursorResult` wrappers are pooled.
+
+Each reusable result can own a reusable projection object created by the associated `ProjectionFactory`.
+
+On a successful parsed row the existing projection is bound to:
+
+- the current parser representation;
+- the current physical record.
+
+When the result closes, that binding is cleared.
+
+The result wrapper and projection object can then be reused for another source record.
+
+Normal row-to-row processing therefore does not require construction of a new projection object and a new set of accessor functions.
+
+## Borrowed result lifetime
+
+Both the `FileCursorResult` and its projection are borrowed.
+
+Once:
+
+```ts
+row.close();
+```
+
+has been called, neither should be used again.
+
+Because these objects are pooled, a retained stale reference may later refer to an object which has been rebound to another source record.
+
+The framework does not attempt to make such stale references safe.
+
+The application contract is explicit:
+
+```text
+before close
+    valid
+
+after close
+    invalid
+```
+
+This avoids adding ownership/generation checking to every hot-path accessor.
+
+## Several live results
+
+The architecture permits more than one result to remain live.
+
+If application code retains several open rows, the pools can grow to provide independent result wrappers, projections, physical records and buffer ownership for those simultaneously live rows.
+
+Memory usage is therefore primarily related to:
+
+```text
+maximum simultaneously live results
+```
+
+rather than:
+
+```text
+number of records processed
+```
+
+Bounded memory depends on callers eventually closing results they no longer need.
+
+## Error lifetime
+
+When the parser returns recoverable `Errors`, there is no successful projected application result which needs to retain that physical record.
+
+The cursor adapter therefore applies the selected error policy and releases the physical-record lifetime appropriately.
+
+Likewise, if projection binding fails, the physical record must not be left owned by an application result which was never successfully created.
+
+## Example
+
+```ts
+interface Customer {
+    id(): number;
+    name(): string;
+}
+
+const customerProjection =
+    defineProjection<Customer>({
+        id: {
+            type: "integer"
+        },
+
+        name: {
+            type: "string"
+        }
+    });
+
+const factory =
+    createProjection(
+        jsonParser,
+        customerProjection
+    );
+
+const cursor =
+    createFileCursor(
+        recordCursor,
+        factory
+    );
+
+for await (const value of cursor) {
+    if (Array.isArray(value)) {
+        console.error(value);
+        continue;
+    }
+
+    try {
+        consume(
+            value.result.id(),
+            value.result.name()
+        );
+    }
+    finally {
+        value.close();
+    }
+}
+```
+
+## Performance intent
+
+This layer exists to provide a simple application API without requiring an eagerly materialised application object for every row.
+
+The intended steady-state success path reuses:
+
+```text
+FileCursorResult wrapper
+projection object
+projection accessor functions
+physical-record holder
+physical byte buffers
+parser record state
+```
+
+The projection then asks the parser only for values actually requested by the calculation.
+
+For JSONL, the JSON object has already been eagerly created, so the benefit is principally API and lifetime validation.
+
+For CSV and COBOL, the same interface is intended to sit over genuinely byte-backed late materialisation.
+
+The broader performance hypothesis is that reducing the amount of memory created, populated and moved through the CPU will increase throughput once parser/application computation becomes comparatively cheap.
+
+That hypothesis is deliberately subject to benchmarking.

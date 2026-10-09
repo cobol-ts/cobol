@@ -338,7 +338,7 @@ describe("physical record", () => {
         /*
          * Simulate the cursor taking the additional carry reference.
          */
-        config.byteBufferPool.reuse(sharedBuffer);
+        config.retainBuffer(sharedBuffer);
 
         record.close();
 
@@ -356,7 +356,7 @@ describe("physical record", () => {
         /*
          * Release the simulated cursor reference.
          */
-        config.byteBufferPool.release(sharedBuffer);
+        config.releaseBuffer(sharedBuffer);
 
         /*
          * The original buffer is now available again.

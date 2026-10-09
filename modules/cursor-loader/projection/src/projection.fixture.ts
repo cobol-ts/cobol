@@ -1,191 +1,124 @@
+import {
+    type PhysicalRecordDebugRenderer,
+    type ProjectionSupport
+} from "@cobol-ts/cursor-loader-types";
 
-
-import {type ProjectionSupport} from "@cobol-ts/cursor-loader-types";
 import {defineProjection} from "./create.projection";
 
 
+type Representation =
+    Readonly<Record<string,unknown>>;
+
+
 export interface Customer {
-
-    id():
-        number;
-
-    age():
-        number;
-
-    name():
-        string;
-
-    initial():
-        string;
-
-    balance():
-        number;
+    id(): number;
+    age(): number;
+    name(): string;
+    initial(): string;
+    balance(): number;
 }
-
-
-export const customerProjection =
-    defineProjection<
-        Customer
-    >(
-        {
-            id: {
-                type:
-                    "integer"
-            },
-
-            age: {
-                type:
-                    "integer"
-            },
-
-            name: {
-                type:
-                    "string"
-            },
-
-            initial: {
-                type:
-                    "character"
-            },
-
-            balance: {
-                type:
-                    "float"
-            }
-        }
-    );
 
 
 export interface OrderSummary {
-
-    orderId():
-        number;
-
-    customerName():
-        string;
-
-    total():
-        number;
+    orderId(): number;
+    customerName(): string;
+    total(): number;
 }
 
 
-export const orderSummaryProjection =
-    defineProjection<
-        OrderSummary
-    >(
-        {
-            orderId: {
-                type:
-                    "integer",
+export const customerProjection = defineProjection<Customer>({
+    id: {
+        type: "integer"
+    },
 
-                path: [
-                    "order",
-                    "id"
-                ]
-            },
+    age: {
+        type: "integer"
+    },
 
-            customerName: {
-                type:
-                    "string",
+    name: {
+        type: "string"
+    },
 
-                path: [
-                    "order",
-                    "customer",
-                    "name"
-                ]
-            },
+    initial: {
+        type: "character"
+    },
 
-            total: {
-                type:
-                    "float",
-
-                path: [
-                    "order",
-                    "total"
-                ]
-            }
-        }
-    );
+    balance: {
+        type: "float"
+    }
+});
 
 
-export type FakeRepresentation =
-    Readonly<
-        Record<
-            string,
-            unknown
-        >
-    >;
+export const orderSummaryProjection = defineProjection<OrderSummary>({
+    orderId: {
+        type: "integer",
+        path: [
+            "order",
+            "id"
+        ]
+    },
+
+    customerName: {
+        type: "string",
+        path: [
+            "order",
+            "customer",
+            "name"
+        ]
+    },
+
+    total: {
+        type: "float",
+        path: [
+            "order",
+            "total"
+        ]
+    }
+});
 
 
 export const fakeParser:
-    ProjectionSupport<
-        FakeRepresentation
-    > = {
+    ProjectionSupport<Representation>
+    & PhysicalRecordDebugRenderer = {
 
-    integer(
-        representation,
-        path
-    ): number {
-
-        const value =
-            valueAtPath(
-                representation,
-                path
-            );
-
+    integer(representation, path): number {
+        const value = valueAtPath(
+            representation,
+            path
+        );
 
         if (
             typeof value !== "number"
-            || !Number.isInteger(
-                value
-            )
+            || !Number.isInteger(value)
         ) {
             throw new Error(
                 `Expected integer at ${path.join(".")}`
             );
         }
 
-
         return value;
     },
 
+    float(representation, path): number {
+        const value = valueAtPath(
+            representation,
+            path
+        );
 
-    float(
-        representation,
-        path
-    ): number {
-
-        const value =
-            valueAtPath(
-                representation,
-                path
-            );
-
-
-        if (
-            typeof value !== "number"
-        ) {
+        if (typeof value !== "number") {
             throw new Error(
-                `Expected number at ${path.join(".")}`
+                `Expected float at ${path.join(".")}`
             );
         }
 
-
         return value;
     },
 
-
-    character(
-        representation,
-        path
-    ): string {
-
-        const value =
-            valueAtPath(
-                representation,
-                path
-            );
-
+    character(representation, path): string {
+        const value = valueAtPath(
+            representation,
+            path
+        );
 
         if (
             typeof value !== "string"
@@ -196,78 +129,51 @@ export const fakeParser:
             );
         }
 
-
         return value;
     },
 
+    string(representation, path): string {
+        const value = valueAtPath(
+            representation,
+            path
+        );
 
-    string(
-        representation,
-        path
-    ): string {
-
-        const value =
-            valueAtPath(
-                representation,
-                path
-            );
-
-
-        if (
-            typeof value !== "string"
-        ) {
+        if (typeof value !== "string") {
             throw new Error(
                 `Expected string at ${path.join(".")}`
             );
         }
 
-
         return value;
+    },
+
+    toDebugString(): string {
+        return "<test record>";
     }
 };
 
 
 function valueAtPath(
-    representation:
-    FakeRepresentation,
-    path:
-    readonly string[]
+    representation: Representation,
+    path: readonly string[]
 ): unknown {
-
-    let value:
-        unknown =
+    let value: unknown =
         representation;
 
-
-    for (
-        const part
-        of path
-        ) {
+    for (const part of path) {
         if (
             typeof value !== "object"
             || value === null
-            || !Object.prototype.hasOwnProperty.call(
-                value,
-                part
-            )
+            || Array.isArray(value)
         ) {
             return undefined;
         }
 
-
         value =
             (
-                value as Readonly<
-                    Record<
-                        string,
-                        unknown
-                    >
-                >
-            )[
-                part
-                ];
+                value as Readonly<Record<string,unknown>>
+            )[part];
     }
-
 
     return value;
 }

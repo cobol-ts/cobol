@@ -1,52 +1,67 @@
+import {type Errors} from "@cobol-ts/errors";
+
 import {
-    type CursorLoaderConfig,
-    type CursorOptions,
-    type EntityDataSet,
-    type FixedFile,
-    type LengthPrefixedFile,
-    type LineFile,
+    type CanonicalProjection,
+    type FillFileBuffer,
     type Parser,
-    type ParserMap,
+    type ParserConfig,
+    type ParserDetails,
+    type ParserPhysicalRecordContent,
     type ParserRecordState,
+    type ParserRepresentation,
+    type ParserResult,
     type PhysicalRecordContent,
-    type RecordReaderMap
+    type PhysicalRecordDebugRenderer,
+    type PooledPhysicalRecordContent,
+    type ProjectionAuthoring,
+    type ProjectionDefinition,
+    type ProjectionFactory,
+    type ProjectionFieldValue,
+    type ProjectionPhysicalRecord,
+    type ProjectionSupport,
+    type ProjectionView,
+    type RecordCursor,
+    type RecordCursorResult
 } from "./cursor.loader.types";
 
 
+type Equal<TLeft,TRight> =
+    (<T>() => T extends TLeft ? 1 : 2) extends
+        (<T>() => T extends TRight ? 1 : 2)
+        ? true
+        : false;
+
+
+type Expect<T extends true> = T;
+
+
 /*
- * Test parser representations
+ * Test parser representations and application views
  */
 
 interface CustomerRow {
-    id: string;
-    name: string;
+    readonly id: string;
+    readonly name: string;
+    readonly age: number;
 }
 
 
 interface TransactionRow {
-    customerId: string;
-    amount: number;
+    readonly customerId: string;
+    readonly amount: number;
 }
 
-
-/*
- * Test application values
- */
 
 interface Customer {
-    id: string;
-    displayName: string;
-}
-
-
-interface Transaction {
-    customerId: string;
-    amount: number;
+    id(): string;
+    name(): string;
+    age(): number;
+    initial(): string;
 }
 
 
 /*
- * Parser-specific configuration and prepared details
+ * Parser-specific configuration, prepared details and record state
  */
 
 interface DelimitedParserConfig {
@@ -60,10 +75,6 @@ interface DelimitedParserDetails {
 }
 
 
-/*
- * Parser-specific per-record state
- */
-
 interface DelimitedRecordState {
     readonly starts: Int32Array;
     readonly ends: Int32Array;
@@ -71,1575 +82,917 @@ interface DelimitedRecordState {
 
 
 /*
- * Valid parsers
- *
- * These parsers require no source-specific parser configuration,
- * prepared details or per-record state.
+ * Shared parser support used only to keep the parser type tests focused on the
+ * parser contract rather than repetitive projection boilerplate.
  */
 
-const customerParser:
-    Parser<
-        CustomerRow,
-        undefined,
-        undefined,
-        undefined
-    > = {
-
-    parse: () => ({
-        id: "customer-1",
-        name: "Customer One"
-    })
-};
-
-
-const transactionParser:
-    Parser<
-        TransactionRow,
-        undefined,
-        undefined,
-        undefined
-    > = {
-
-    parse: () => ({
-        customerId: "customer-1",
-        amount: 42
-    })
-};
-
-
-/*
- * Parser requiring source-specific configuration and prepared details.
- */
-
-const delimitedCustomerParser:
-    Parser<
-        CustomerRow,
-        DelimitedParserConfig,
-        DelimitedParserDetails,
-        DelimitedRecordState
-    > = {
-
-    prepare: (
-        _firstRecord,
-        config
-    ) => ({
-        config,
-
-        separatorByte:
-            config.separator.charCodeAt(
-                0
-            )
-    }),
-
-    parse: (
-        record,
-        details
-    ) => {
-        const firstStart: number =
-            record.recordState.starts[0];
-
-        return {
-            id:
-                String(
-                    details.separatorByte
-                    + firstStart
-                ),
-
-            name:
-            details.config.separator
-        };
-    }
-};
-
-
-const parsers = {
-    customer:
-    customerParser,
-
-    transaction:
-    transactionParser,
-
-    delimitedCustomer:
-    delimitedCustomerParser
-} satisfies ParserMap;
-
-
-type Parsers =
-    typeof parsers;
-
-
-/*
- * Parser record-state associated type
- */
-
-type CustomerRecordState =
-    ParserRecordState<
-        typeof customerParser
-    >;
-
-
-const customerRecordState:
-    CustomerRecordState =
-    undefined;
-
-
-// @ts-expect-error customer parser has no per-record state
-const invalidCustomerRecordState:
-    CustomerRecordState = {
-    starts: new Int32Array(1),
-    ends: new Int32Array(1)
-};
-
-
-type DelimitedCustomerRecordState =
-    ParserRecordState<
-        typeof delimitedCustomerParser
-    >;
-
-
-declare const delimitedRecordState:
-    DelimitedCustomerRecordState;
-
-
-const delimitedFirstStart: number =
-    delimitedRecordState.starts[0];
-
-
-// @ts-expect-error delimited parser requires DelimitedRecordState
-const invalidDelimitedRecordState:
-    undefined =
-    delimitedRecordState;
-
-
-/*
- * Parser implementation must satisfy its declared representation
- */
-
-const invalidCustomerParser:
-    Parser<
-        CustomerRow,
-        undefined,
-        undefined,
-        undefined
-    > = {
-
-    // @ts-expect-error parser must return CustomerRow
-    parse: () => ({
-        customerId: "customer-1",
-        amount: 42
-    })
-};
-
-
-/*
- * Parser implementation receives its declared prepared details.
- */
-
-const parserUsesDetails:
-    Parser<
-        CustomerRow,
-        DelimitedParserConfig,
-        DelimitedParserDetails,
-        DelimitedRecordState
-    > = {
-
-    prepare: (
-        _firstRecord,
-        config
-    ) => ({
-        config,
-
-        separatorByte:
-            config.separator.charCodeAt(
-                0
-            )
-    }),
-
-    parse: (
-        _record,
-        details
-    ) => {
-        const separator: string =
-            details.config.separator;
-
-        const separatorByte: number =
-            details.separatorByte;
-
-        return {
-            id:
-                String(
-                    separatorByte
-                ),
-
-            name:
-            separator
-        };
-    }
-};
-
-
-/*
- * prepare receives the declared parser configuration.
- */
-
-const parserUsesConfig:
-    Parser<
-        CustomerRow,
-        DelimitedParserConfig,
-        DelimitedParserDetails,
-        DelimitedRecordState
-    > = {
-
-    prepare: (
-        _firstRecord,
-        config
-    ) => {
-        const separator: string =
-            config.separator;
-
-        return {
-            config,
-
-            separatorByte:
-                separator.charCodeAt(
-                    0
-                )
-        };
-    },
-
-    parse: (
-        _record,
-        details
-    ) => ({
-        id:
-            String(
-                details.separatorByte
-            ),
-
-        name:
-        details.config.separator
-    })
-};
-
-
-/*
- * prepare must return the declared prepared details type.
- */
-
-const invalidPrepareResult:
-    Parser<
-        CustomerRow,
-        DelimitedParserConfig,
-        DelimitedParserDetails,
-        DelimitedRecordState
-    > = {
-
-    // @ts-expect-error prepare must return DelimitedParserDetails
-    prepare: (
-        _firstRecord,
-        config
-    ) => ({
-        config,
-        somethingElse: 123
-    }),
-
-    parse: () => ({
-        id: "customer-1",
-        name: "Customer One"
-    })
-};
-
-
-/*
- * A parser accepts only physical records carrying its declared state.
- */
-
-declare const noStatePhysicalRecord:
-    PhysicalRecordContent<undefined>;
-
-
-declare const delimitedPhysicalRecord:
-    PhysicalRecordContent<DelimitedRecordState>;
-
-
-declare const delimitedPreparedDetails:
-    DelimitedParserDetails;
-
-
-delimitedCustomerParser.parse(
-    delimitedPhysicalRecord,
-    delimitedPreparedDetails
-);
-
-
-delimitedCustomerParser.parse(
-    // @ts-expect-error delimited parser requires DelimitedRecordState
-    noStatePhysicalRecord,
-    delimitedPreparedDetails
-);
-
-
-/*
- * Parser registry entries must be parsers
- */
-
-const invalidParserMap = {
-    customer:
-    customerParser,
-
-    broken: {
-        // @ts-expect-error registry values must implement Parser
-        somethingElse: () =>
-            "not a parser"
-    }
-} satisfies ParserMap;
-
-
-/*
- * Valid configuration
- */
-
-const config = {
-    customer: {
-        type: "line",
-        filename: "customers.csv",
-        parser: "customer",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one"
-    },
-
-    transactions: {
-        type: "line",
-        filename: "transactions.csv",
-        parser: "transaction",
-
-        project: (
-            row: TransactionRow
-        ): Transaction => ({
-            customerId:
-            row.customerId,
-
-            amount:
-            row.amount
-        }),
-
-        entityId: (
-            transaction: Transaction
-        ) =>
-            transaction.customerId,
-
-        cardinality:
-            "many"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Dataset inference
- */
-
-type DataSet =
-    EntityDataSet<
-        typeof config
-    >;
-
-
-declare const dataset:
-    DataSet;
-
-
-/*
- * Positive dataset type tests
- */
-
-const customer: Customer =
-    dataset.customer;
-
-
-const customerId: string =
-    dataset.customer.id;
-
-
-const customerName: string =
-    dataset.customer.displayName;
-
-
-const transactions: Transaction[] =
-    dataset.transactions;
-
-
-const transaction: Transaction =
-    dataset.transactions[0];
-
-
-const transactionAmount: number =
-    dataset.transactions[0].amount;
-
-
-/*
- * "one" must not behave as "many"
- */
-
-// @ts-expect-error customer is not an array
-dataset.customer.map(
-    (customerValue:any) =>
-        customerValue.id
-);
-
-
-// @ts-expect-error customer is not assignable to Customer[]
-const badCustomerArray: Customer[] =
-    dataset.customer;
-
-
-/*
- * "many" must behave as an array
- */
-
-// @ts-expect-error transactions is an array, not a single Transaction
-dataset.transactions.amount;
-
-
-// @ts-expect-error Transaction[] is not assignable to Transaction
-const badTransaction: Transaction =
-    dataset.transactions;
-
-
-/*
- * Error API is constrained to configured source names
- */
-
-dataset.errorsFor(
-    "customer"
-);
-
-dataset.errorsFor(
-    "transactions"
-);
-
-dataset.errorsFor(
-    // @ts-expect-error "accounts" is not a configured source
-    "accounts"
-);
-
-
-/*
- * Illegal parser name
- */
-
-const invalidParserConfig = {
-    customer: {
-        type: "line",
-        filename: "customers.csv",
-
-        // @ts-expect-error parser must be a key of parsers
-        parser: "does-not-exist",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Projection input must match the representation
- * produced by the selected parser
- */
-
-const invalidProjectionConfig = {
-    // @ts-expect-error projection input does not match selected parser representation
-    customer: {
-        type: "line",
-        filename: "customers.csv",
-        parser: "customer",
-
-        project: (
-            row: TransactionRow
-        ): Customer => ({
-            id:
-            row.customerId,
-
-            displayName:
-                String(
-                    row.amount
-                )
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Illegal cardinality
- */
-
-const invalidCardinalityConfig = {
-    customer: {
-        type: "line",
-        filename: "customers.csv",
-        parser: "customer",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        // @ts-expect-error invalid cardinality
-        cardinality:
-            "lots"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Entity ID type must match the common EntityId
- */
-
-const invalidEntityIdConfig = {
-    customer: {
-        type: "line",
-        filename: "customers.csv",
-        parser: "customer",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        // @ts-expect-error configured EntityId is string
-        entityId: (
-            _customer: Customer
-        ): number =>
-            123,
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Required FileDetails members must be present
- */
-
-const missingEntityIdConfig = {
-    // @ts-expect-error entityId is required
-    customer: {
-        type: "line",
-        filename: "customers.csv",
-        parser: "customer",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Optional cardinality
- */
-
-const optionalConfig = {
-    customer: {
-        type: "line",
-        filename: "customers.csv",
-        parser: "customer",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "optional"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-type OptionalDataSet =
-    EntityDataSet<
-        typeof optionalConfig
-    >;
-
-
-declare const optionalDataset:
-    OptionalDataSet;
-
-
-const optionalCustomer:
-    Customer | undefined =
-    optionalDataset.customer;
-
-
-// @ts-expect-error optional source may be undefined
-const requiredCustomer: Customer =
-    optionalDataset.customer;
-
-
-/*
- * Validation function input types
- */
-
-const validationConfig = {
-    customer: {
-        type: "line",
-        filename: "customers.csv",
-        parser: "customer",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one",
-
-        checkRepresentation: (
-            row: CustomerRow
-        ): readonly string[] =>
-            row.id.length === 0
-                ? [
-                    "missing id"
-                ]
-                : []
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Representation validation must match parser representation
- */
-
-const invalidRepresentationValidationConfig = {
-    // @ts-expect-error representation validator input must match selected parser representation
-    customer: {
-        type: "line",
-        filename: "customers.csv",
-        parser: "customer",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one",
-
-        checkRepresentation: (
-            _row: TransactionRow
-        ): readonly string[] =>
-            []
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Parser configuration is not required for a parser whose
- * ParserConfig type is undefined.
- */
-
-const noParserConfig = {
-    customer: {
-        type: "line",
-        filename: "customers.csv",
-        parser: "customer",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * A parser with source-specific configuration requires parserConfig.
- */
-
-const parserConfig = {
-    customer: {
-        type: "line",
-        filename: "customers.psv",
-        parser: "delimitedCustomer",
-
-        parserConfig: {
-            separator:
-                "|"
-        },
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Missing parser configuration is rejected when the selected parser
- * requires it.
- */
-
-const missingParserConfig = {
-    // @ts-expect-error delimitedCustomer requires parserConfig
-    customer: {
-        type: "line",
-        filename: "customers.psv",
-        parser: "delimitedCustomer",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Parser configuration must match the selected parser's
- * ParserConfig type.
- */
-
-const invalidParserConfigType = {
-    customer: {
-        type: "line",
-        filename: "customers.psv",
-        parser: "delimitedCustomer",
-
-        parserConfig: {
-            // @ts-expect-error separator must be string
-            separator:
-                123
-        },
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Configuration belonging to another parser must not be accepted.
- */
-
-const unexpectedParserConfig = {
-    // @ts-expect-error customer parser does not accept parserConfig
-    customer: {
-        type: "line",
-        filename: "customers.csv",
-        parser: "customer",
-
-        parserConfig: {
-            separator:
-                ","
-        },
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Prepared parser details are not part of FileDetails.
- *
- * Consumers configure the parser using parserConfig. ParserDetails
- * are produced internally by prepare().
- */
-
-const preparedDetailsMustNotBeConfigured = {
-    customer: {
-        type: "line",
-        filename: "customers.psv",
-        parser: "delimitedCustomer",
-
-        parserConfig: {
-            separator:
-                "|"
-        },
-
-        // @ts-expect-error FileDetails contains parserConfig, not prepared parserDetails
-        parserDetails: {
-            config: {
-                separator:
-                    "|"
-            },
-
-            separatorByte:
-                124
-        },
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Fixed files require a record size
- */
-
-const fixedConfig = {
-    customer: {
-        type: "fixed",
-        filename: "customers.dat",
-        recordSize: 128,
-        parser: "customer",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Fixed files without a record size are invalid
- */
-
-const invalidFixedConfig = {
-    // @ts-expect-error fixed files require recordSize
-    customer: {
-        type: "fixed",
-        filename: "customers.dat",
-        parser: "customer",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Length-prefixed files require prefix configuration
- */
-
-const lengthPrefixedConfig = {
-    customer: {
-        type:
-            "length-prefixed",
-
-        filename:
-            "customers.dat",
-
-        prefixSize:
-            4,
-
-        recordLength: (
-            buffers:
-            readonly Uint8Array[],
-
-            prefixStart:
-            number
-        ) =>
-            (
-                (
-                    buffers[
-                        0
-                        ][
-                        prefixStart
-                        ]
-                    << 8
-                )
-                | buffers[
-                    0
-                    ][
-                prefixStart + 1
-                    ]
-            ),
-
-        parser:
-            "customer",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Length-prefixed recordLength receives physical buffers and logical
- * prefix start rather than a copied contiguous prefix.
- */
-
-const invalidLengthPrefixedRecordLength = {
-    customer: {
-        type:
-            "length-prefixed",
-
-        filename:
-            "customers.dat",
-
-        prefixSize:
-            4,
-
-        // @ts-expect-error recordLength receives buffers and prefixStart
-        recordLength: (
-            prefix:
-            Uint8Array
-        ): number =>
-            prefix[
-                0
-                ],
-
-        parser:
-            "customer",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * Illegal physical file type
- */
-
-const invalidPhysicalTypeConfig = {
-    customer: {
-        // @ts-expect-error unsupported physical file type
-        type: "csv",
-        filename: "customers.csv",
-        parser: "customer",
-
-        project: (
-            row: CustomerRow
-        ): Customer => ({
-            id:
-            row.id,
-
-            displayName:
-            row.name
-        }),
-
-        entityId: (
-            customer: Customer
-        ) =>
-            customer.id,
-
-        cardinality:
-            "one"
-    }
-} satisfies CursorLoaderConfig<
-    Parsers,
-    string
->;
-
-
-/*
- * CursorOptions is a heterogeneous record-reader registry boundary.
- *
- * Individual RecordReader entries remain strongly typed, but different
- * entries may carry different TRecordState types. CursorOptions therefore
- * exposes the registry as RecordReaderMap<unknown>.
- */
-
-const heterogeneousRecordReaders = {
-    line:
-        async function* (
-            _details: LineFile
-        ) {
-            yield physicalRecord(
-                new Uint8Array(0),
-                undefined
-            );
-        },
-
-    fixed:
-        async function* (
-            _details: FixedFile
-        ) {
-            yield physicalRecord(
-                new Uint8Array(0),
-                {
-                    starts:
-                        new Int32Array(
-                            1
-                        ),
-
-                    ends:
-                        new Int32Array(
-                            1
-                        )
-                } satisfies DelimitedRecordState
-            );
-        },
-
-    "length-prefixed":
-        async function* (
-            _details:
-            LengthPrefixedFile
-        ) {
-            yield physicalRecord(
-                new Uint8Array(0),
-                undefined
-            );
-        }
-};
-
-
-const heterogeneousCursorOptions:
-    CursorOptions<
-        Parsers,
-        string
-    > = {
-
-    parsers,
-
-    recordReaders:
-    heterogeneousRecordReaders,
-
-    compareEntityId:
-        (
-            left,
-            right
-        ) =>
-            left.localeCompare(
-                right
-            )
-};
-
-
-/*
- * Record reader map must contain every physical file type
- */
-
-const completeRecordReaders = {
-    line:
-        async function* (
-            _details
-        ) {
-        },
-
-    fixed:
-        async function* (
-            _details
-        ) {
-        },
-
-    "length-prefixed":
-        async function* (
-            _details
-        ) {
-        }
-} satisfies RecordReaderMap<undefined>;
-
-
-/*
- * Missing record reader is invalid
- */
-
-const missingRecordReader = {
-    line:
-        async function* (
-            _details: LineFile
-        ) {
-        },
-
-    fixed:
-        async function* (
-            _details: FixedFile
-        ) {
-        }
-
-// @ts-expect-error every physical file type must have a record reader
-} satisfies RecordReaderMap<undefined>;
-
-
-/*
- * Record reader details must match the physical file type
- */
-
-const invalidRecordReaderDetails = {
-    // @ts-expect-error line reader must accept LineFile
-    line:
-        async function* (
-            _details: FixedFile
-        ) {
-        },
-
-    fixed:
-        async function* (
-            _details: FixedFile
-        ) {
-        },
-
-    "length-prefixed":
-        async function* (
-            _details:
-            LengthPrefixedFile
-        ) {
-        }
-} satisfies RecordReaderMap<undefined>;
-
-
-/*
- * Test physical-record helper
- *
- * RecordReader implementations now return a read-only physical-record
- * view rather than a raw Uint8Array.
- *
- * These type tests use one contiguous buffer whose record starts at
- * offset zero.
- */
-
-function physicalRecord<TRecordState>(
-    bytes: Uint8Array,
-    recordState: TRecordState
-): PhysicalRecordContent<TRecordState> {
-
+function parserSupport<TRepresentation>(): ProjectionSupport<TRepresentation> & PhysicalRecordDebugRenderer {
     return {
-        buffers: [
-            bytes
-        ],
-
-        startOffset:
-            0,
-
-        length:
-        bytes.length,
-
-        recordState
+        integer: () => 0,
+        float: () => 0,
+        character: () => "",
+        string: () => "",
+        toDebugString: () => ""
     };
 }
 
 
 /*
- * Physical records require an explicit record state.
+ * Valid parsers
  */
 
-// @ts-expect-error recordState is required even when its type is undefined
-const missingPhysicalRecordState:
-    PhysicalRecordContent<undefined> = {
-    buffers: [
-        new Uint8Array(0)
-    ],
+const customerParser: Parser<CustomerRow,undefined,undefined,undefined> = {
+    ...parserSupport<CustomerRow>(),
 
-    startOffset:
-        0,
-
-    length:
-        0
+    parse: async () => ({
+        id: "customer-1",
+        name: "Customer One",
+        age: 42
+    })
 };
 
 
-/*
- * Fixed reader receives recordSize
- */
+const delimitedCustomerParser: Parser<CustomerRow,DelimitedParserConfig,DelimitedParserDetails,DelimitedRecordState> = {
+    ...parserSupport<CustomerRow>(),
 
-const fixedReaderUsesRecordSize:
-    RecordReaderMap<undefined>["fixed"] =
-    async function* (
-        details
-    ) {
-        const size: number =
-            details.recordSize;
-
-        yield physicalRecord(
-            new Uint8Array(
-                size
-            ),
-            undefined
-        );
-    };
-
-
-/*
- * Length-prefixed reader receives prefix configuration
- */
-
-const lengthPrefixedReaderUsesDetails:
-    RecordReaderMap<undefined>[
-        "length-prefixed"
-        ] =
-    async function* (
-        details
-    ) {
-        const prefixSize:
-            number =
-            details.prefixSize;
-
-
-        const buffers:
-            readonly Uint8Array[] = [
-            new Uint8Array(
-                prefixSize
-            )
-        ];
-
-
-        const length:
-            number =
-            details.recordLength(
-                buffers,
-                0
-            );
-
-
-        yield physicalRecord(
-            new Uint8Array(
-                length
-            ),
-            undefined
-        );
-    };
-
-
-/*
- * Line reader does not expose fixed-size configuration
- */
-
-const lineReaderHasOnlyLineDetails:
-    RecordReaderMap<undefined>["line"] =
-    async function* (
-        details
-    ) {
-        const filename: string =
-            details.filename;
-
-        // @ts-expect-error LineFile has no recordSize
-        details.recordSize;
-
-        yield physicalRecord(
-            new Uint8Array(
-                filename.length
-            ),
-            undefined
-        );
-    };
-
-const parserUsesRecordStateInPrepare:
-    Parser<
-        CustomerRow,
-        DelimitedParserConfig,
-        DelimitedParserDetails,
-        DelimitedRecordState
-    > = {
-
-    prepare(
-        record,
-        config
-    ) {
-        const firstStart: number =
-            record.recordState.starts[0];
+    prepare: async (record, config) => {
+        const firstStart: number = record.recordState.starts[0];
+        record.endByte = firstStart;
 
         return {
             config,
-            separatorByte:
-                config.separator.charCodeAt(
-                    0
-                )
+            separatorByte: config.separator.charCodeAt(0)
         };
     },
 
-    parse(
-        record,
-        details
-    ) {
-        const firstStart: number =
-            record.recordState.starts[0];
+    parse: async (record, details) => {
+        const firstStart: number = record.recordState.starts[0];
+        const firstEnd: number = record.recordState.ends[0];
+        const separator: string = details.config.separator;
+        const separatorByte: number = details.separatorByte;
+
+        record.endByte = firstEnd;
 
         return {
-            id:
-                String(
-                    firstStart
-                ),
-
-            name:
-            details.config.separator
+            id: String(separatorByte + firstStart),
+            name: separator,
+            age: firstEnd - firstStart
         };
     }
 };
+
+
+/*
+ * Parser associated types
+ */
+
+type _CustomerRepresentation = Expect<Equal<ParserRepresentation<typeof customerParser>,CustomerRow>>;
+type _CustomerConfig = Expect<Equal<ParserConfig<typeof customerParser>,undefined>>;
+type _CustomerDetails = Expect<Equal<ParserDetails<typeof customerParser>,undefined>>;
+type _CustomerRecordState = Expect<Equal<ParserRecordState<typeof customerParser>,undefined>>;
+
+type _DelimitedRepresentation = Expect<Equal<ParserRepresentation<typeof delimitedCustomerParser>,CustomerRow>>;
+type _DelimitedConfig = Expect<Equal<ParserConfig<typeof delimitedCustomerParser>,DelimitedParserConfig>>;
+type _DelimitedDetails = Expect<Equal<ParserDetails<typeof delimitedCustomerParser>,DelimitedParserDetails>>;
+type _DelimitedRecordState = Expect<Equal<ParserRecordState<typeof delimitedCustomerParser>,DelimitedRecordState>>;
+
+
+const validDelimitedConfig: ParserConfig<typeof delimitedCustomerParser> = {
+    separator: "|"
+};
+
+
+const invalidDelimitedConfig: ParserConfig<typeof delimitedCustomerParser> = {
+    // @ts-expect-error separator must be a string
+    separator: 123
+};
+
+
+const validDelimitedDetails: ParserDetails<typeof delimitedCustomerParser> = {
+    config: validDelimitedConfig,
+    separatorByte: 124
+};
+
+
+// @ts-expect-error separatorByte is required
+const invalidDelimitedDetails: ParserDetails<typeof delimitedCustomerParser> = {
+    config: validDelimitedConfig
+};
+
+
+const validDelimitedRecordState: ParserRecordState<typeof delimitedCustomerParser> = {
+    starts: new Int32Array(4),
+    ends: new Int32Array(4)
+};
+
+
+// @ts-expect-error delimited parser requires its record state
+const invalidDelimitedRecordState: ParserRecordState<typeof delimitedCustomerParser> = undefined;
+
+
+/*
+ * Parser result typing
+ */
+
+declare const errors: Errors;
+
+const validParserValue: ParserResult<CustomerRow> = {
+    id: "customer-1",
+    name: "Customer One",
+    age: 42
+};
+
+const validParserErrors: ParserResult<CustomerRow> = errors;
+
+// @ts-expect-error parser result must be the representation or Errors
+const invalidParserResult: ParserResult<CustomerRow> = 42;
+
+
+/*
+ * Parser implementation must satisfy its declared async result types
+ */
+
+const invalidCustomerParserResult: Parser<CustomerRow,undefined,undefined,undefined> = {
+    ...parserSupport<CustomerRow>(),
+
+    // @ts-expect-error parse must return CustomerRow or Errors
+    parse: async () => ({
+        customerId: "customer-1",
+        amount: 42
+    })
+};
+
+
+const synchronousCustomerParser: Parser<CustomerRow,undefined,undefined,undefined> = {
+    ...parserSupport<CustomerRow>(),
+
+    // @ts-expect-error parse is asynchronous
+    parse: () => ({
+        id: "customer-1",
+        name: "Customer One",
+        age: 42
+    })
+};
+
+
+const invalidPrepareResult: Parser<CustomerRow,DelimitedParserConfig,DelimitedParserDetails,DelimitedRecordState> = {
+    ...parserSupport<CustomerRow>(),
+
+    // @ts-expect-error prepare must return DelimitedParserDetails or Errors
+    prepare: async (_record, config) => ({
+        config,
+        somethingElse: 123
+    }),
+
+    parse: async () => ({
+        id: "customer-1",
+        name: "Customer One",
+        age: 42
+    })
+};
+
+
+const synchronousPrepare: Parser<CustomerRow,DelimitedParserConfig,DelimitedParserDetails,DelimitedRecordState> = {
+    ...parserSupport<CustomerRow>(),
+
+    // @ts-expect-error prepare is asynchronous
+    prepare: (_record, config) => ({
+        config,
+        separatorByte: 124
+    }),
+
+    parse: async () => ({
+        id: "customer-1",
+        name: "Customer One",
+        age: 42
+    })
+};
+
+
+/*
+ * Parser record-state compatibility
+ */
+
+declare const noStateParserRecord: ParserPhysicalRecordContent<undefined>;
+declare const delimitedParserRecord: ParserPhysicalRecordContent<DelimitedRecordState>;
+declare const delimitedDetails: DelimitedParserDetails;
+
+
+delimitedCustomerParser.parse(
+    delimitedParserRecord,
+    delimitedDetails
+);
+
+
+void delimitedCustomerParser.parse(
+// @ts-expect-error delimited parser requires DelimitedRecordState
+    noStateParserRecord,
+    delimitedDetails
+);
+
+
+/*
+ * Parser physical-record capability
+ *
+ * The parser may establish endByte and call readMore(). Cursor-owned positions,
+ * EOF state, provenance and lifetime are intentionally unavailable for mutation.
+ */
+
+const parserReadMore: Promise<void> =
+    delimitedParserRecord.readMore();
+
+const parserStartByte: number =
+    delimitedParserRecord.startByte;
+
+const parserLastValidByte: number =
+    delimitedParserRecord.lastValidByte;
+
+const parserFileFinished: boolean =
+    delimitedParserRecord.fileFinished;
+
+const parserSource: string =
+    delimitedParserRecord.source;
+
+const parserRecordNumber: number =
+    delimitedParserRecord.recordNumber;
+
+const parserRecordState: DelimitedRecordState =
+    delimitedParserRecord.recordState;
+
+
+delimitedParserRecord.endByte = 17;
+
+
+// @ts-expect-error cursor owns startByte
+noStateParserRecord.startByte = 1;
+
+
+// @ts-expect-error readMore owns lastValidByte
+noStateParserRecord.lastValidByte = 1;
+
+
+// @ts-expect-error readMore owns fileFinished
+noStateParserRecord.fileFinished = true;
+
+
+// @ts-expect-error cursor owns source provenance
+noStateParserRecord.source = "other";
+
+
+// @ts-expect-error cursor owns record numbering
+noStateParserRecord.recordNumber = 99;
+
+
+// @ts-expect-error parser does not own the physical-record lifetime
+noStateParserRecord.close();
+
+
+// @ts-expect-error parser cannot append or remove physical buffers
+noStateParserRecord.buffers.push(
+    new Uint8Array(8)
+);
+
+
+/*
+ * Completed physical-record capability
+ */
+
+declare const completedRecord: PhysicalRecordContent<DelimitedRecordState>;
+
+const completedSource: string =
+    completedRecord.source;
+
+const completedRecordNumber: number =
+    completedRecord.recordNumber;
+
+const completedState: DelimitedRecordState =
+    completedRecord.recordState;
+
+
+completedRecord.close();
+
+
+// @ts-expect-error completed records cannot perform further I/O
+completedRecord.readMore();
+
+
+// @ts-expect-error completed physical range is readonly
+completedRecord.endByte = 20;
+
+
+// @ts-expect-error completed EOF state is readonly
+completedRecord.fileFinished = false;
+
+
+const completePhysicalRecord: PhysicalRecordContent<undefined> = {
+    buffers: [],
+    recordState: undefined,
+    startByte: 0,
+    endByte: 0,
+    lastValidByte: 0,
+    fileFinished: true,
+    source: "test-source",
+    recordNumber: 1,
+    close: () => undefined
+};
+
+
+// @ts-expect-error completed records require source provenance
+const missingPhysicalRecordSource: PhysicalRecordContent<undefined> = {
+    buffers: [],
+    recordState: undefined,
+    startByte: 0,
+    endByte: 0,
+    lastValidByte: 0,
+    fileFinished: true,
+    recordNumber: 1,
+    close: () => undefined
+};
+
+
+// @ts-expect-error completed records require an explicit recordState even when undefined
+const missingPhysicalRecordState: PhysicalRecordContent<undefined> = {
+    buffers: [],
+    startByte: 0,
+    endByte: 0,
+    lastValidByte: 0,
+    fileFinished: true,
+    source: "test-source",
+    recordNumber: 1,
+    close: () => undefined
+};
+
+
+/*
+ * Internal pooled physical-record capability remains mutable for cursor and
+ * lifetime machinery.
+ */
+
+declare const pooledRecord: PooledPhysicalRecordContent<DelimitedRecordState>;
+
+pooledRecord.startByte = 1;
+pooledRecord.endByte = 2;
+pooledRecord.lastValidByte = 8;
+pooledRecord.fileFinished = true;
+pooledRecord.source = "other-source";
+pooledRecord.recordNumber = 7;
+
+pooledRecord.buffers.push(
+    new Uint8Array(8)
+);
+
+pooledRecord.close();
+
+void pooledRecord.readMore();
+
+
+// @ts-expect-error the parser-owned recordState object is permanent for the pooled entry
+pooledRecord.recordState =
+    validDelimitedRecordState;
+
+
+/*
+ * Physical fill operation keeps the file type associated with the callback and
+ * is asynchronous.
+ */
+
+interface TestFile {
+    readonly name: string;
+}
+
+
+const fillFileBuffer: FillFileBuffer<TestFile> =
+    async (file, buffer) => {
+        const filename: string =
+            file.name;
+
+        const capacity: number =
+            buffer.length;
+
+        return filename.length === 0
+            ? 0
+            : capacity;
+    };
+
+
+const invalidFillResult: FillFileBuffer<TestFile> =
+// @ts-expect-error fill operation must resolve to a byte count
+    async () => "invalid";
+
+
+/*
+ * Projection authoring and canonicalisation
+ */
+
+const projection = {
+    id: {
+        type: "string"
+    },
+
+    name: {
+        type: "string",
+        path: [
+            "customer",
+            "name"
+        ]
+    },
+
+    age: {
+        type: "integer"
+    },
+
+    initial: {
+        type: "character",
+        path: [
+            "customer",
+            "name"
+        ]
+    }
+} as const satisfies ProjectionDefinition<Customer>;
+
+
+type Projection =
+    typeof projection;
+
+
+type CanonicalCustomerProjection =
+    CanonicalProjection<Projection>;
+
+
+type CustomerView =
+    ProjectionView<Projection>;
+
+
+declare const customerView:
+    CustomerView;
+
+
+const projectedId: string =
+    customerView.id();
+
+const projectedName: string =
+    customerView.name();
+
+const projectedAge: number =
+    customerView.age();
+
+const projectedInitial: string =
+    customerView.initial();
+
+
+// @ts-expect-error integer projection accessor returns number
+const invalidProjectedAge: string =
+    customerView.age();
+
+
+// @ts-expect-error string projection accessor returns string
+const invalidProjectedName: number =
+    customerView.name();
+
+
+const canonicalProjection: CanonicalCustomerProjection = {
+    id: {
+        type: "string",
+        path: [
+            "id"
+        ]
+    },
+
+    name: {
+        type: "string",
+        path: [
+            "customer",
+            "name"
+        ]
+    },
+
+    age: {
+        type: "integer",
+        path: [
+            "age"
+        ]
+    },
+
+    initial: {
+        type: "character",
+        path: [
+            "customer",
+            "name"
+        ]
+    }
+};
+
+
+const invalidCanonicalProjection: CanonicalCustomerProjection = {
+    // @ts-expect-error canonical fields always have an explicit path
+    id: {
+        type: "string"
+    },
+
+    name:
+    canonicalProjection.name,
+
+    age:
+    canonicalProjection.age,
+
+    initial:
+    canonicalProjection.initial
+};
+
+
+/*
+ * Projection field type compatibility
+ */
+
+type _IntegerValue =
+    Expect<
+        Equal<
+            ProjectionFieldValue<{
+                readonly type: "integer";
+            }>,
+            number
+        >
+    >;
+
+
+type _FloatValue =
+    Expect<
+        Equal<
+            ProjectionFieldValue<{
+                readonly type: "float";
+            }>,
+            number
+        >
+    >;
+
+
+type _CharacterValue =
+    Expect<
+        Equal<
+            ProjectionFieldValue<{
+                readonly type: "character";
+            }>,
+            string
+        >
+    >;
+
+
+type _StringValue =
+    Expect<
+        Equal<
+            ProjectionFieldValue<{
+                readonly type: "string";
+            }>,
+            string
+        >
+    >;
+
+
+const floatingPointProjection = {
+    id: {
+        type: "character"
+    },
+
+    name: {
+        type: "string"
+    },
+
+    age: {
+        type: "float"
+    },
+
+    initial: {
+        type: "character"
+    }
+} as const satisfies ProjectionDefinition<Customer>;
+
+
+const invalidCustomerProjection = {
+    id: {
+        type: "string"
+    },
+
+    name: {
+        type: "string"
+    },
+
+    age: {
+        // @ts-expect-error numeric accessor cannot be backed by a string field
+        type: "string"
+    },
+
+    initial: {
+        type: "character"
+    }
+} as const satisfies ProjectionDefinition<Customer>;
+
+
+const projectionWithExtraField = {
+    id: {
+        type: "string"
+    },
+
+    name: {
+        type: "string"
+    },
+
+    age: {
+        type: "integer"
+    },
+
+    initial: {
+        type: "character"
+    },
+
+    // @ts-expect-error projection may not define fields absent from Customer
+    unknown: {
+        type: "string"
+    }
+} as const satisfies ProjectionDefinition<Customer>;
+
+
+// @ts-expect-error every Customer accessor requires a projection field
+const projectionMissingField: ProjectionDefinition<Customer> = {
+    id: {
+        type: "string"
+    },
+
+    name: {
+        type: "string"
+    },
+
+    age: {
+        type: "integer"
+    }
+};
+
+
+interface UnsupportedProjection {
+    active(): boolean;
+}
+
+
+const unsupportedProjection = {
+    // @ts-expect-error boolean accessors are not a supported projection field type
+    active: {
+        type: "string"
+    }
+} satisfies ProjectionDefinition<UnsupportedProjection>;
+
+
+/*
+ * ProjectionAuthoring accepts arbitrary logical field names but only supported
+ * scalar kinds.
+ */
+
+const authoredProjection = {
+    arbitrary: {
+        type: "string",
+        path: [
+            "anything"
+        ]
+    }
+} as const satisfies ProjectionAuthoring;
+
+
+const invalidAuthoredProjection = {
+    broken: {
+        // @ts-expect-error unsupported projection scalar kind
+        type: "boolean"
+    }
+} as const satisfies ProjectionAuthoring;
+
+
+/*
+ * ProjectionFactory keeps projection, representation and physical capabilities
+ * strongly associated.
+ */
+
+declare const customerProjection:
+    Customer;
+
+declare const customerRow:
+    CustomerRow;
+
+declare const transactionRow:
+    TransactionRow;
+
+declare const projectionPhysicalRecord:
+    ProjectionPhysicalRecord;
+
+
+const customerProjectionFactory: ProjectionFactory<Customer,CustomerRow> = {
+    create:
+        () => customerProjection,
+
+    bind:
+        (
+            target,
+            representation,
+            physicalRecord
+        ) => {
+            const id: string =
+                representation.id;
+
+            const name: string =
+                target.name();
+
+            const source: string =
+                physicalRecord.source;
+
+            const recordNumber: number =
+                physicalRecord.recordNumber;
+
+            const startByte: number =
+                physicalRecord.startByte;
+
+            const endByte: number =
+                physicalRecord.endByte;
+
+            const lastValidByte: number =
+                physicalRecord.lastValidByte;
+
+            const buffers: readonly Uint8Array[] =
+                physicalRecord.buffers;
+
+
+            void id;
+            void name;
+            void source;
+            void recordNumber;
+            void startByte;
+            void endByte;
+            void lastValidByte;
+            void buffers;
+
+
+            // @ts-expect-error projection capability does not own physical lifetime
+            physicalRecord.close();
+
+
+            // @ts-expect-error projection capability cannot perform I/O
+            physicalRecord.readMore();
+
+
+            // @ts-expect-error projection capability deliberately excludes parser recordState
+            physicalRecord.recordState;
+        },
+
+    clear:
+        target => {
+            const name: string =
+                target.name();
+
+            void name;
+        }
+};
+
+
+customerProjectionFactory.bind(
+    customerProjection,
+    customerRow,
+    projectionPhysicalRecord
+);
+
+
+customerProjectionFactory.bind(
+    customerProjection,
+// @ts-expect-error factory representation is CustomerRow
+    transactionRow,
+    projectionPhysicalRecord
+);
+
+
+customerProjectionFactory.bind(
+    {
+// @ts-expect-error factory projection is Customer
+        amount:
+            () => 1
+    },
+    customerRow,
+    projectionPhysicalRecord
+);
+
+
+/*
+ * Parser projection support is tied to the parser representation.
+ */
+
+const customerIdFromParser: string =
+    customerParser.string(
+        customerRow,
+        [
+            "id"
+        ]
+    );
+
+
+const customerAgeFromParser: number =
+    customerParser.integer(
+        customerRow,
+        [
+            "age"
+        ]
+    );
+
+
+customerParser.string(
+// @ts-expect-error customer parser projection support consumes CustomerRow
+    transactionRow,
+    [
+        "customerId"
+    ]
+);
+
+
+/*
+ * Record cursor result carries both parser result and matching record state.
+ */
+
+declare const cursorResult:
+    RecordCursorResult<
+        CustomerRow,
+        DelimitedRecordState
+    >;
+
+
+const cursorParserResult: ParserResult<CustomerRow> =
+    cursorResult.result;
+
+
+const cursorRecordState: DelimitedRecordState =
+    cursorResult.physicalRecord.recordState;
+
+
+const cursorRecordSource: string =
+    cursorResult.physicalRecord.source;
+
+
+cursorResult.physicalRecord.close();
+
+
+// @ts-expect-error cursor result record state is DelimitedRecordState
+const invalidCursorRecordState: undefined =
+    cursorResult.physicalRecord.recordState;
+
+
+/*
+ * RecordCursor preserves representation and record-state types through the
+ * async iterator boundary.
+ */
+
+declare const cursor:
+    RecordCursor<
+        CustomerRow,
+        DelimitedRecordState
+    >;
+
+
+const nextRecord:
+    Promise<
+        IteratorResult<
+            RecordCursorResult<
+                CustomerRow,
+                DelimitedRecordState
+            >,
+            void
+        >
+    > =
+    cursor.next();
+
+
+// @ts-expect-error cursor representation is CustomerRow, not TransactionRow
+const wrongCursor:
+    RecordCursor<
+        TransactionRow,
+        DelimitedRecordState
+    > =
+    cursor;
+
+
+void parserReadMore;
+void parserStartByte;
+void parserLastValidByte;
+void parserFileFinished;
+void parserSource;
+void parserRecordNumber;
+void parserRecordState;
+void completedSource;
+void completedRecordNumber;
+void completedState;
+void validParserValue;
+void validParserErrors;
+void completePhysicalRecord;
+void fillFileBuffer;
+void projectedId;
+void projectedName;
+void projectedAge;
+void projectedInitial;
+void floatingPointProjection;
+void authoredProjection;
+void customerIdFromParser;
+void customerAgeFromParser;
+void cursorParserResult;
+void cursorRecordState;
+void cursorRecordSource;
+void nextRecord;
