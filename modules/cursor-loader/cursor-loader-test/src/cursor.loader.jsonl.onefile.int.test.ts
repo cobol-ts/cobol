@@ -1,5 +1,3 @@
-import {jsonParser} from "@cobol-ts/cursor-loader-json";
-import {createProjection} from "@cobol-ts/cursor-projection";
 import {
     createErrorsOrFileCursor,
     createFileCursor,
@@ -7,48 +5,48 @@ import {
     createThrowingFileCursor,
     type FileCursorResult
 } from "@cobol-ts/cursor-file";
-import {type Errors, isValue} from "@cobol-ts/errors";
+
 import {
-    createDefaultPhysicalRecordConfig,
-    createRecordCursor
-} from "@cobol-ts/cursor-record";
-import {readFileSync} from "node:fs";
-import {resolve} from "node:path";
+    type Errors,
+    isValue
+} from "@cobol-ts/errors";
 
 import {
     type Customer,
     type MinimalCustomer
 } from "./cursor.loader.fixture";
+
 import {
-    customerProjection,
-    minimalCustomerProjection
+    badJsonCustomerJsonlDefinition,
+    createJsonlFixtureFile,
+    createJsonlInfrastructure,
+    customerJsonlDefinition,
+    lazyErrorCustomerJsonlDefinition,
+    minimalCustomerJsonlDefinition
 } from "./cursor.loader.jsonl.fixture";
 
 
-const customerFactory = createProjection<Customer,unknown>(
-    jsonParser,
-    customerProjection
-);
-
-const minimalCustomerFactory = createProjection<MinimalCustomer,unknown>(
-    jsonParser,
-    minimalCustomerProjection
-);
-
-
-describe("JSONL file cursor integration", () => {
-    test("loads complete customers including nested paths", async () => {
+describe("JSONL file cursor integration",() => {
+    test("loads complete customers including nested paths",async () => {
         const customers: CustomerValue[] = [];
-        const cursor = createFileCursor(
-            createJsonlRecordCursor("test.customer.jsonl", 7),
-            customerFactory
-        );
+
+        const cursor =
+            createFileCursor(
+                customerJsonlDefinition,
+                createJsonlFixtureFile(
+                    customerJsonlDefinition.filename
+                ),
+                createJsonlInfrastructure(7)
+            );
 
         for await (const result of cursor) {
-            const row = projectedValue(result);
+            const row =
+                projectedValue(result);
 
             customers.push(
-                readCustomer(row.result)
+                readCustomer(
+                    row.result
+                )
             );
 
             row.close();
@@ -95,38 +93,63 @@ describe("JSONL file cursor integration", () => {
     });
 
 
-    test("loads a minimal projection from the same JSONL records", async () => {
-        const customers: MinimalCustomerValue[] = [];
-        const cursor = createFileCursor(
-            createJsonlRecordCursor("test.customer.jsonl", 5),
-            minimalCustomerFactory
-        );
+    test("loads a different projection from the same JSONL records",async () => {
+        const customers:
+            MinimalCustomerValue[] =
+            [];
+
+        const cursor =
+            createFileCursor(
+                minimalCustomerJsonlDefinition,
+                createJsonlFixtureFile(
+                    minimalCustomerJsonlDefinition.filename
+                ),
+                createJsonlInfrastructure(5)
+            );
 
         for await (const result of cursor) {
-            const row = projectedValue(result);
+            const row =
+                projectedValue(result);
 
-            customers.push({
-                id: row.result.id(),
-                status: row.result.status()
-            });
+            customers.push(
+                readMinimalCustomer(
+                    row.result
+                )
+            );
 
             row.close();
         }
 
         expect(customers).toEqual([
-            {id: 1001, status: "A"},
-            {id: 1002, status: "I"},
-            {id: 1003, status: "A"}
+            {
+                id: 1001,
+                status: "A"
+            },
+            {
+                id: 1002,
+                status: "I"
+            },
+            {
+                id: 1003,
+                status: "A"
+            }
         ]);
     });
 
 
-    test("returns a malformed JSON row as string errors and continues", async () => {
-        const results: Array<number | string[]> = [];
-        const cursor = createFileCursor(
-            createJsonlRecordCursor("test.customer.bad-json.jsonl", 6),
-            customerFactory
-        );
+    test("returns a malformed JSON row as string errors and continues",async () => {
+        const results:
+            Array<number | string[]> =
+            [];
+
+        const cursor =
+            createFileCursor(
+                badJsonCustomerJsonlDefinition,
+                createJsonlFixtureFile(
+                    badJsonCustomerJsonlDefinition.filename
+                ),
+                createJsonlInfrastructure(6)
+            );
 
         for await (const result of cursor) {
             if (Array.isArray(result)) {
@@ -145,7 +168,8 @@ describe("JSONL file cursor integration", () => {
         expect(results[0]).toBe(1001);
         expect(results[2]).toBe(1003);
 
-        const malformed = results[1];
+        const malformed =
+            results[1];
 
         if (!Array.isArray(malformed)) {
             throw new Error(
@@ -154,47 +178,97 @@ describe("JSONL file cursor integration", () => {
         }
 
         expect(malformed).toHaveLength(1);
-        expect(malformed[0]).toContain("JSON parse");
+
+        expect(
+            malformed[0]
+        ).toContain(
+            "JSON parse"
+        );
     });
-    test("rebinds pooled projections and reports the current record in lazy errors", async () => {
-        const filename = "test.customer.lazy-error.jsonl";
 
-        const cursor = createFileCursor(
-            createJsonlRecordCursor(filename, 7),
-            customerFactory
+
+    test("rebinds pooled projections and reports the current record in lazy errors",async () => {
+        const cursor =
+            createFileCursor(
+                lazyErrorCustomerJsonlDefinition,
+                createJsonlFixtureFile(
+                    lazyErrorCustomerJsonlDefinition.filename
+                ),
+                createJsonlInfrastructure(7)
+            );
+
+        const first =
+            projectedValue(
+                cursorValue(
+                    await cursor.next()
+                )
+            );
+
+        const reusedProjection =
+            first.result;
+
+        expect(
+            first.result.id()
+        ).toBe(
+            1001
         );
 
-        const first = projectedValue(
-            cursorValue(await cursor.next())
+        expect(
+            first.result.name()
+        ).toBe(
+            "Alice Smith"
         );
 
-        const reusedProjection = first.result;
-
-        expect(first.result.id()).toBe(1001);
-        expect(first.result.name()).toBe("Alice Smith");
-        expect(first.result.age()).toBe(42);
+        expect(
+            first.result.age()
+        ).toBe(
+            42
+        );
 
         first.close();
 
         expect(
-            () => reusedProjection.name()
-        ).toThrow("Projection is not bound to a record");
-
-
-        const second = projectedValue(
-            cursorValue(await cursor.next())
+            () =>
+                reusedProjection.name()
+        ).toThrow(
+            "Projection is not bound to a record"
         );
 
-        expect(second.result).toBe(reusedProjection);
-        expect(second.result.id()).toBe(1002);
-        expect(second.result.name()).toBe("Broken Age");
+        const second =
+            projectedValue(
+                cursorValue(
+                    await cursor.next()
+                )
+            );
 
-        const error = thrownError(
-            () => second.result.age()
+        expect(
+            second.result
+        ).toBe(
+            reusedProjection
         );
 
-        expect(error.message).toBe(
-            `${filename}: record 2: projection age: `
+        expect(
+            second.result.id()
+        ).toBe(
+            1002
+        );
+
+        expect(
+            second.result.name()
+        ).toBe(
+            "Broken Age"
+        );
+
+        const error =
+            thrownError(
+                () =>
+                    second.result.age()
+            );
+
+        expect(
+            error.message
+        ).toBe(
+            `${lazyErrorCustomerJsonlDefinition.filename}: record 2: projection age: `
             + `JSON projection value at age is not integer\n`
             + `{"id":1002,"name":"Broken Age","age":"forty two","address":{"line1":"8 Station Road","line2":"","postcode":"LS1 4AB"},"status":"I","balance":98.75}\n`
         );
@@ -202,32 +276,67 @@ describe("JSONL file cursor integration", () => {
         second.close();
 
         expect(
-            () => reusedProjection.name()
-        ).toThrow("Projection is not bound to a record");
-
-
-        const third = projectedValue(
-            cursorValue(await cursor.next())
+            () =>
+                reusedProjection.name()
+        ).toThrow(
+            "Projection is not bound to a record"
         );
 
-        expect(third.result).toBe(reusedProjection);
-        expect(third.result.id()).toBe(1003);
-        expect(third.result.name()).toBe("Carol Brown");
-        expect(third.result.age()).toBe(29);
+        const third =
+            projectedValue(
+                cursorValue(
+                    await cursor.next()
+                )
+            );
+
+        expect(
+            third.result
+        ).toBe(
+            reusedProjection
+        );
+
+        expect(
+            third.result.id()
+        ).toBe(
+            1003
+        );
+
+        expect(
+            third.result.name()
+        ).toBe(
+            "Carol Brown"
+        );
+
+        expect(
+            third.result.age()
+        ).toBe(
+            29
+        );
 
         third.close();
     });
 
-    test("returns row errors through ErrorsOr and continues", async () => {
-        const results: Array<number | "error"> = [];
-        const cursor = createErrorsOrFileCursor(
-            createJsonlRecordCursor("test.customer.bad-json.jsonl", 7),
-            customerFactory
-        );
+
+    test("returns row errors through ErrorsOr and continues",async () => {
+        const results:
+            Array<number | "error"> =
+            [];
+
+        const cursor =
+            createErrorsOrFileCursor(
+                badJsonCustomerJsonlDefinition,
+                createJsonlFixtureFile(
+                    badJsonCustomerJsonlDefinition.filename
+                ),
+                createJsonlInfrastructure(7)
+            );
 
         for await (const result of cursor) {
             if (!isValue(result)) {
-                results.push("error");
+                results.push(
+                    "error"
+                );
+
                 continue;
             }
 
@@ -246,17 +355,26 @@ describe("JSONL file cursor integration", () => {
     });
 
 
-    test("throws on the first row error in the throwing cursor", async () => {
-        const cursor = createThrowingFileCursor(
-            createJsonlRecordCursor("test.customer.bad-json.jsonl", 7),
-            customerFactory
-        );
+    test("throws on the first row error in the throwing cursor",async () => {
+        const cursor =
+            createThrowingFileCursor(
+                badJsonCustomerJsonlDefinition,
+                createJsonlFixtureFile(
+                    badJsonCustomerJsonlDefinition.filename
+                ),
+                createJsonlInfrastructure(7)
+            );
 
-        const first = cursorValue(
-            await cursor.next()
-        );
+        const first =
+            cursorValue(
+                await cursor.next()
+            );
 
-        expect(first.result.id()).toBe(1001);
+        expect(
+            first.result.id()
+        ).toBe(
+            1001
+        );
 
         first.close();
 
@@ -264,20 +382,27 @@ describe("JSONL file cursor integration", () => {
             cursor.next()
         ).rejects.toEqual(
             expect.objectContaining({
-                name: "ErrorsException"
+                name:
+                    "ErrorsException"
             })
         );
     });
 
 
-    test("ignores row errors, calls onError and continues", async () => {
+    test("ignores row errors, calls onError and continues",async () => {
         const ids: number[] = [];
         const errors: Errors[] = [];
-        const cursor = createIgnoringFileCursor(
-            createJsonlRecordCursor("test.customer.bad-json.jsonl", 7),
-            customerFactory,
-            error => errors.push(error)
-        );
+
+        const cursor =
+            createIgnoringFileCursor(
+                badJsonCustomerJsonlDefinition,
+                createJsonlFixtureFile(
+                    badJsonCustomerJsonlDefinition.filename
+                ),
+                createJsonlInfrastructure(7),
+                error =>
+                    errors.push(error)
+            );
 
         for await (const result of cursor) {
             ids.push(
@@ -293,73 +418,14 @@ describe("JSONL file cursor integration", () => {
         ]);
 
         expect(errors).toHaveLength(1);
-        expect(errors[0].errors[0]).toContain("JSON parse");
+
+        expect(
+            errors[0].errors[0]
+        ).toContain(
+            "JSON parse"
+        );
     });
 });
-
-
-interface FixtureFile {
-    readonly bytes: Uint8Array;
-    offset: number;
-}
-
-
-function createJsonlRecordCursor(
-    filename: string,
-    bufferSize: number
-) {
-    const buffer = readFileSync(
-        resolve(
-            process.cwd(),
-            filename
-        )
-    );
-
-    const file: FixtureFile = {
-        bytes: new Uint8Array(
-            buffer.buffer,
-            buffer.byteOffset,
-            buffer.byteLength
-        ),
-        offset: 0
-    };
-
-    const config = createDefaultPhysicalRecordConfig<undefined,FixtureFile>({
-        source: filename,
-        file,
-        bufferSize,
-        fillFileBuffer: async (actualFile, target) => {
-            const available =
-                actualFile.bytes.length
-                - actualFile.offset;
-
-            const count = Math.min(
-                target.length,
-                available
-            );
-
-            if (count !== 0) {
-                target.set(
-                    actualFile.bytes.subarray(
-                        actualFile.offset,
-                        actualFile.offset + count
-                    )
-                );
-
-                actualFile.offset += count;
-            }
-
-            return count;
-        },
-        createRecordState: () => undefined
-    });
-
-    return createRecordCursor(
-        jsonParser,
-        undefined,
-        config
-    );
-}
 
 
 function isIteratorYieldResult<T>(
@@ -401,9 +467,10 @@ function thrownError(
 }
 
 
-
 function projectedValue<T>(
-    result: FileCursorResult<T> | string[]
+    result:
+        FileCursorResult<T>
+        | string[]
 ): FileCursorResult<T> {
     if (Array.isArray(result)) {
         throw new Error(
@@ -419,11 +486,13 @@ interface CustomerValue {
     readonly id: number;
     readonly name: string;
     readonly age: number;
+
     readonly address: {
         readonly line1: string;
         readonly line2: string;
         readonly postcode: string;
     };
+
     readonly status: string;
     readonly balance: number;
 }
@@ -439,15 +508,43 @@ function readCustomer(
     customer: Customer
 ): CustomerValue {
     return {
-        id: customer.id(),
-        name: customer.name(),
-        age: customer.age(),
+        id:
+            customer.id(),
+
+        name:
+            customer.name(),
+
+        age:
+            customer.age(),
+
         address: {
-            line1: customer.addressLine1(),
-            line2: customer.addressLine2(),
-            postcode: customer.postcode()
+            line1:
+                customer.addressLine1(),
+
+            line2:
+                customer.addressLine2(),
+
+            postcode:
+                customer.postcode()
         },
-        status: customer.status(),
-        balance: customer.balance()
+
+        status:
+            customer.status(),
+
+        balance:
+            customer.balance()
+    };
+}
+
+
+function readMinimalCustomer(
+    customer: MinimalCustomer
+): MinimalCustomerValue {
+    return {
+        id:
+            customer.id(),
+
+        status:
+            customer.status()
     };
 }

@@ -15,17 +15,36 @@ const REPRESENTATION = Symbol("projectionRepresentation");
 const PHYSICAL_RECORD = Symbol("projectionPhysicalRecord");
 
 
-type ProjectionParser<TRepresentation> =
-    ProjectionSupport<TRepresentation>
+type ProjectionParser<
+    TRepresentation,
+    TParserDetails,
+    TProjectionPath
+> =
+    ProjectionSupport<
+        TRepresentation,
+        TParserDetails,
+        TProjectionPath
+    >
     & PhysicalRecordDebugRenderer;
+
 
 interface BoundProjection<TRepresentation> {
     [REPRESENTATION]: TRepresentation | undefined;
     [PHYSICAL_RECORD]: ProjectionPhysicalRecord | undefined;
 }
 
+
 type ProjectionAccessor<TRepresentation> =
     (this: BoundProjection<TRepresentation>) => number | string;
+
+
+type ProjectionAccessors<TRepresentation> =
+    Readonly<
+        Record<
+            string,
+            ProjectionAccessor<TRepresentation>
+        >
+    >;
 
 
 /**
@@ -54,26 +73,54 @@ export function defineProjection<TProjection>(
 /**
  * Create the runtime factory for one projection.
  *
+ * Projection paths are compiled here, once for this prepared source.
+ *
+ * One accessor function is also created for each projected field here. Those
+ * functions are immutable and are shared by every reusable projection object
+ * subsequently created by this factory.
+ *
  * create()
- *     Creates one reusable projection object with its complete runtime shape.
+ *     Creates one reusable projection object and installs references to the
+ *     already-created accessor functions.
  *
  * bind()
- *     Associates that existing object with one parser representation and one
- *     physical record. No object or accessor is allocated by bind().
+ *     Associates that existing projection object with one representation and
+ *     physical record.
  *
  * clear()
- *     Removes both lease-specific references so the projection may safely be
- *     retained and reused by a pool.
+ *     Removes those lease-specific references.
  *
- * The projection object never changes shape after create() returns.
+ * Normal row-to-row reuse therefore performs no projection-path compilation
+ * and allocates no accessor functions.
  */
-export function createProjection<TProjection,TRepresentation>(
-    parser: ProjectionParser<TRepresentation>,
+export function createProjection<
+    TProjection,
+    TRepresentation,
+    TParserDetails,
+    TProjectionPath
+>(
+    parser: ProjectionParser<
+        TRepresentation,
+        TParserDetails,
+        TProjectionPath
+    >,
+    details: TParserDetails,
     definition: CanonicalProjection<ProjectionDefinition<TProjection>>
 ): ProjectionFactory<TProjection,TRepresentation> {
+    const accessors = createProjectionAccessors(
+        parser,
+        details,
+        definition
+    );
+
     return {
         create(): TProjection {
-            return createProjectionObject(parser, definition);
+            return createProjectionObject<
+                TProjection,
+                TRepresentation
+            >(
+                accessors
+            );
         },
 
         bind(
@@ -82,7 +129,8 @@ export function createProjection<TProjection,TRepresentation>(
             physicalRecord: ProjectionPhysicalRecord
         ): void {
             const bound =
-                projection as TProjection & BoundProjection<TRepresentation>;
+                projection as TProjection
+                    & BoundProjection<TRepresentation>;
 
             if (bound[PHYSICAL_RECORD] !== undefined) {
                 throw new Error("Projection is already bound");
@@ -94,7 +142,8 @@ export function createProjection<TProjection,TRepresentation>(
 
         clear(projection: TProjection): void {
             const bound =
-                projection as TProjection & BoundProjection<TRepresentation>;
+                projection as TProjection
+                    & BoundProjection<TRepresentation>;
 
             bound[REPRESENTATION] = undefined;
             bound[PHYSICAL_RECORD] = undefined;
@@ -104,70 +153,114 @@ export function createProjection<TProjection,TRepresentation>(
 
 
 /**
+ * Compile all projection fields once for this factory.
+ *
+ * Each resulting accessor captures only source/factory-lifetime state:
+ *
+ *     parser
+ *     details
+ *     compiled projection path
+ *     immutable field definition
+ *
+ * It does not capture a representation or physical record.
+ */
+function createProjectionAccessors<
+    TProjection,
+    TRepresentation,
+    TParserDetails,
+    TProjectionPath
+>(
+    parser: ProjectionParser<
+        TRepresentation,
+        TParserDetails,
+        TProjectionPath
+    >,
+    details: TParserDetails,
+    definition: CanonicalProjection<ProjectionDefinition<TProjection>>
+): ProjectionAccessors<TRepresentation> {
+    const accessors:
+        Record<string,ProjectionAccessor<TRepresentation>> = {};
+
+    for (const name in definition) {
+        accessors[name] = createProjectionAccessor(
+            parser,
+            details,
+            definition[name]
+        );
+    }
+
+    return accessors;
+}
+
+
+/**
  * Create one reusable projection object.
  *
- * This is an ordinary object. No prototype object is constructed and
- * Object.create() is not used.
+ * The projection object owns only its two mutable lease-specific bindings.
  *
- * Accessor functions are own properties and are allocated only when this
- * reusable projection object itself is created.
- *
- * The hidden state slots are also installed immediately, so the runtime object
- * shape is complete before it is returned.
+ * Accessor functions themselves are not recreated here. References to the
+ * factory's shared immutable accessor functions are installed instead.
  */
 function createProjectionObject<
     TProjection,
     TRepresentation
 >(
-    parser:
-    ProjectionParser<TRepresentation>,
-    definition:
-    CanonicalProjection<
-        ProjectionDefinition<TProjection>
-    >
+    accessors: ProjectionAccessors<TRepresentation>
 ): TProjection {
+    const projection = {
+        [REPRESENTATION]: undefined,
+        [PHYSICAL_RECORD]: undefined
+    } as TProjection
+        & BoundProjection<TRepresentation>
+        & Record<string,ProjectionAccessor<TRepresentation>>;
 
-    const projection:
-        BoundProjection<TRepresentation>
-        & Record<
-        string,
-        ProjectionAccessor<TRepresentation>
-    > = {
-        [REPRESENTATION]:
-        undefined,
+    const writable:
+        Record<string,ProjectionAccessor<TRepresentation>> =
+        projection;
 
-        [PHYSICAL_RECORD]:
-        undefined
-    };
-
-
-    for (const name in definition) {
-        projection[name] =
-            createProjectionAccessor(
-                parser,
-                definition[name]
-            );
+    for (const name in accessors) {
+        writable[name] = accessors[name];
     }
 
-
-    return projection as TProjection;
+    return projection;
 }
 
 
 /**
- * Compile one canonical field into its application-facing accessor.
+ * Compile one canonical field into its shared application-facing accessor.
  *
- * The parser and immutable field definition are captured for the lifetime of
- * the reusable projection object.
+ * The authoring string path is converted here into the parser-specific runtime
+ * path exactly once.
  *
- * No representation or physical record is captured by this closure. Those
- * lease-specific references live only in the two mutable Symbol slots and are
- * removed by clear().
+ * Examples:
+ *
+ *     CSV
+ *         ["age"] -> 2
+ *
+ *     JSON
+ *         ["customer","age"] -> ["customer","age"]
+ *
+ * The resulting compiled path is captured by the accessor and used directly
+ * whenever that field is requested.
  */
-function createProjectionAccessor<TRepresentation>(
-    parser: ProjectionParser<TRepresentation>,
+function createProjectionAccessor<
+    TRepresentation,
+    TParserDetails,
+    TProjectionPath
+>(
+    parser: ProjectionParser<
+        TRepresentation,
+        TParserDetails,
+        TProjectionPath
+    >,
+    details: TParserDetails,
     field: ProjectionField
 ): ProjectionAccessor<TRepresentation> {
+    const path = parser.compileProjectionPath(
+        details,
+        field.path
+    );
+
     switch (field.type) {
         case "integer":
             return function (
@@ -178,7 +271,8 @@ function createProjectionAccessor<TRepresentation>(
                 try {
                     return parser.integer(
                         this[REPRESENTATION] as TRepresentation,
-                        field.path
+                        details,
+                        path
                     );
                 } catch (error) {
                     throw projectionAccessError(
@@ -199,7 +293,8 @@ function createProjectionAccessor<TRepresentation>(
                 try {
                     return parser.float(
                         this[REPRESENTATION] as TRepresentation,
-                        field.path
+                        details,
+                        path
                     );
                 } catch (error) {
                     throw projectionAccessError(
@@ -220,7 +315,8 @@ function createProjectionAccessor<TRepresentation>(
                 try {
                     return parser.character(
                         this[REPRESENTATION] as TRepresentation,
-                        field.path
+                        details,
+                        path
                     );
                 } catch (error) {
                     throw projectionAccessError(
@@ -241,7 +337,8 @@ function createProjectionAccessor<TRepresentation>(
                 try {
                     return parser.string(
                         this[REPRESENTATION] as TRepresentation,
-                        field.path
+                        details,
+                        path
                     );
                 } catch (error) {
                     throw projectionAccessError(
@@ -260,10 +357,8 @@ function createProjectionAccessor<TRepresentation>(
  * physicalRecord is the authoritative bound-state marker because every active
  * projection lease necessarily has one.
  *
- * This check allocates nothing on the successful accessor path.
- *
  * representation may legitimately have a type which includes undefined, so it
- * is not used as the bound/unbound sentinel.
+ * is not suitable as the bound/unbound sentinel.
  */
 function requirePhysicalRecord<TRepresentation>(
     projection: BoundProjection<TRepresentation>
@@ -282,7 +377,10 @@ function requirePhysicalRecord<TRepresentation>(
  * Add physical provenance and format-specific debug context to a lazy
  * projection failure.
  *
- * Diagnostic rendering happens only after projection access has failed.
+ * The original authoring path is retained for diagnostics. The parser-specific
+ * compiled path is an implementation detail and is not exposed in errors.
+ *
+ * Diagnostic strings and the Error object are created only on failure.
  */
 function projectionAccessError(
     parser: PhysicalRecordDebugRenderer,
@@ -300,12 +398,11 @@ function projectionAccessError(
             ? error.message
             : String(error);
 
-    const debug =
-        parser.toDebugString(
-            physicalRecord,
-            physicalRecord.startByte,
-            physicalRecord.endByte
-        );
+    const debug = parser.toDebugString(
+        physicalRecord,
+        physicalRecord.startByte,
+        physicalRecord.endByte
+    );
 
     return new Error(
         `${physicalRecord.source}: record ${physicalRecord.recordNumber}: `

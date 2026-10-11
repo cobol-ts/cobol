@@ -18,7 +18,6 @@
   },
   "dependencies": {
     "@cobol-ts/cursor-file": "0.0.1",
-    "@cobol-ts/cursor-line-detector": "0.0.1",
     "@cobol-ts/cursor-loader-types": "0.0.1",
     "@cobol-ts/ref_counted_pool": "0.0.1"
   },

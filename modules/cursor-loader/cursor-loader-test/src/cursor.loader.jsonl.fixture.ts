@@ -1,46 +1,117 @@
-import {defineProjection} from "@cobol-ts/cursor-projection";
+import {jsonParser} from "@cobol-ts/cursor-loader-json";
+import {readFileSync} from "node:fs";
+import {resolve} from "node:path";
+
+import {
+    customerProjection,
+    minimalCustomerProjection
+} from "./cursor.loader.fixture";
 
 
-export interface Customer {
-    id(): number;
-    name(): string;
-    age(): number;
-    addressLine1(): string;
-    addressLine2(): string;
-    postcode(): string;
-    status(): string;
-    balance(): number;
+export interface JsonlFixtureFile {
+    readonly bytes: Uint8Array;
+    offset: number;
 }
 
 
-export interface MinimalCustomer {
-    id(): number;
-    status(): string;
+export const customerJsonlDefinition = {
+    filename: "test.customer.jsonl",
+    fileType: "json" as const,
+    projection: customerProjection
+};
+
+
+export const minimalCustomerJsonlDefinition = {
+    filename: "test.customer.jsonl",
+    fileType: "json" as const,
+    projection: minimalCustomerProjection
+};
+
+
+export const badJsonCustomerJsonlDefinition = {
+    filename: "test.customer.bad-json.jsonl",
+    fileType: "json" as const,
+    projection: customerProjection
+};
+
+
+export const lazyErrorCustomerJsonlDefinition = {
+    filename: "test.customer.lazy-error.jsonl",
+    fileType: "json" as const,
+    projection: customerProjection
+};
+
+
+const parserRegistry = {
+    json: {
+        parser: jsonParser,
+        parserConfig: () => undefined,
+        createRecordState: () => undefined
+    }
+};
+
+
+export function createJsonlFixtureFile(
+    filename: string
+): JsonlFixtureFile {
+    const buffer =
+        readFileSync(
+            resolve(
+                process.cwd(),
+                filename
+            )
+        );
+
+    return {
+        bytes:
+            new Uint8Array(
+                buffer.buffer,
+                buffer.byteOffset,
+                buffer.byteLength
+            ),
+
+        offset:
+            0
+    };
 }
 
 
-export const customerProjection = defineProjection<Customer>({
-    id: {type: "integer"},
-    name: {type: "string"},
-    age: {type: "integer"},
-    addressLine1: {
-        type: "string",
-        path: ["address", "line1"]
-    },
-    addressLine2: {
-        type: "string",
-        path: ["address", "line2"]
-    },
-    postcode: {
-        type: "string",
-        path: ["address", "postcode"]
-    },
-    status: {type: "character"},
-    balance: {type: "float"}
-});
+export function createJsonlInfrastructure(
+    bufferSize: number
+) {
+    return {
+        parsers:
+        parserRegistry,
 
+        bufferSize,
 
-export const minimalCustomerProjection = defineProjection<MinimalCustomer>({
-    id: {type: "integer"},
-    status: {type: "character"}
-});
+        fillFileBuffer:
+            async (
+                file: JsonlFixtureFile,
+                target: Uint8Array
+            ) => {
+                const available =
+                    file.bytes.length
+                    - file.offset;
+
+                const count =
+                    Math.min(
+                        target.length,
+                        available
+                    );
+
+                if (count !== 0) {
+                    target.set(
+                        file.bytes.subarray(
+                            file.offset,
+                            file.offset + count
+                        )
+                    );
+
+                    file.offset += count;
+                }
+
+                return count;
+            }
+    };
+}

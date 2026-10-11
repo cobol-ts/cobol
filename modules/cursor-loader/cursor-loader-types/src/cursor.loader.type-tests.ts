@@ -7,6 +7,7 @@ import {
     type ParserConfig,
     type ParserDetails,
     type ParserPhysicalRecordContent,
+    type ParserProjectionPath,
     type ParserRecordState,
     type ParserRepresentation,
     type ParserResult,
@@ -61,7 +62,8 @@ interface Customer {
 
 
 /*
- * Parser-specific configuration, prepared details and record state
+ * Parser-specific configuration, prepared details, record state and compiled
+ * projection path.
  */
 
 interface DelimitedParserConfig {
@@ -72,6 +74,7 @@ interface DelimitedParserConfig {
 interface DelimitedParserDetails {
     readonly config: DelimitedParserConfig;
     readonly separatorByte: number;
+    readonly columns: ReadonlyMap<string,number>;
 }
 
 
@@ -81,13 +84,36 @@ interface DelimitedRecordState {
 }
 
 
+type CustomerProjectionPath =
+    readonly string[];
+
+
+type DelimitedProjectionPath =
+    number;
+
+
 /*
  * Shared parser support used only to keep the parser type tests focused on the
  * parser contract rather than repetitive projection boilerplate.
  */
 
-function parserSupport<TRepresentation>(): ProjectionSupport<TRepresentation> & PhysicalRecordDebugRenderer {
+function parserSupport<
+    TRepresentation,
+    TParserDetails,
+    TProjectionPath
+>(
+    compileProjectionPath:
+    (
+        details: TParserDetails,
+        path: readonly string[]
+    ) => TProjectionPath
+): ProjectionSupport<
+    TRepresentation,
+    TParserDetails,
+    TProjectionPath
+> & PhysicalRecordDebugRenderer {
     return {
+        compileProjectionPath,
         integer: () => 0,
         float: () => 0,
         character: () => "",
@@ -101,8 +127,20 @@ function parserSupport<TRepresentation>(): ProjectionSupport<TRepresentation> & 
  * Valid parsers
  */
 
-const customerParser: Parser<CustomerRow,undefined,undefined,undefined> = {
-    ...parserSupport<CustomerRow>(),
+const customerParser: Parser<
+    CustomerRow,
+    undefined,
+    undefined,
+    undefined,
+    CustomerProjectionPath
+> = {
+    ...parserSupport<
+        CustomerRow,
+        undefined,
+        CustomerProjectionPath
+    >(
+        (_details,path) => path
+    ),
 
     parse: async () => ({
         id: "customer-1",
@@ -112,31 +150,81 @@ const customerParser: Parser<CustomerRow,undefined,undefined,undefined> = {
 };
 
 
-const delimitedCustomerParser: Parser<CustomerRow,DelimitedParserConfig,DelimitedParserDetails,DelimitedRecordState> = {
-    ...parserSupport<CustomerRow>(),
+const delimitedCustomerParser: Parser<
+    CustomerRow,
+    DelimitedParserConfig,
+    DelimitedParserDetails,
+    DelimitedRecordState,
+    DelimitedProjectionPath
+> = {
+    ...parserSupport<
+        CustomerRow,
+        DelimitedParserDetails,
+        DelimitedProjectionPath
+    >(
+        (details,path) => {
+            const column =
+                path.length === 1
+                    ? details.columns.get(path[0])
+                    : undefined;
 
-    prepare: async (record, config) => {
-        const firstStart: number = record.recordState.starts[0];
-        record.endByte = firstStart;
+            if (column === undefined) {
+                throw new Error(
+                    "Delimited projection path not found"
+                );
+            }
+
+            return column;
+        }
+    ),
+
+    prepare: async (record,config) => {
+        const firstStart: number =
+            record.recordState.starts[0];
+
+        record.endByte =
+            firstStart;
 
         return {
             config,
-            separatorByte: config.separator.charCodeAt(0)
+            separatorByte:
+                config.separator.charCodeAt(0),
+            columns:
+                new Map<string,number>([
+                    ["id",0],
+                    ["name",1],
+                    ["age",2]
+                ])
         };
     },
 
-    parse: async (record, details) => {
-        const firstStart: number = record.recordState.starts[0];
-        const firstEnd: number = record.recordState.ends[0];
-        const separator: string = details.config.separator;
-        const separatorByte: number = details.separatorByte;
+    parse: async (record,details) => {
+        const firstStart: number =
+            record.recordState.starts[0];
 
-        record.endByte = firstEnd;
+        const firstEnd: number =
+            record.recordState.ends[0];
+
+        const separator: string =
+            details.config.separator;
+
+        const separatorByte: number =
+            details.separatorByte;
+
+        record.endByte =
+            firstEnd;
 
         return {
-            id: String(separatorByte + firstStart),
-            name: separator,
-            age: firstEnd - firstStart
+            id:
+                String(
+                    separatorByte
+                    + firstStart
+                ),
+            name:
+            separator,
+            age:
+                firstEnd
+                - firstStart
         };
     }
 };
@@ -146,74 +234,216 @@ const delimitedCustomerParser: Parser<CustomerRow,DelimitedParserConfig,Delimite
  * Parser associated types
  */
 
-type _CustomerRepresentation = Expect<Equal<ParserRepresentation<typeof customerParser>,CustomerRow>>;
-type _CustomerConfig = Expect<Equal<ParserConfig<typeof customerParser>,undefined>>;
-type _CustomerDetails = Expect<Equal<ParserDetails<typeof customerParser>,undefined>>;
-type _CustomerRecordState = Expect<Equal<ParserRecordState<typeof customerParser>,undefined>>;
-
-type _DelimitedRepresentation = Expect<Equal<ParserRepresentation<typeof delimitedCustomerParser>,CustomerRow>>;
-type _DelimitedConfig = Expect<Equal<ParserConfig<typeof delimitedCustomerParser>,DelimitedParserConfig>>;
-type _DelimitedDetails = Expect<Equal<ParserDetails<typeof delimitedCustomerParser>,DelimitedParserDetails>>;
-type _DelimitedRecordState = Expect<Equal<ParserRecordState<typeof delimitedCustomerParser>,DelimitedRecordState>>;
+type _CustomerRepresentation =
+    Expect<
+        Equal<
+            ParserRepresentation<typeof customerParser>,
+            CustomerRow
+        >
+    >;
 
 
-const validDelimitedConfig: ParserConfig<typeof delimitedCustomerParser> = {
+type _CustomerConfig =
+    Expect<
+        Equal<
+            ParserConfig<typeof customerParser>,
+            undefined
+        >
+    >;
+
+
+type _CustomerDetails =
+    Expect<
+        Equal<
+            ParserDetails<typeof customerParser>,
+            undefined
+        >
+    >;
+
+
+type _CustomerRecordState =
+    Expect<
+        Equal<
+            ParserRecordState<typeof customerParser>,
+            undefined
+        >
+    >;
+
+
+type _CustomerProjectionPath =
+    Expect<
+        Equal<
+            ParserProjectionPath<typeof customerParser>,
+            CustomerProjectionPath
+        >
+    >;
+
+
+type _DelimitedRepresentation =
+    Expect<
+        Equal<
+            ParserRepresentation<typeof delimitedCustomerParser>,
+            CustomerRow
+        >
+    >;
+
+
+type _DelimitedConfig =
+    Expect<
+        Equal<
+            ParserConfig<typeof delimitedCustomerParser>,
+            DelimitedParserConfig
+        >
+    >;
+
+
+type _DelimitedDetails =
+    Expect<
+        Equal<
+            ParserDetails<typeof delimitedCustomerParser>,
+            DelimitedParserDetails
+        >
+    >;
+
+
+type _DelimitedRecordState =
+    Expect<
+        Equal<
+            ParserRecordState<typeof delimitedCustomerParser>,
+            DelimitedRecordState
+        >
+    >;
+
+
+type _DelimitedProjectionPath =
+    Expect<
+        Equal<
+            ParserProjectionPath<typeof delimitedCustomerParser>,
+            DelimitedProjectionPath
+        >
+    >;
+
+
+/*
+ * Parser configuration, details, record-state and projection-path types remain
+ * independently associated with the parser.
+ */
+
+const validDelimitedConfig:
+    ParserConfig<typeof delimitedCustomerParser> = {
     separator: "|"
 };
 
 
-const invalidDelimitedConfig: ParserConfig<typeof delimitedCustomerParser> = {
+const invalidDelimitedConfig:
+    ParserConfig<typeof delimitedCustomerParser> = {
     // @ts-expect-error separator must be a string
     separator: 123
 };
 
 
-const validDelimitedDetails: ParserDetails<typeof delimitedCustomerParser> = {
-    config: validDelimitedConfig,
-    separatorByte: 124
+const validDelimitedDetails:
+    ParserDetails<typeof delimitedCustomerParser> = {
+    config:
+    validDelimitedConfig,
+    separatorByte:
+        124,
+    columns:
+        new Map<string,number>([
+            ["id",0],
+            ["name",1],
+            ["age",2]
+        ])
 };
 
 
-// @ts-expect-error separatorByte is required
-const invalidDelimitedDetails: ParserDetails<typeof delimitedCustomerParser> = {
-    config: validDelimitedConfig
+// @ts-expect-error separatorByte and columns are required
+const invalidDelimitedDetails:
+    ParserDetails<typeof delimitedCustomerParser> = {
+    config:
+    validDelimitedConfig
 };
 
 
-const validDelimitedRecordState: ParserRecordState<typeof delimitedCustomerParser> = {
-    starts: new Int32Array(4),
-    ends: new Int32Array(4)
+const validDelimitedRecordState:
+    ParserRecordState<typeof delimitedCustomerParser> = {
+    starts:
+        new Int32Array(4),
+    ends:
+        new Int32Array(4)
 };
 
 
 // @ts-expect-error delimited parser requires its record state
-const invalidDelimitedRecordState: ParserRecordState<typeof delimitedCustomerParser> = undefined;
+const invalidDelimitedRecordState:
+    ParserRecordState<typeof delimitedCustomerParser> =
+    undefined;
+
+
+const validCustomerProjectionPath:
+    ParserProjectionPath<typeof customerParser> = [
+    "customer",
+    "name"
+];
+
+
+const validDelimitedProjectionPath:
+    ParserProjectionPath<typeof delimitedCustomerParser> =
+    2;
+
+
+// @ts-expect-error delimited runtime projection path is a compiled number
+const invalidDelimitedProjectionPath:
+    ParserProjectionPath<typeof delimitedCustomerParser> = [
+    "age"
+];
 
 
 /*
  * Parser result typing
  */
 
-declare const errors: Errors;
+declare const errors:
+    Errors;
 
-const validParserValue: ParserResult<CustomerRow> = {
+
+const validParserValue:
+    ParserResult<CustomerRow> = {
     id: "customer-1",
     name: "Customer One",
     age: 42
 };
 
-const validParserErrors: ParserResult<CustomerRow> = errors;
+
+const validParserErrors:
+    ParserResult<CustomerRow> =
+    errors;
+
 
 // @ts-expect-error parser result must be the representation or Errors
-const invalidParserResult: ParserResult<CustomerRow> = 42;
+const invalidParserResult:
+    ParserResult<CustomerRow> =
+    42;
 
 
 /*
- * Parser implementation must satisfy its declared async result types
+ * Parser implementation must satisfy its declared async result types.
  */
 
-const invalidCustomerParserResult: Parser<CustomerRow,undefined,undefined,undefined> = {
-    ...parserSupport<CustomerRow>(),
+const invalidCustomerParserResult: Parser<
+    CustomerRow,
+    undefined,
+    undefined,
+    undefined,
+    CustomerProjectionPath
+> = {
+    ...parserSupport<
+        CustomerRow,
+        undefined,
+        CustomerProjectionPath
+    >(
+        (_details,path) => path
+    ),
 
     // @ts-expect-error parse must return CustomerRow or Errors
     parse: async () => ({
@@ -223,8 +453,20 @@ const invalidCustomerParserResult: Parser<CustomerRow,undefined,undefined,undefi
 };
 
 
-const synchronousCustomerParser: Parser<CustomerRow,undefined,undefined,undefined> = {
-    ...parserSupport<CustomerRow>(),
+const synchronousCustomerParser: Parser<
+    CustomerRow,
+    undefined,
+    undefined,
+    undefined,
+    CustomerProjectionPath
+> = {
+    ...parserSupport<
+        CustomerRow,
+        undefined,
+        CustomerProjectionPath
+    >(
+        (_details,path) => path
+    ),
 
     // @ts-expect-error parse is asynchronous
     parse: () => ({
@@ -235,11 +477,23 @@ const synchronousCustomerParser: Parser<CustomerRow,undefined,undefined,undefine
 };
 
 
-const invalidPrepareResult: Parser<CustomerRow,DelimitedParserConfig,DelimitedParserDetails,DelimitedRecordState> = {
-    ...parserSupport<CustomerRow>(),
+const invalidPrepareResult: Parser<
+    CustomerRow,
+    DelimitedParserConfig,
+    DelimitedParserDetails,
+    DelimitedRecordState,
+    DelimitedProjectionPath
+> = {
+    ...parserSupport<
+        CustomerRow,
+        DelimitedParserDetails,
+        DelimitedProjectionPath
+    >(
+        (_details,_path) => 0
+    ),
 
     // @ts-expect-error prepare must return DelimitedParserDetails or Errors
-    prepare: async (_record, config) => ({
+    prepare: async (_record,config) => ({
         config,
         somethingElse: 123
     }),
@@ -252,13 +506,27 @@ const invalidPrepareResult: Parser<CustomerRow,DelimitedParserConfig,DelimitedPa
 };
 
 
-const synchronousPrepare: Parser<CustomerRow,DelimitedParserConfig,DelimitedParserDetails,DelimitedRecordState> = {
-    ...parserSupport<CustomerRow>(),
+const synchronousPrepare: Parser<
+    CustomerRow,
+    DelimitedParserConfig,
+    DelimitedParserDetails,
+    DelimitedRecordState,
+    DelimitedProjectionPath
+> = {
+    ...parserSupport<
+        CustomerRow,
+        DelimitedParserDetails,
+        DelimitedProjectionPath
+    >(
+        (_details,_path) => 0
+    ),
 
     // @ts-expect-error prepare is asynchronous
-    prepare: (_record, config) => ({
+    prepare: (_record,config) => ({
         config,
-        separatorByte: 124
+        separatorByte: 124,
+        columns:
+            new Map<string,number>()
     }),
 
     parse: async () => ({
@@ -273,9 +541,16 @@ const synchronousPrepare: Parser<CustomerRow,DelimitedParserConfig,DelimitedPars
  * Parser record-state compatibility
  */
 
-declare const noStateParserRecord: ParserPhysicalRecordContent<undefined>;
-declare const delimitedParserRecord: ParserPhysicalRecordContent<DelimitedRecordState>;
-declare const delimitedDetails: DelimitedParserDetails;
+declare const noStateParserRecord:
+    ParserPhysicalRecordContent<undefined>;
+
+
+declare const delimitedParserRecord:
+    ParserPhysicalRecordContent<DelimitedRecordState>;
+
+
+declare const delimitedDetails:
+    DelimitedParserDetails;
 
 
 delimitedCustomerParser.parse(
@@ -285,7 +560,7 @@ delimitedCustomerParser.parse(
 
 
 void delimitedCustomerParser.parse(
-// @ts-expect-error delimited parser requires DelimitedRecordState
+    // @ts-expect-error delimited parser requires DelimitedRecordState
     noStateParserRecord,
     delimitedDetails
 );
@@ -298,49 +573,68 @@ void delimitedCustomerParser.parse(
  * EOF state, provenance and lifetime are intentionally unavailable for mutation.
  */
 
-const parserReadMore: Promise<void> =
+const parserReadMore:
+    Promise<void> =
     delimitedParserRecord.readMore();
 
-const parserStartByte: number =
+
+const parserStartByte:
+    number =
     delimitedParserRecord.startByte;
 
-const parserLastValidByte: number =
+
+const parserLastValidByte:
+    number =
     delimitedParserRecord.lastValidByte;
 
-const parserFileFinished: boolean =
+
+const parserFileFinished:
+    boolean =
     delimitedParserRecord.fileFinished;
 
-const parserSource: string =
+
+const parserSource:
+    string =
     delimitedParserRecord.source;
 
-const parserRecordNumber: number =
+
+const parserRecordNumber:
+    number =
     delimitedParserRecord.recordNumber;
 
-const parserRecordState: DelimitedRecordState =
+
+const parserRecordState:
+    DelimitedRecordState =
     delimitedParserRecord.recordState;
 
 
-delimitedParserRecord.endByte = 17;
+delimitedParserRecord.endByte =
+    17;
 
 
 // @ts-expect-error cursor owns startByte
-noStateParserRecord.startByte = 1;
+noStateParserRecord.startByte =
+    1;
 
 
 // @ts-expect-error readMore owns lastValidByte
-noStateParserRecord.lastValidByte = 1;
+noStateParserRecord.lastValidByte =
+    1;
 
 
 // @ts-expect-error readMore owns fileFinished
-noStateParserRecord.fileFinished = true;
+noStateParserRecord.fileFinished =
+    true;
 
 
 // @ts-expect-error cursor owns source provenance
-noStateParserRecord.source = "other";
+noStateParserRecord.source =
+    "other";
 
 
 // @ts-expect-error cursor owns record numbering
-noStateParserRecord.recordNumber = 99;
+noStateParserRecord.recordNumber =
+    99;
 
 
 // @ts-expect-error parser does not own the physical-record lifetime
@@ -357,15 +651,22 @@ noStateParserRecord.buffers.push(
  * Completed physical-record capability
  */
 
-declare const completedRecord: PhysicalRecordContent<DelimitedRecordState>;
+declare const completedRecord:
+    PhysicalRecordContent<DelimitedRecordState>;
 
-const completedSource: string =
+
+const completedSource:
+    string =
     completedRecord.source;
 
-const completedRecordNumber: number =
+
+const completedRecordNumber:
+    number =
     completedRecord.recordNumber;
 
-const completedState: DelimitedRecordState =
+
+const completedState:
+    DelimitedRecordState =
     completedRecord.recordState;
 
 
@@ -377,14 +678,17 @@ completedRecord.readMore();
 
 
 // @ts-expect-error completed physical range is readonly
-completedRecord.endByte = 20;
+completedRecord.endByte =
+    20;
 
 
 // @ts-expect-error completed EOF state is readonly
-completedRecord.fileFinished = false;
+completedRecord.fileFinished =
+    false;
 
 
-const completePhysicalRecord: PhysicalRecordContent<undefined> = {
+const completePhysicalRecord:
+    PhysicalRecordContent<undefined> = {
     buffers: [],
     recordState: undefined,
     startByte: 0,
@@ -398,7 +702,8 @@ const completePhysicalRecord: PhysicalRecordContent<undefined> = {
 
 
 // @ts-expect-error completed records require source provenance
-const missingPhysicalRecordSource: PhysicalRecordContent<undefined> = {
+const missingPhysicalRecordSource:
+    PhysicalRecordContent<undefined> = {
     buffers: [],
     recordState: undefined,
     startByte: 0,
@@ -411,7 +716,8 @@ const missingPhysicalRecordSource: PhysicalRecordContent<undefined> = {
 
 
 // @ts-expect-error completed records require an explicit recordState even when undefined
-const missingPhysicalRecordState: PhysicalRecordContent<undefined> = {
+const missingPhysicalRecordState:
+    PhysicalRecordContent<undefined> = {
     buffers: [],
     startByte: 0,
     endByte: 0,
@@ -428,18 +734,33 @@ const missingPhysicalRecordState: PhysicalRecordContent<undefined> = {
  * lifetime machinery.
  */
 
-declare const pooledRecord: PooledPhysicalRecordContent<DelimitedRecordState>;
+declare const pooledRecord:
+    PooledPhysicalRecordContent<DelimitedRecordState>;
 
-pooledRecord.startByte = 1;
-pooledRecord.endByte = 2;
-pooledRecord.lastValidByte = 8;
-pooledRecord.fileFinished = true;
-pooledRecord.source = "other-source";
-pooledRecord.recordNumber = 7;
+
+pooledRecord.startByte =
+    1;
+
+pooledRecord.endByte =
+    2;
+
+pooledRecord.lastValidByte =
+    8;
+
+pooledRecord.fileFinished =
+    true;
+
+pooledRecord.source =
+    "other-source";
+
+pooledRecord.recordNumber =
+    7;
+
 
 pooledRecord.buffers.push(
     new Uint8Array(8)
 );
+
 
 pooledRecord.close();
 
@@ -461,8 +782,9 @@ interface TestFile {
 }
 
 
-const fillFileBuffer: FillFileBuffer<TestFile> =
-    async (file, buffer) => {
+const fillFileBuffer:
+    FillFileBuffer<TestFile> =
+    async (file,buffer) => {
         const filename: string =
             file.name;
 
@@ -475,8 +797,9 @@ const fillFileBuffer: FillFileBuffer<TestFile> =
     };
 
 
-const invalidFillResult: FillFileBuffer<TestFile> =
-// @ts-expect-error fill operation must resolve to a byte count
+const invalidFillResult:
+    FillFileBuffer<TestFile> =
+    // @ts-expect-error fill operation must resolve to a byte count
     async () => "invalid";
 
 
@@ -527,30 +850,40 @@ declare const customerView:
     CustomerView;
 
 
-const projectedId: string =
+const projectedId:
+    string =
     customerView.id();
 
-const projectedName: string =
+
+const projectedName:
+    string =
     customerView.name();
 
-const projectedAge: number =
+
+const projectedAge:
+    number =
     customerView.age();
 
-const projectedInitial: string =
+
+const projectedInitial:
+    string =
     customerView.initial();
 
 
 // @ts-expect-error integer projection accessor returns number
-const invalidProjectedAge: string =
+const invalidProjectedAge:
+    string =
     customerView.age();
 
 
 // @ts-expect-error string projection accessor returns string
-const invalidProjectedName: number =
+const invalidProjectedName:
+    number =
     customerView.name();
 
 
-const canonicalProjection: CanonicalCustomerProjection = {
+const canonicalProjection:
+    CanonicalCustomerProjection = {
     id: {
         type: "string",
         path: [
@@ -583,7 +916,8 @@ const canonicalProjection: CanonicalCustomerProjection = {
 };
 
 
-const invalidCanonicalProjection: CanonicalCustomerProjection = {
+const invalidCanonicalProjection:
+    CanonicalCustomerProjection = {
     // @ts-expect-error canonical fields always have an explicit path
     id: {
         type: "string"
@@ -712,7 +1046,8 @@ const projectionWithExtraField = {
 
 
 // @ts-expect-error every Customer accessor requires a projection field
-const projectionMissingField: ProjectionDefinition<Customer> = {
+const projectionMissingField:
+    ProjectionDefinition<Customer> = {
     id: {
         type: "string"
     },
@@ -771,17 +1106,21 @@ const invalidAuthoredProjection = {
 declare const customerProjection:
     Customer;
 
+
 declare const customerRow:
     CustomerRow;
 
+
 declare const transactionRow:
     TransactionRow;
+
 
 declare const projectionPhysicalRecord:
     ProjectionPhysicalRecord;
 
 
-const customerProjectionFactory: ProjectionFactory<Customer,CustomerRow> = {
+const customerProjectionFactory:
+    ProjectionFactory<Customer,CustomerRow> = {
     create:
         () => customerProjection,
 
@@ -815,7 +1154,6 @@ const customerProjectionFactory: ProjectionFactory<Customer,CustomerRow> = {
             const buffers: readonly Uint8Array[] =
                 physicalRecord.buffers;
 
-
             void id;
             void name;
             void source;
@@ -825,14 +1163,11 @@ const customerProjectionFactory: ProjectionFactory<Customer,CustomerRow> = {
             void lastValidByte;
             void buffers;
 
-
             // @ts-expect-error projection capability does not own physical lifetime
             physicalRecord.close();
 
-
             // @ts-expect-error projection capability cannot perform I/O
             physicalRecord.readMore();
-
 
             // @ts-expect-error projection capability deliberately excludes parser recordState
             physicalRecord.recordState;
@@ -857,7 +1192,7 @@ customerProjectionFactory.bind(
 
 customerProjectionFactory.bind(
     customerProjection,
-// @ts-expect-error factory representation is CustomerRow
+    // @ts-expect-error factory representation is CustomerRow
     transactionRow,
     projectionPhysicalRecord
 );
@@ -865,7 +1200,7 @@ customerProjectionFactory.bind(
 
 customerProjectionFactory.bind(
     {
-// @ts-expect-error factory projection is Customer
+        // @ts-expect-error factory projection is Customer
         amount:
             () => 1
     },
@@ -875,32 +1210,101 @@ customerProjectionFactory.bind(
 
 
 /*
- * Parser projection support is tied to the parser representation.
+ * ProjectionSupport compilation is source-scoped.
+ *
+ * Canonical authoring paths are readonly string[]. The parser decides what
+ * runtime path representation should be retained by the projection.
  */
 
-const customerIdFromParser: string =
-    customerParser.string(
-        customerRow,
+const compiledCustomerIdPath:
+    ParserProjectionPath<typeof customerParser> =
+    customerParser.compileProjectionPath(
+        undefined,
         [
             "id"
         ]
     );
 
 
-const customerAgeFromParser: number =
-    customerParser.integer(
-        customerRow,
+const compiledDelimitedAgePath:
+    ParserProjectionPath<typeof delimitedCustomerParser> =
+    delimitedCustomerParser.compileProjectionPath(
+        delimitedDetails,
         [
             "age"
         ]
     );
 
 
+    // @ts-expect-error compiled delimited paths are numbers
+const invalidCompiledDelimitedPath:
+    ParserProjectionPath<typeof delimitedCustomerParser> =
+    customerParser.compileProjectionPath(
+        undefined,
+        [
+            "age"
+        ]
+    );
+
+
+/*
+ * Parser projection support is tied to representation, prepared details and
+ * compiled projection-path type.
+ */
+
+const customerIdFromParser:
+    string =
+    customerParser.string(
+        customerRow,
+        undefined,
+        compiledCustomerIdPath
+    );
+
+
+const customerAgeFromParser:
+    number =
+    customerParser.integer(
+        customerRow,
+        undefined,
+        [
+            "age"
+        ]
+    );
+
+
+const delimitedAgeFromParser:
+    number =
+    delimitedCustomerParser.integer(
+        customerRow,
+        delimitedDetails,
+        compiledDelimitedAgePath
+    );
+
+
 customerParser.string(
-// @ts-expect-error customer parser projection support consumes CustomerRow
+    // @ts-expect-error customer parser projection support consumes CustomerRow
     transactionRow,
+    undefined,
     [
         "customerId"
+    ]
+);
+
+
+delimitedCustomerParser.integer(
+    customerRow,
+    // @ts-expect-error delimited projection access requires prepared details
+    undefined,
+    2
+);
+
+
+delimitedCustomerParser.integer(
+    customerRow,
+    delimitedDetails,
+    // @ts-expect-error delimited runtime projection path has already compiled to number
+    [
+        "age"
     ]
 );
 
@@ -916,15 +1320,18 @@ declare const cursorResult:
     >;
 
 
-const cursorParserResult: ParserResult<CustomerRow> =
+const cursorParserResult:
+    ParserResult<CustomerRow> =
     cursorResult.result;
 
 
-const cursorRecordState: DelimitedRecordState =
+const cursorRecordState:
+    DelimitedRecordState =
     cursorResult.physicalRecord.recordState;
 
 
-const cursorRecordSource: string =
+const cursorRecordSource:
+    string =
     cursorResult.physicalRecord.source;
 
 
@@ -932,7 +1339,8 @@ cursorResult.physicalRecord.close();
 
 
 // @ts-expect-error cursor result record state is DelimitedRecordState
-const invalidCursorRecordState: undefined =
+const invalidCursorRecordState:
+    undefined =
     cursorResult.physicalRecord.recordState;
 
 
@@ -970,6 +1378,12 @@ const wrongCursor:
     cursor;
 
 
+/*
+ * Keep compile-time documentation values live for strict unused checking.
+ */
+
+void validCustomerProjectionPath;
+void validDelimitedProjectionPath;
 void parserReadMore;
 void parserStartByte;
 void parserLastValidByte;
@@ -992,6 +1406,9 @@ void floatingPointProjection;
 void authoredProjection;
 void customerIdFromParser;
 void customerAgeFromParser;
+void delimitedAgeFromParser;
+void compiledCustomerIdPath;
+void compiledDelimitedAgePath;
 void cursorParserResult;
 void cursorRecordState;
 void cursorRecordSource;

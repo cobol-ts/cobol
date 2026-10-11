@@ -1,100 +1,406 @@
 import {
+    ErrorsException,
+    isErrors
+} from "@cobol-ts/errors";
+
+import {
     type Parser,
+    type ParserPhysicalRecordContent,
+    type ParserResult,
     type PhysicalRecordContent,
     type RecordCursorResult
 } from "@cobol-ts/cursor-loader-types";
-import {type RecordCursorPhysicalRecord, type RecordCursorResources} from "./physical.record";
+
+import {
+    type RecordCursorPhysicalRecord,
+    type RecordCursorResources
+} from "@cobol-ts/cursor-record";
+
+
+export interface OpenedRecordCursor<
+    TRepresentation,
+    TParserDetails,
+    TRecordState
+> {
+    readonly details: TParserDetails;
+    readonly recordCursor:
+        AsyncGenerator<
+            RecordCursorResult<TRepresentation,TRecordState>,
+            void,
+            void
+        >;
+
+    close(): void;
+}
+
+
+interface RecordParser<
+    TRepresentation,
+    TParserDetails,
+    TRecordState
+> {
+    readonly parse: (
+        record: ParserPhysicalRecordContent<TRecordState>,
+        details: TParserDetails
+    ) => Promise<ParserResult<TRepresentation>>;
+}
+
+
+interface RecordCursorState<TRecordState> {
+    readonly resources: RecordCursorResources<TRecordState>;
+
+    nextBuffer: Uint8Array | undefined;
+    nextStartByte: number;
+    nextLastValidByte: number;
+    nextFileFinished: boolean;
+    recordNumber: number;
+    finished: boolean;
+}
 
 
 /**
- * Iterate over physical records without knowing their syntax.
- *
- * The cursor establishes startByte and recordNumber. The parser scans available
- * bytes, calls readMore() as needed, and establishes endByte. The cursor carries
- * the final physical buffer into the next record without copying it.
- *
- * Ownership is explicit:
- *
- *     before yield     cursor owns the record lease;
- *     after yield      consumer owns the record lease;
- *     carried buffer   cursor owns one additional reference until transferred
- *                      to the next record or iteration ends.
+ * Low-level entry point when parser details are already known.
  */
-export async function* createRecordCursor<TRepresentation,TParserConfig,TParserDetails,TRecordState>(
-    parser: Parser<TRepresentation,TParserConfig,TParserDetails,TRecordState>,
+export function createRecordCursor<
+    TRepresentation,
+    TParserDetails,
+    TRecordState
+>(
+    parser: RecordParser<TRepresentation,TParserDetails,TRecordState>,
     details: TParserDetails,
     resources: RecordCursorResources<TRecordState>
 ): AsyncGenerator<RecordCursorResult<TRepresentation,TRecordState>,void,void> {
-    let nextBuffer: Uint8Array | undefined;
-    let nextStartByte = 0;
-    let nextLastValidByte = 0;
-    let nextFileFinished = false;
-    let recordNumber = 0;
-    let record: RecordCursorPhysicalRecord<TRecordState> | undefined;
+    return createRecordCursorFromState(
+        parser,
+        details,
+        createRecordCursorState(resources)
+    );
+}
+
+
+/**
+ * Open one parser against one source.
+ *
+ * prepare(), when present, consumes its bootstrap record through the same
+ * cursor state subsequently used for data records. Bytes already read beyond
+ * the bootstrap record therefore become the start of the first data record
+ * without copying or rereading.
+ *
+ * Preparation failures are configuration/setup failures and throw.
+ */
+export async function openRecordCursor<
+    TRepresentation,
+    TParserConfig,
+    TParserDetails,
+    TRecordState,
+    TProjectionPath
+>(
+    parser: Parser<
+        TRepresentation,
+        TParserConfig,
+        TParserDetails,
+        TRecordState,
+        TProjectionPath
+    >,
+    config: TParserConfig,
+    resources: RecordCursorResources<TRecordState>
+): Promise<
+    OpenedRecordCursor<
+        TRepresentation,
+        TParserDetails,
+        TRecordState
+    >
+> {
+    const state =
+        createRecordCursorState(resources);
+
+    if (parser.prepare === undefined) {
+        const details =
+            config as unknown as TParserDetails;
+
+        return {
+            details,
+            recordCursor:
+                createRecordCursorFromState(
+                    parser,
+                    details,
+                    state
+                ),
+            close:
+                () => closeRecordCursorState(state)
+        };
+    }
+
+    let record:
+        RecordCursorPhysicalRecord<TRecordState> | undefined =
+        acquireRecord(state);
 
     try {
-        while (true) {
-            record = resources.acquireRecord();
+        const prepared =
+            await parser.prepare(
+                record,
+                config
+            );
 
-            if (nextBuffer !== undefined) {
-                record.buffers.push(nextBuffer);
-                nextBuffer = undefined;
-            }
+        /*
+         * Preparation errors terminate the source.
+         *
+         * Do not create a carry reference because no data-record run will
+         * follow.
+         */
+        if (isErrors(prepared)) {
+            throw new ErrorsException(
+                prepared.errors,
+                prepared.reference
+            );
+        }
 
-            record.startByte = nextStartByte;
-            record.endByte = nextStartByte;
-            record.lastValidByte = nextLastValidByte;
-            record.fileFinished = nextFileFinished;
-            record.recordNumber = ++recordNumber;
+        /*
+         * Establish the carry before releasing the bootstrap record's own
+         * references.
+         */
+        completeRecord(
+            state,
+            record
+        );
 
-            const result = await parser.parse(record, details);
-            validateCompletedRecord(record, resources.bufferSize);
+        const completedRecord =
+            record;
 
-            const physicalRecord: PhysicalRecordContent<TRecordState> = record;
+        record =
+            undefined;
 
-            if (record.fileFinished && record.endByte === record.lastValidByte) {
-                const cursorResult: RecordCursorResult<TRepresentation,TRecordState> = {result, physicalRecord};
-                record = undefined;
-                yield cursorResult;
-                return;
-            }
+        completedRecord.close();
 
-            if (record.buffers.length === 0) {
-                throw new Error("Parser completed a non-final physical record without a byte buffer");
-            }
+        return {
+            details:
+            prepared,
 
-            const finalBufferStart = (record.buffers.length - 1) * resources.bufferSize;
-            nextStartByte = record.endByte - finalBufferStart;
-            nextLastValidByte = record.lastValidByte - finalBufferStart;
-            nextFileFinished = record.fileFinished;
+            recordCursor:
+                createRecordCursorFromState(
+                    parser,
+                    prepared,
+                    state
+                ),
 
-            if (
-                nextStartByte < 0
-                || nextStartByte > resources.bufferSize
-                || nextLastValidByte < nextStartByte
-                || nextLastValidByte > resources.bufferSize
-            ) {
-                throw new Error("Parser returned a physical record range outside its byte buffers");
-            }
+            close:
+                () => closeRecordCursorState(state)
+        };
+    } catch (error) {
+        record?.close();
+        closeRecordCursorState(state);
+        throw error;
+    }
+}
 
-            const lastBuffer = record.buffers[record.buffers.length - 1];
-            resources.retainBuffer(lastBuffer);
-            nextBuffer = lastBuffer;
 
-            const cursorResult: RecordCursorResult<TRepresentation,TRecordState> = {result, physicalRecord};
-            record = undefined;
+async function* createRecordCursorFromState<
+    TRepresentation,
+    TParserDetails,
+    TRecordState
+>(
+    parser: RecordParser<TRepresentation,TParserDetails,TRecordState>,
+    details: TParserDetails,
+    state: RecordCursorState<TRecordState>
+): AsyncGenerator<RecordCursorResult<TRepresentation,TRecordState>,void,void> {
+    let record:
+        RecordCursorPhysicalRecord<TRecordState> | undefined;
+
+    try {
+        while (!state.finished) {
+            record =
+                acquireRecord(state);
+
+            const result =
+                await parser.parse(
+                    record,
+                    details
+                );
+
+            completeRecord(
+                state,
+                record
+            );
+
+            const physicalRecord:
+                PhysicalRecordContent<TRecordState> =
+                record;
+
+            const cursorResult:
+                RecordCursorResult<TRepresentation,TRecordState> = {
+                result,
+                physicalRecord
+            };
+
+            /*
+             * Ownership transfers to the consumer before suspension.
+             */
+            record =
+                undefined;
+
             yield cursorResult;
         }
     } finally {
-        /* An unyielded record lease still belongs to the cursor. */
-        if (record !== undefined) {
-            record.close();
-        }
+        /*
+         * Only an unyielded record remains cursor-owned.
+         */
+        record?.close();
 
-        if (nextBuffer !== undefined) {
-            resources.releaseBuffer(nextBuffer);
-        }
+        closeRecordCursorState(
+            state
+        );
     }
+}
+
+
+function createRecordCursorState<TRecordState>(
+    resources: RecordCursorResources<TRecordState>
+): RecordCursorState<TRecordState> {
+    return {
+        resources,
+        nextBuffer:
+        undefined,
+        nextStartByte:
+            0,
+        nextLastValidByte:
+            0,
+        nextFileFinished:
+            false,
+        recordNumber:
+            0,
+        finished:
+            false
+    };
+}
+
+
+function acquireRecord<TRecordState>(
+    state: RecordCursorState<TRecordState>
+): RecordCursorPhysicalRecord<TRecordState> {
+    if (state.finished) {
+        throw new Error(
+            "Cannot acquire a record from a finished record cursor"
+        );
+    }
+
+    const record =
+        state.resources.acquireRecord();
+
+    if (state.nextBuffer !== undefined) {
+        record.buffers.push(
+            state.nextBuffer
+        );
+
+        state.nextBuffer =
+            undefined;
+    }
+
+    record.startByte =
+        state.nextStartByte;
+
+    record.endByte =
+        state.nextStartByte;
+
+    record.lastValidByte =
+        state.nextLastValidByte;
+
+    record.fileFinished =
+        state.nextFileFinished;
+
+    record.recordNumber =
+        ++state.recordNumber;
+
+    return record;
+}
+
+
+function completeRecord<TRecordState>(
+    state: RecordCursorState<TRecordState>,
+    record: RecordCursorPhysicalRecord<TRecordState>
+): void {
+    validateCompletedRecord(
+        record,
+        state.resources.bufferSize
+    );
+
+    if (
+        record.fileFinished
+        && record.endByte === record.lastValidByte
+    ) {
+        state.finished =
+            true;
+
+        return;
+    }
+
+    if (record.buffers.length === 0) {
+        throw new Error(
+            "Parser completed a non-final physical record without a byte buffer"
+        );
+    }
+
+    const finalBufferStart =
+        (record.buffers.length - 1)
+        * state.resources.bufferSize;
+
+    const nextStartByte =
+        record.endByte
+        - finalBufferStart;
+
+    const nextLastValidByte =
+        record.lastValidByte
+        - finalBufferStart;
+
+    if (
+        nextStartByte < 0
+        || nextStartByte > state.resources.bufferSize
+        || nextLastValidByte < nextStartByte
+        || nextLastValidByte > state.resources.bufferSize
+    ) {
+        throw new Error(
+            "Parser returned a physical record range outside its byte buffers"
+        );
+    }
+
+    const lastBuffer =
+        record.buffers[
+        record.buffers.length - 1
+            ];
+
+    state.resources.retainBuffer(
+        lastBuffer
+    );
+
+    state.nextBuffer =
+        lastBuffer;
+
+    state.nextStartByte =
+        nextStartByte;
+
+    state.nextLastValidByte =
+        nextLastValidByte;
+
+    state.nextFileFinished =
+        record.fileFinished;
+}
+
+
+function closeRecordCursorState<TRecordState>(
+    state: RecordCursorState<TRecordState>
+): void {
+    state.finished =
+        true;
+
+    if (state.nextBuffer === undefined) {
+        return;
+    }
+
+    state.resources.releaseBuffer(
+        state.nextBuffer
+    );
+
+    state.nextBuffer =
+        undefined;
 }
 
 
@@ -102,7 +408,9 @@ function validateCompletedRecord<TRecordState>(
     record: RecordCursorPhysicalRecord<TRecordState>,
     bufferSize: number
 ): void {
-    const capacity = record.buffers.length * bufferSize;
+    const capacity =
+        record.buffers.length
+        * bufferSize;
 
     if (
         record.startByte < 0
@@ -110,6 +418,8 @@ function validateCompletedRecord<TRecordState>(
         || record.endByte > record.lastValidByte
         || record.lastValidByte > capacity
     ) {
-        throw new Error("Parser returned a physical record range outside its byte buffers");
+        throw new Error(
+            "Parser returned a physical record range outside its byte buffers"
+        );
     }
 }

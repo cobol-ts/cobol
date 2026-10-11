@@ -1,5 +1,3 @@
-import {makeErrorFromException} from "@cobol-ts/errors";
-
 import {
     type Parser,
     type ParserPhysicalRecordContent,
@@ -13,63 +11,90 @@ import {jsonProjectionSupport} from "./json.projection.support";
 const LINE_FEED = 0x0a;
 
 
+export type JsonPrimitive =
+    | null
+    | boolean
+    | number
+    | string;
+
+export type JsonValue =
+    | JsonPrimitive
+    | JsonObject
+    | JsonArray;
+
+export interface JsonObject {
+    [name: string]: JsonValue;
+}
+
+export type JsonArray = JsonValue[];
+
+export type JsonProjectionPath = readonly string[];
+
+export type JsonParser = Parser<
+    JsonValue,
+    undefined,
+    undefined,
+    undefined,
+    JsonProjectionPath
+>;
+
+
 /**
  * JSONL parser.
  *
- * The parser is stateless, so there is no reason to construct parser
- * instances.
+ * Each successfully parsed record is one JSON value:
  *
- * jsonProjectionSupport supplies the JSON-specific interpretation of logical
- * projection paths.
+ *     null
+ *     boolean
+ *     number
+ *     string
+ *     object
+ *     array
  *
- * utf8RangeToString supplies UTF-8 rendering of physical byte ranges used both
- * for parsing complete JSON records and for downstream diagnostics.
+ * The parser has no configuration, prepared details or per-record state.
+ *
+ * JSON projection paths remain readonly string[] because JSON property
+ * traversal already uses that representation directly.
  */
 export const jsonParser = {
     ...jsonProjectionSupport,
     toDebugString: utf8RangeToString,
     parse
-} satisfies Parser<unknown, undefined, undefined, undefined>;
+} satisfies JsonParser;
 
 
 /**
  * Parse one JSONL physical record.
  *
- * The parser scans for LF itself because JSONL record recognition is naturally
- * part of parsing this format.
+ * JSONL records are terminated by LF.
  *
- * record.startByte is the inclusive logical byte offset of the current record
- * across record.buffers.
+ * CRLF works naturally because CR is JSON whitespace and remains immediately
+ * before the terminating LF.
  *
- * record.lastValidByte is the exclusive logical end of bytes currently
- * available from the file.
+ * record.startByte is the inclusive logical byte offset of this record across
+ * record.buffers.
  *
- * When no LF is currently available, readMore() extends the same physical
- * record in place and scanning continues from the current position.
+ * record.lastValidByte is the exclusive logical end of source bytes currently
+ * available.
  *
- * Before returning, record.endByte is set to the exclusive physical end of the
- * current JSONL record.
+ * If no LF is currently available, readMore() extends the same physical record
+ * and scanning continues from the current position.
+ *
+ * The final record may end at EOF without a terminating LF.
+ *
+ * Before returning, record.endByte is the exclusive physical end of the
+ * completed record.
  */
 async function parse(
     record: ParserPhysicalRecordContent<undefined>,
     _details: undefined
-): Promise<ParserResult<unknown>> {
-
-    /*
-     * Logical position across record.buffers.
-     *
-     * startByte may be part way through buffers[0].
-     */
+): Promise<ParserResult<JsonValue>> {
     let scanByte = record.startByte;
     let bufferIndex = 0;
     let bufferStart = 0;
 
-
     /*
-     * Position bufferIndex at the buffer containing startByte.
-     *
-     * In the normal cursor path startByte is within buffers[0], but this keeps
-     * the parser correct for the general logical-offset contract.
+     * Locate the buffer containing startByte.
      */
     while (
         bufferIndex < record.buffers.length
@@ -79,14 +104,12 @@ async function parse(
         bufferIndex++;
     }
 
-
     while (true) {
         /*
-         * Scan every currently available valid byte.
+         * Scan every currently available source byte.
          *
-         * lastValidByte, not Uint8Array.length, is authoritative for the end
-         * of file data. The final pooled buffer may contain unused bytes after
-         * lastValidByte.
+         * lastValidByte, rather than Uint8Array.length, is authoritative. The
+         * final pooled buffer may contain unused capacity.
          */
         while (scanByte < record.lastValidByte) {
             const buffer = record.buffers[bufferIndex];
@@ -100,13 +123,6 @@ async function parse(
                 && scanByte - bufferStart < bufferValidEnd
                 ) {
                 if (buffer[scanByte - bufferStart] === LINE_FEED) {
-                    /*
-                     * endByte is exclusive.
-                     *
-                     * Include LF in the physical record. JSON permits trailing
-                     * whitespace, so it may safely be passed directly to
-                     * JSON.parse().
-                     */
                     record.endByte = scanByte + 1;
                     return parseRecord(record);
                 }
@@ -114,37 +130,23 @@ async function parse(
                 scanByte++;
             }
 
-
-            /*
-             * The valid portion of this buffer has been completely scanned.
-             */
             if (scanByte >= bufferStart + buffer.length) {
                 bufferStart += buffer.length;
                 bufferIndex++;
             }
         }
 
-
         /*
-         * Every currently valid byte has been scanned and no LF was found.
-         *
-         * If EOF is known, the final JSONL record ends at EOF even when it has
-         * no terminating newline.
+         * EOF terminates the final record even without a newline.
          */
         if (record.fileFinished) {
             record.endByte = record.lastValidByte;
             return parseRecord(record);
         }
 
-
         /*
-         * More file data may exist.
-         *
-         * readMore() appends one physical buffer, advances lastValidByte and
-         * sets fileFinished if EOF is discovered.
-         *
-         * The local scan position remains valid across the await, so no parser
-         * state needs to be materialised elsewhere.
+         * Local scan state survives readMore(), so parsing simply resumes from
+         * the current logical byte.
          */
         await record.readMore();
     }
@@ -154,17 +156,12 @@ async function parse(
 /**
  * Decode and parse the completed JSONL record.
  *
- * utf8RangeToString already implements the logical byte-range traversal needed
- * for records which begin or end part way through a physical buffer or span
- * several buffers.
- *
- * Keeping that byte-range interpretation shared ensures parsing and diagnostic
- * rendering see exactly the same source bytes.
+ * JSON.parse() is the validation boundary. A successful parse necessarily
+ * produces a JsonValue.
  */
 function parseRecord(
     record: ParserPhysicalRecordContent<undefined>
-): ParserResult<unknown> {
-
+): ParserResult<JsonValue> {
     const text = utf8RangeToString(
         record,
         record.startByte,
@@ -172,7 +169,7 @@ function parseRecord(
     );
 
     try {
-        return JSON.parse(text);
+        return JSON.parse(text) as JsonValue;
     } catch (error) {
         const message =
             error instanceof Error
@@ -181,7 +178,8 @@ function parseRecord(
 
         return {
             errors: [
-                `${record.source}: record ${record.recordNumber}: JSON parse error ${message}\n${text}`
+                `${record.source}: record ${record.recordNumber}: `
+                + `JSON parse error ${message}\n${text}`
             ]
         };
     }

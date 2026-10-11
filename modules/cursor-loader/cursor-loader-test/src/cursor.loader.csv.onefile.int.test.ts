@@ -1,1447 +1,511 @@
 import {
-    createReadStream
-} from "node:fs";
+    createFileCursor,
+    type FileCursorResult
+} from "@cobol-ts/cursor-file";
 
 import {
-    resolve
-} from "node:path";
-
-import {
-    createInterface
-} from "node:readline";
-
-import {
-    isErrors
+    ErrorsException
 } from "@cobol-ts/errors";
 
 import {
-    type CursorOptions,
-    type PhysicalRecordContent,
-    type RecordReaderMap
-} from "@cobol-ts/cursor-loader-types";
-
-import {
-    createFileCursor
-} from "@cobol-ts/cursor-loader";
-
-import {
-    csvParser
-} from "@cobol-ts/cursor-loader-csv";
-
-import {
-    allCustomerConfig,
     type Customer,
-    minimalCustomerConfig,
     type MinimalCustomer
 } from "./cursor.loader.fixture";
-import {createLineRecordReader} from "@cobol-ts/cursor-record/src/cursor.record";
-import {createFileBufferPool} from "@cobol-ts/cursor-file";
+
+import {
+    badHeaderCustomerCsvDefinition,
+    createCsvFixtureFile,
+    createCsvInfrastructure,
+    customerCsvDefinition,
+    minimalCustomerCsvDefinition,
+    pipeCustomerCsvDefinition,
+    richCustomerCsvDefinition,
+    unterminatedCustomerCsvDefinition,
+    widthErrorCustomerCsvDefinition
+} from "./cursor.loader.csv.fixture";
 
 
-const encoder =
-    new TextEncoder();
+describe("CSV file cursor integration",() => {
+    test("loads complete customers including quoted fields",async () => {
+        const customers: CustomerValue[] = [];
 
+        const cursor =
+            createFileCursor(
+                customerCsvDefinition,
+                createCsvFixtureFile(
+                    customerCsvDefinition.filename
+                ),
+                createCsvInfrastructure(7)
+            );
 
-/**
- * Test record reader
- *
- * This deliberately reads the real fixture file while keeping the
- * integration test focused on:
- *
- *     file cursor
- *     CSV preparation/parsing
- *     projection
- *
- * The production end-of-line reader is tested separately.
- */
+        for await (const result of cursor) {
+            const row =
+                projectedValue(result);
 
-const recordReaders:
-    RecordReaderMap<undefined> = {
+            customers.push(
+                readCustomer(
+                    row.result
+                )
+            );
 
-    line:
-        async function* (
-            details
-        ) {
-            const filename =
-                resolve(
-                    process.cwd(),
-                    details.filename
-                );
+            row.close();
+        }
 
-            const input =
-                createReadStream(
-                    filename,
-                    {
-                        encoding:
-                            "utf8"
-                    }
-                );
-
-            const lines =
-                createInterface({
-                    input,
-                    crlfDelay:
-                    Infinity
-                });
-
-
-            for await (
-                const line
-                of lines
-                ) {
-                const bytes =
-                    encoder.encode(
-                        line
-                    );
-
-                const record:
-                    PhysicalRecordContent<undefined> = {
-
-                    buffers: [
-                        bytes
-                    ],
-
-                    startOffset:
-                        0,
-
-                    length:
-                    bytes.length,
-
-                    recordState:
-                    undefined
-                };
-
-
-                yield record;
+        expect(customers).toEqual([
+            {
+                id: 1001,
+                name: "Alice Smith",
+                age: 42,
+                address: {
+                    line1: "12 High Street",
+                    line2: "Flat 2, Rear",
+                    postcode: "SW1A 1AA"
+                },
+                status: "A",
+                balance: 1234.56
+            },
+            {
+                id: 1002,
+                name: "Bob Jones",
+                age: 37,
+                address: {
+                    line1: "8 Station Road",
+                    line2: "",
+                    postcode: "LS1 4AB"
+                },
+                status: "I",
+                balance: 98.75
+            },
+            {
+                id: 1003,
+                name: "Carol Brown",
+                age: 29,
+                address: {
+                    line1: "The Old Mill",
+                    line2: "Riverside, East Wing",
+                    postcode: "BS1 5TY"
+                },
+                status: "A",
+                balance: 0
             }
-        },
+        ]);
+    });
 
 
-    fixed:
-        async function* () {
-            throw new Error(
-                "fixed reader should not be used"
+    test("loads a different projection from the same CSV records",async () => {
+        const customers: MinimalCustomerValue[] = [];
+
+        const cursor =
+            createFileCursor(
+                minimalCustomerCsvDefinition,
+                createCsvFixtureFile(
+                    minimalCustomerCsvDefinition.filename
+                ),
+                createCsvInfrastructure(5)
             );
-        },
 
+        for await (const result of cursor) {
+            const row =
+                projectedValue(result);
 
-    "length-prefixed":
-        async function* () {
-            throw new Error(
-                "length-prefixed reader should not be used"
+            customers.push(
+                readMinimalCustomer(
+                    row.result
+                )
             );
+
+            row.close();
         }
-};
+
+        expect(customers).toEqual([
+            {
+                id: 1001,
+                status: "A"
+            },
+            {
+                id: 1002,
+                status: "I"
+            },
+            {
+                id: 1003,
+                status: "A"
+            }
+        ]);
+    });
 
 
-/**
- * Parser registry
- */
+    test("loads quoted commas doubled quotes empty fields and quoted numbers",async () => {
+        const customers: CustomerValue[] = [];
 
-const parsers = {
-    csv:
-    csvParser
-};
+        const cursor =
+            createFileCursor(
+                richCustomerCsvDefinition,
+                createCsvFixtureFile(
+                    richCustomerCsvDefinition.filename
+                ),
+                createCsvInfrastructure(11)
+            );
 
+        for await (const result of cursor) {
+            const row =
+                projectedValue(result);
 
-/**
- * Cursor options
- */
+            customers.push(
+                readCustomer(
+                    row.result
+                )
+            );
 
-const options:
-    CursorOptions<
-        typeof parsers,
-        number
-    > = {
-
-    parsers,
-
-    recordReaders,
-
-    compareEntityId: (
-        left,
-        right
-    ) =>
-        left - right
-};
-
-
-/**
- * The fixture contains conventional quoted CSV fields.
- *
- * In particular:
- *
- *     "Flat 2, Rear"
- *     "Riverside, East Wing"
- *
- * so quote handling is part of the format definition, not merely an
- * optional convenience for these tests.
- */
-
-const allCustomers =
-    {
-        ...allCustomerConfig.customer,
-
-        parserConfig: {
-            ...allCustomerConfig.customer
-                .parserConfig,
-
-            quote:
-                "\""
+            row.close();
         }
+
+        expect(customers).toEqual([
+            {
+                id: 1001,
+                name: "Alice Smith",
+                age: 42,
+                address: {
+                    line1: "12 High Street",
+                    line2: "Flat 2, Rear",
+                    postcode: "SW1A 1AA"
+                },
+                status: "A",
+                balance: 1234.56
+            },
+            {
+                id: 1002,
+                name: "Bob Jones",
+                age: 37,
+                address: {
+                    line1: "8 Station Road",
+                    line2: "",
+                    postcode: "LS1 4AB"
+                },
+                status: "I",
+                balance: 98.75
+            },
+            {
+                id: 1003,
+                name: "Carol Brown",
+                age: 29,
+                address: {
+                    line1: "The Old Mill",
+                    line2: "Riverside, East Wing",
+                    postcode: "BS1 5TY"
+                },
+                status: "A",
+                balance: 0
+            },
+            {
+                id: 1004,
+                name: "David Green",
+                age: 51,
+                address: {
+                    line1: "7 King's Road",
+                    line2: "He said \"use the rear entrance\"",
+                    postcode: "M1 2AB"
+                },
+                status: "A",
+                balance: 42.10
+            },
+            {
+                id: 1005,
+                name: "Eve Black",
+                age: 33,
+                address: {
+                    line1: "Apartment 4",
+                    line2: "Floor 2, \"West Wing\"",
+                    postcode: "EH1 1AA"
+                },
+                status: "I",
+                balance: 100
+            },
+            {
+                id: 1006,
+                name: "Frank White",
+                age: 60,
+                address: {
+                    line1: "1 Market Street",
+                    line2: "",
+                    postcode: "AB1 2CD"
+                },
+                status: "A",
+                balance: 123.45
+            },
+            {
+                id: 1007,
+                name: "Grace Blue",
+                age: 44,
+                address: {
+                    line1: "2 River Road",
+                    line2: "Comma, and \"quotes\" together",
+                    postcode: "YO1 7AA"
+                },
+                status: "A",
+                balance: 9.50
+            }
+        ]);
+    });
+
+
+    test("uses the CSV configuration selected by the file definition",async () => {
+        const customers: CustomerValue[] = [];
+
+        const cursor =
+            createFileCursor(
+                pipeCustomerCsvDefinition,
+                createCsvFixtureFile(
+                    pipeCustomerCsvDefinition.filename
+                ),
+                createCsvInfrastructure(9)
+            );
+
+        for await (const result of cursor) {
+            const row =
+                projectedValue(result);
+
+            customers.push(
+                readCustomer(
+                    row.result
+                )
+            );
+
+            row.close();
+        }
+
+        expect(customers).toEqual([
+            {
+                id: 2001,
+                name: "Alice Pipe",
+                age: 40,
+                address: {
+                    line1: "10 North | Road",
+                    line2: "Wing | A",
+                    postcode: "P1 1AA"
+                },
+                status: "A",
+                balance: 12.50
+            },
+            {
+                id: 2002,
+                name: "Bob Pipe",
+                age: 41,
+                address: {
+                    line1: "20 South Road",
+                    line2: "He said \"hello\"",
+                    postcode: "P2 2BB"
+                },
+                status: "I",
+                balance: 20
+            },
+            {
+                id: 2003,
+                name: "Carol Pipe",
+                age: 42,
+                address: {
+                    line1: "30 East Road",
+                    line2: "",
+                    postcode: "P3 3CC"
+                },
+                status: "A",
+                balance: 0
+            }
+        ]);
+    });
+
+
+    test("returns a physical-width row error and continues",async () => {
+        const results: Array<number | string[]> = [];
+
+        const cursor =
+            createFileCursor(
+                widthErrorCustomerCsvDefinition,
+                createCsvFixtureFile(
+                    widthErrorCustomerCsvDefinition.filename
+                ),
+                createCsvInfrastructure(7)
+            );
+
+        for await (const result of cursor) {
+            if (Array.isArray(result)) {
+                results.push(result);
+                continue;
+            }
+
+            results.push(
+                result.result.id()
+            );
+
+            result.close();
+        }
+
+        expect(results).toEqual([
+            1001,
+            [
+                "CSV record has 9 columns; header has 8"
+            ],
+            1003
+        ]);
+    });
+
+
+    test("throws when CSV header preparation fails",async () => {
+        const cursor =
+            createFileCursor(
+                badHeaderCustomerCsvDefinition,
+                createCsvFixtureFile(
+                    badHeaderCustomerCsvDefinition.filename
+                ),
+                createCsvInfrastructure(7)
+            );
+
+        await expectErrorsException(
+            cursor.next(),
+            [
+                "CSV header is missing required columns: "
+                + "\"addressLine2\", \"postcode\", \"balance\". "
+                + "Actual header columns are: "
+                + "\"id\", \"name\", \"age\", \"addressLine1\", \"status\"."
+            ]
+        );
+    });
+
+
+    test("does not treat a newline inside an unterminated quoted field as a record boundary",async () => {
+        const results: Array<number | string[]> = [];
+
+        const cursor =
+            createFileCursor(
+                unterminatedCustomerCsvDefinition,
+                createCsvFixtureFile(
+                    unterminatedCustomerCsvDefinition.filename
+                ),
+                createCsvInfrastructure(7)
+            );
+
+        for await (const result of cursor) {
+            if (Array.isArray(result)) {
+                results.push(result);
+                continue;
+            }
+
+            results.push(
+                result.result.id()
+            );
+
+            result.close();
+        }
+
+        expect(results).toEqual([
+            1001,
+            [
+                "CSV record column 5 contains an unterminated quoted field at byte 129"
+            ]
+        ]);
+    });
+});
+
+
+function projectedValue<T>(
+    result: FileCursorResult<T> | string[]
+): FileCursorResult<T> {
+    if (Array.isArray(result)) {
+        throw new Error(
+            `Expected projected value but got errors: ${result.join(", ")}`
+        );
+    }
+
+    return result;
+}
+
+
+async function expectErrorsException(
+    promise: Promise<unknown>,
+    expectedErrors: string[]
+): Promise<void> {
+    try {
+        await promise;
+    } catch (error) {
+        if (!(error instanceof ErrorsException)) {
+            throw error;
+        }
+
+        expect(error.errors).toEqual(
+            expectedErrors
+        );
+
+        return;
+    }
+
+    throw new Error(
+        "Expected ErrorsException"
+    );
+}
+
+
+interface CustomerValue {
+    readonly id: number;
+    readonly name: string;
+    readonly age: number;
+
+    readonly address: {
+        readonly line1: string;
+        readonly line2: string;
+        readonly postcode: string;
     };
 
+    readonly status: string;
+    readonly balance: number;
+}
 
-const minimalCustomers =
-    {
-        ...minimalCustomerConfig.customer,
 
-        parserConfig: {
-            ...minimalCustomerConfig.customer
-                .parserConfig,
+interface MinimalCustomerValue {
+    readonly id: number;
+    readonly status: string;
+}
 
-            quote:
-                "\""
-        }
+
+function readCustomer(
+    customer: Customer
+): CustomerValue {
+    return {
+        id:
+            customer.id(),
+
+        name:
+            customer.name(),
+
+        age:
+            customer.age(),
+
+        address: {
+            line1:
+                customer.addressLine1(),
+
+            line2:
+                customer.addressLine2(),
+
+            postcode:
+                customer.postcode()
+        },
+
+        status:
+            customer.status(),
+
+        balance:
+            customer.balance()
     };
-
-
-/**
- * Full projection
- *
- * Exercises every configured logical CSV column and every CsvRow
- * accessor used by the fixture.
- */
-
-test(
-    "loads complete customers from the CSV fixture",
-    async () => {
-
-        const customers:
-            Customer[] =
-            [];
-
-
-        const cursor =
-            createFileCursor(
-                allCustomers,
-                options
-            );
-
-
-        for await (
-            const result
-            of cursor
-            ) {
-            if (
-                isErrors(
-                    result
-                )
-            ) {
-                throw new Error(
-                    result.errors.join(
-                        "; "
-                    )
-                );
-            }
-
-
-            customers.push(
-                result
-            );
-        }
-
-
-        expect(
-            customers
-        ).toEqual([
-            {
-                id:
-                    1001,
-
-                name:
-                    "Alice Smith",
-
-                age:
-                    42,
-
-                address: {
-                    line1:
-                        "12 High Street",
-
-                    line2:
-                        "Flat 2, Rear",
-
-                    postcode:
-                        "SW1A 1AA"
-                },
-
-                status:
-                    "A".charCodeAt(
-                        0
-                    ),
-
-                balance:
-                    1234.56
-            },
-
-            {
-                id:
-                    1002,
-
-                name:
-                    "Bob Jones",
-
-                age:
-                    37,
-
-                address: {
-                    line1:
-                        "8 Station Road",
-
-                    line2:
-                        "",
-
-                    postcode:
-                        "LS1 4AB"
-                },
-
-                status:
-                    "I".charCodeAt(
-                        0
-                    ),
-
-                balance:
-                    98.75
-            },
-
-            {
-                id:
-                    1003,
-
-                name:
-                    "Carol Brown",
-
-                age:
-                    29,
-
-                address: {
-                    line1:
-                        "The Old Mill",
-
-                    line2:
-                        "Riverside, East Wing",
-
-                    postcode:
-                        "BS1 5TY"
-                },
-
-                status:
-                    "A".charCodeAt(
-                        0
-                    ),
-
-                balance:
-                    0
-            }
-        ]);
-    }
-);
-
-
-/**
- * Minimal projection
- *
- * The same physical CSV records are scanned and validated, but the
- * projection accesses only id and status.
- *
- * Unused string fields are therefore never materialised by the
- * projection.
- */
-
-test(
-    "loads minimal customers from the same CSV fixture",
-    async () => {
-
-        const customers:
-            MinimalCustomer[] =
-            [];
-
-
-        const cursor =
-            createFileCursor(
-                minimalCustomers,
-                options
-            );
-
-
-        for await (
-            const result
-            of cursor
-            ) {
-            if (
-                isErrors(
-                    result
-                )
-            ) {
-                throw new Error(
-                    result.errors.join(
-                        "; "
-                    )
-                );
-            }
-
-
-            customers.push(
-                result
-            );
-        }
-
-
-        expect(
-            customers
-        ).toEqual([
-            {
-                id:
-                    1001,
-
-                status:
-                    "A".charCodeAt(
-                        0
-                    )
-            },
-
-            {
-                id:
-                    1002,
-
-                status:
-                    "I".charCodeAt(
-                        0
-                    )
-            },
-
-            {
-                id:
-                    1003,
-
-                status:
-                    "A".charCodeAt(
-                        0
-                    )
-            }
-        ]);
-    }
-);
-
-
-/**
- * Rich comma-separated fixture
- *
- * Exercises several legal CSV constructs through the complete:
- *
- *     physical file
- *         ->
- *     file cursor
- *         ->
- *     CSV preparation
- *         ->
- *     CSV parsing
- *         ->
- *     projection
- *
- * The detailed byte/buffer edge cases remain the responsibility of the
- * CSV parser unit tests.
- */
-
-test(
-    "loads a richer CSV fixture containing commas quotes empty fields and quoted numbers",
-    async () => {
-
-        const customers:
-            Customer[] =
-            [];
-
-
-        const config = {
-            ...allCustomerConfig.customer,
-
-            filename:
-                "test.comma.rich.csv",
-
-            parserConfig: {
-                ...allCustomerConfig.customer
-                    .parserConfig,
-
-                separator:
-                    ",",
-
-                quote:
-                    "\""
-            }
-        };
-
-
-        const cursor =
-            createFileCursor(
-                config,
-                options
-            );
-
-
-        for await (
-            const result
-            of cursor
-            ) {
-            if (
-                isErrors(
-                    result
-                )
-            ) {
-                throw new Error(
-                    result.errors.join(
-                        "; "
-                    )
-                );
-            }
-
-
-            customers.push(
-                result
-            );
-        }
-
-
-        expect(
-            customers
-        ).toEqual([
-            {
-                id:
-                    1001,
-
-                name:
-                    "Alice Smith",
-
-                age:
-                    42,
-
-                address: {
-                    line1:
-                        "12 High Street",
-
-                    line2:
-                        "Flat 2, Rear",
-
-                    postcode:
-                        "SW1A 1AA"
-                },
-
-                status:
-                    "A".charCodeAt(
-                        0
-                    ),
-
-                balance:
-                    1234.56
-            },
-
-            {
-                id:
-                    1002,
-
-                name:
-                    "Bob Jones",
-
-                age:
-                    37,
-
-                address: {
-                    line1:
-                        "8 Station Road",
-
-                    line2:
-                        "",
-
-                    postcode:
-                        "LS1 4AB"
-                },
-
-                status:
-                    "I".charCodeAt(
-                        0
-                    ),
-
-                balance:
-                    98.75
-            },
-
-            {
-                id:
-                    1003,
-
-                name:
-                    "Carol Brown",
-
-                age:
-                    29,
-
-                address: {
-                    line1:
-                        "The Old Mill",
-
-                    line2:
-                        "Riverside, East Wing",
-
-                    postcode:
-                        "BS1 5TY"
-                },
-
-                status:
-                    "A".charCodeAt(
-                        0
-                    ),
-
-                balance:
-                    0
-            },
-
-            {
-                id:
-                    1004,
-
-                name:
-                    "David Green",
-
-                age:
-                    51,
-
-                address: {
-                    line1:
-                        "7 King's Road",
-
-                    line2:
-                        `He said "use the rear entrance"`,
-
-                    postcode:
-                        "M1 2AB"
-                },
-
-                status:
-                    "A".charCodeAt(
-                        0
-                    ),
-
-                balance:
-                    42.1
-            },
-
-            {
-                id:
-                    1005,
-
-                name:
-                    "Eve Black",
-
-                age:
-                    33,
-
-                address: {
-                    line1:
-                        "Apartment 4",
-
-                    line2:
-                        `Floor 2, "West Wing"`,
-
-                    postcode:
-                        "EH1 1AA"
-                },
-
-                status:
-                    "I".charCodeAt(
-                        0
-                    ),
-
-                balance:
-                    100
-            },
-
-            {
-                id:
-                    1006,
-
-                name:
-                    "Frank White",
-
-                age:
-                    60,
-
-                address: {
-                    line1:
-                        "1 Market Street",
-
-                    line2:
-                        "",
-
-                    postcode:
-                        "AB1 2CD"
-                },
-
-                status:
-                    "A".charCodeAt(
-                        0
-                    ),
-
-                balance:
-                    123.45
-            },
-
-            {
-                id:
-                    1007,
-
-                name:
-                    "Grace Blue",
-
-                age:
-                    44,
-
-                address: {
-                    line1:
-                        "2 River Road",
-
-                    line2:
-                        `Comma, and "quotes" together`,
-
-                    postcode:
-                        "YO1 7AA"
-                },
-
-                status:
-                    "A".charCodeAt(
-                        0
-                    ),
-
-                balance:
-                    9.5
-            }
-        ]);
-    }
-);
-
-
-/**
- * Non-comma separator
- *
- * This proves that separator configuration survives the complete file
- * cursor / parser path rather than comma behaviour being accidentally
- * hard-coded somewhere in the integration.
- */
-
-test(
-    "loads a pipe-separated fixture including quoted pipe characters",
-    async () => {
-
-        const customers:
-            Customer[] =
-            [];
-
-
-        const config = {
-            ...allCustomerConfig.customer,
-
-            filename:
-                "test.pipe.psv",
-
-            parserConfig: {
-                ...allCustomerConfig.customer
-                    .parserConfig,
-
-                separator:
-                    "|",
-
-                quote:
-                    "\""
-            }
-        };
-
-
-        const cursor =
-            createFileCursor(
-                config,
-                options
-            );
-
-
-        for await (
-            const result
-            of cursor
-            ) {
-            if (
-                isErrors(
-                    result
-                )
-            ) {
-                throw new Error(
-                    result.errors.join(
-                        "; "
-                    )
-                );
-            }
-
-
-            customers.push(
-                result
-            );
-        }
-
-
-        expect(
-            customers
-        ).toEqual([
-            {
-                id:
-                    2001,
-
-                name:
-                    "Alice Pipe",
-
-                age:
-                    40,
-
-                address: {
-                    line1:
-                        "10 North | Road",
-
-                    line2:
-                        "Wing | A",
-
-                    postcode:
-                        "P1 1AA"
-                },
-
-                status:
-                    "A".charCodeAt(
-                        0
-                    ),
-
-                balance:
-                    12.5
-            },
-
-            {
-                id:
-                    2002,
-
-                name:
-                    "Bob Pipe",
-
-                age:
-                    41,
-
-                address: {
-                    line1:
-                        "20 South Road",
-
-                    line2:
-                        `He said "hello"`,
-
-                    postcode:
-                        "P2 2BB"
-                },
-
-                status:
-                    "I".charCodeAt(
-                        0
-                    ),
-
-                balance:
-                    20
-            },
-
-            {
-                id:
-                    2003,
-
-                name:
-                    "Carol Pipe",
-
-                age:
-                    42,
-
-                address: {
-                    line1:
-                        "30 East Road",
-
-                    line2:
-                        "",
-
-                    postcode:
-                        "P3 3CC"
-                },
-
-                status:
-                    "A".charCodeAt(
-                        0
-                    ),
-
-                balance:
-                    0
-            }
-        ]);
-    }
-);
-
-
-/**
- * Malformed quoted record
- *
- * The malformed third physical line should produce one recoverable CSV
- * error. The following valid line must still be processed.
- */
-
-test(
-    "reports an unterminated quoted field with filename and line number and continues",
-    async () => {
-
-        const config = {
-            ...allCustomerConfig.customer,
-
-            filename:
-                "test.comma.unterminated.csv",
-
-            parserConfig: {
-                ...allCustomerConfig.customer
-                    .parserConfig,
-
-                separator:
-                    ",",
-
-                quote:
-                    "\""
-            }
-        };
-
-
-        const results =
-            [];
-
-
-        const cursor =
-            createFileCursor(
-                config,
-                options
-            );
-
-
-        for await (
-            const result
-            of cursor
-            ) {
-            results.push(
-                result
-            );
-        }
-
-
-        expect(
-            results
-        ).toHaveLength(
-            3
-        );
-
-
-        const first =
-            results[
-                0
-                ];
-
-        const malformed =
-            results[
-                1
-                ];
-
-        const last =
-            results[
-                2
-                ];
-
-
-        expect(
-            isErrors(
-                first
-            )
-        ).toBe(
-            false
-        );
-
-        expect(
-            isErrors(
-                malformed
-            )
-        ).toBe(
-            true
-        );
-
-        expect(
-            isErrors(
-                last
-            )
-        ).toBe(
-            false
-        );
-
-
-        if (
-            !isErrors(
-                malformed
-            )
-        ) {
-            throw new Error(
-                "expected malformed line to produce Errors"
-            );
-        }
-
-
-        expect(
-            malformed.errors
-        ).toHaveLength(
-            1
-        );
-
-        expect(
-            malformed.errors[
-                0
-                ]
-        ).toContain(
-            "test.comma.unterminated.csv: line 3:"
-        );
-
-        expect(
-            malformed.errors[
-                0
-                ]
-        ).toContain(
-            "CSV record column 5"
-        );
-
-        expect(
-            malformed.errors[
-                0
-                ]
-        ).toContain(
-            "record ended before a closing quote was found"
-        );
-
-
-        if (
-            isErrors(
-                first
-            )
-            || isErrors(
-                last
-            )
-        ) {
-            throw new Error(
-                "expected valid records before and after malformed record"
-            );
-        }
-
-
-        expect(
-            first.id
-        ).toBe(
-            1001
-        );
-
-        expect(
-            last.id
-        ).toBe(
-            1003
-        );
-    }
-);
-
-
-/**
- * Physical-width error
- *
- * The malformed record is structurally valid CSV, but contains one more
- * physical field than the header.
- *
- * This is the exact class of failure that exposed the missing quote
- * configuration in the original integration fixture.
- */
-
-test(
-    "reports an extra physical CSV column with filename and line number and continues",
-    async () => {
-
-        const config = {
-            ...allCustomerConfig.customer,
-
-            filename:
-                "test.comma.width.csv",
-
-            parserConfig: {
-                ...allCustomerConfig.customer
-                    .parserConfig,
-
-                separator:
-                    ",",
-
-                quote:
-                    "\""
-            }
-        };
-
-
-        const results =
-            [];
-
-
-        const cursor =
-            createFileCursor(
-                config,
-                options
-            );
-
-
-        for await (
-            const result
-            of cursor
-            ) {
-            results.push(
-                result
-            );
-        }
-
-
-        expect(
-            results
-        ).toHaveLength(
-            3
-        );
-
-
-        const first =
-            results[
-                0
-                ];
-
-        const malformed =
-            results[
-                1
-                ];
-
-        const last =
-            results[
-                2
-                ];
-
-
-        if (
-            !isErrors(
-                malformed
-            )
-        ) {
-            throw new Error(
-                "expected malformed line to produce Errors"
-            );
-        }
-
-
-        expect(
-            malformed.errors
-        ).toEqual([
-            "test.comma.width.csv: line 3: CSV record has 9 physical columns, but its header has 8. The record therefore contains 1 extra column."
-        ]);
-
-
-        if (
-            isErrors(
-                first
-            )
-            || isErrors(
-                last
-            )
-        ) {
-            throw new Error(
-                "expected valid records before and after malformed record"
-            );
-        }
-
-
-        expect(
-            first.id
-        ).toBe(
-            1001
-        );
-
-        expect(
-            last.id
-        ).toBe(
-            1003
-        );
-    }
-);
-
-
-/**
- * Header/schema failure
- *
- * Parser preparation fails on line 1 and the cursor must stop because
- * subsequent records cannot be interpreted safely without prepared
- * header information.
- */
-
-test(
-    "reports all missing required header columns and the actual header",
-    async () => {
-
-        const config = {
-            ...allCustomerConfig.customer,
-
-            filename:
-                "test.comma.bad-header.csv",
-
-            parserConfig: {
-                ...allCustomerConfig.customer
-                    .parserConfig,
-
-                separator:
-                    ",",
-
-                quote:
-                    "\""
-            }
-        };
-
-
-        const results =
-            [];
-
-
-        const cursor =
-            createFileCursor(
-                config,
-                options
-            );
-
-
-        for await (
-            const result
-            of cursor
-            ) {
-            results.push(
-                result
-            );
-        }
-
-
-        expect(
-            results
-        ).toHaveLength(
-            1
-        );
-
-
-        const result =
-            results[
-                0
-                ];
-
-
-        if (
-            !isErrors(
-                result
-            )
-        ) {
-            throw new Error(
-                "expected malformed header to produce Errors"
-            );
-        }
-
-
-        expect(
-            result.errors
-        ).toEqual([
-            'test.comma.bad-header.csv: line 1: CSV header is missing required columns: "addressLine2", "postcode", "balance". Actual header columns are: "id", "name", "age", "addressLine1", "status".'
-        ]);
-    }
-);
-test(
-    "loads CSV through the complete production cursor stack",
-    async () => {
-
-        const productionRecordReaders:
-            RecordReaderMap<undefined> = {
-
-            line:
-                createLineRecordReader(
-                    undefined,
-                    {
-                        bufferPool:
-                            createFileBufferPool(
-                                7
-                            )
-                    }
-                ),
-
-            fixed:
-                async function* () {
-
-                    throw new Error(
-                        "fixed reader should not be used"
-                    );
-                },
-
-            "length-prefixed":
-                async function* () {
-
-                    throw new Error(
-                        "length-prefixed reader should not be used"
-                    );
-                }
-        };
-
-
-        const productionOptions:
-            CursorOptions<
-                typeof parsers,
-                number
-            > = {
-
-            parsers,
-
-            recordReaders:
-            productionRecordReaders,
-
-            compareEntityId: (
-                left,
-                right
-            ) =>
-                left - right
-        };
-
-
-        const customers:
-            Customer[] =
-            [];
-
-
-        const cursor =
-            createFileCursor(
-                allCustomerConfig.customer,
-                productionOptions
-            );
-
-
-        for await (
-            const result
-            of cursor
-            ) {
-            if (
-                isErrors(
-                    result
-                )
-            ) {
-                throw new Error(
-                    result.errors.join(
-                        "; "
-                    )
-                );
-            }
-
-
-            customers.push(
-                result
-            );
-        }
-
-
-        expect(
-            customers
-        ).toHaveLength(
-            3
-        );
-
-
-        expect(
-            customers[
-                0
-                ]
-        ).toEqual({
-            id:
-                1001,
-
-            name:
-                "Alice Smith",
-
-            age:
-                42,
-
-            address: {
-                line1:
-                    "12 High Street",
-
-                line2:
-                    "Flat 2, Rear",
-
-                postcode:
-                    "SW1A 1AA"
-            },
-
-            status:
-                "A".charCodeAt(
-                    0
-                ),
-
-            balance:
-                1234.56
-        });
-
-
-        expect(
-            customers[
-                1
-                ].id
-        ).toBe(
-            1002
-        );
-
-
-        expect(
-            customers[
-                2
-                ]
-        ).toEqual({
-            id:
-                1003,
-
-            name:
-                "Carol Brown",
-
-            age:
-                29,
-
-            address: {
-                line1:
-                    "The Old Mill",
-
-                line2:
-                    "Riverside, East Wing",
-
-                postcode:
-                    "BS1 5TY"
-            },
-
-            status:
-                "A".charCodeAt(
-                    0
-                ),
-
-            balance:
-                0
-        });
-    }
-);
+}
+
+
+function readMinimalCustomer(
+    customer: MinimalCustomer
+): MinimalCustomerValue {
+    return {
+        id:
+            customer.id(),
+
+        status:
+            customer.status()
+    };
+}

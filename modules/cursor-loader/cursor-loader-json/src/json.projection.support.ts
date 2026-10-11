@@ -1,156 +1,92 @@
 import {type ProjectionSupport} from "@cobol-ts/cursor-loader-types";
 
 
-/*
- * JSON projection support
+/**
+ * JSON projection support.
  *
- * Paths are already tokenised by the declarative projection.
- *
- * No path parsing occurs while accessing a representation.
- *
- * A path is interpreted as ordinary successive JSON object/array property
- * access.
- *
- * Examples:
- *
- *     ["customer", "age"]
- *
- * resolves:
- *
- *     representation["customer"]["age"]
- *
- * Arrays require their numeric index in string form:
- *
- *     ["customers", "0", "age"]
- *
- * Projection access failures throw because ProjectionSupport represents typed
- * access, not recoverable parser output.
+ * JSON already uses tokenised string paths as its runtime projection path, so
+ * compileProjectionPath() simply returns the canonical path unchanged.
  */
+export const jsonProjectionSupport = {
+    compileProjectionPath,
 
-export const jsonProjectionSupport:
-    ProjectionSupport<
-        unknown
-    > = {
+    integer(
+        representation: unknown,
+        _details: undefined,
+        path: readonly string[]
+    ): number {
+        const value = jsonValue(representation,path);
 
-    integer:
-        (
-            representation,
-            path
-        ) => {
-
-            const value =
-                jsonValue(
-                    representation,
-                    path
-                );
-
-
-            if (
-                typeof value
-                !== "number"
-                || !Number.isInteger(
-                    value
-                )
-            ) {
-                throw projectionTypeError(
-                    path,
-                    "integer"
-                );
-            }
-
-
-            return value;
-        },
-
-
-    float:
-        (
-            representation,
-            path
-        ) => {
-
-            const value =
-                jsonValue(
-                    representation,
-                    path
-                );
-
-
-            if (
-                typeof value
-                !== "number"
-            ) {
-                throw projectionTypeError(
-                    path,
-                    "float"
-                );
-            }
-
-
-            return value;
-        },
-
-
-    character:
-        (
-            representation,
-            path
-        ) => {
-
-            const value =
-                jsonValue(
-                    representation,
-                    path
-                );
-
-
-            if (
-                typeof value
-                !== "string"
-                || value.length
-                !== 1
-            ) {
-                throw projectionTypeError(
-                    path,
-                    "character"
-                );
-            }
-
-
-            return value;
-        },
-
-
-    string:
-        (
-            representation,
-            path
-        ) => {
-
-            const value =
-                jsonValue(
-                    representation,
-                    path
-                );
-
-
-            if (
-                typeof value
-                !== "string"
-            ) {
-                throw projectionTypeError(
-                    path,
-                    "string"
-                );
-            }
-
-
-            return value;
+        if (
+            typeof value !== "number"
+            || !Number.isInteger(value)
+        ) {
+            throw projectionTypeError(path,"integer");
         }
-};
+
+        return value;
+    },
+
+    float(
+        representation: unknown,
+        _details: undefined,
+        path: readonly string[]
+    ): number {
+        const value = jsonValue(representation,path);
+
+        if (typeof value !== "number") {
+            throw projectionTypeError(path,"float");
+        }
+
+        return value;
+    },
+
+    character(
+        representation: unknown,
+        _details: undefined,
+        path: readonly string[]
+    ): string {
+        const value = jsonValue(representation,path);
+
+        if (
+            typeof value !== "string"
+            || value.length !== 1
+        ) {
+            throw projectionTypeError(path,"character");
+        }
+
+        return value;
+    },
+
+    string(
+        representation: unknown,
+        _details: undefined,
+        path: readonly string[]
+    ): string {
+        const value = jsonValue(representation,path);
+
+        if (typeof value !== "string") {
+            throw projectionTypeError(path,"string");
+        }
+
+        return value;
+    }
+} satisfies ProjectionSupport<
+    unknown,
+    undefined,
+    readonly string[]
+>;
 
 
-/*
+function compileProjectionPath(
+    _details: undefined,
+    path: readonly string[]
+): readonly string[] {
+    return path;
+}
+
+
+/**
  * Resolve one already-tokenised JSON path.
  *
  * JSON.parse() produces only:
@@ -164,40 +100,21 @@ export const jsonProjectionSupport:
  *
  * Objects and arrays are the only values through which a path may continue.
  */
-
 function jsonValue(
-    representation:
-    unknown,
-    path:
-    readonly string[]
+    representation: unknown,
+    path: readonly string[]
 ): unknown {
+    let value = representation;
 
-    let value =
-        representation;
-
-
-    for (
-        let index = 0;
-        index < path.length;
-        index++
-    ) {
+    for (let index = 0; index < path.length; index++) {
         if (
             value === null
-            || typeof value
-            !== "object"
+            || typeof value !== "object"
         ) {
-            throw projectionPathError(
-                path,
-                index
-            );
+            throw projectionPathError(path,index);
         }
 
-
-        const segment =
-            path[
-                index
-                ];
-
+        const segment = path[index];
 
         if (
             !Object.prototype.hasOwnProperty.call(
@@ -205,42 +122,27 @@ function jsonValue(
                 segment
             )
         ) {
-            throw projectionPathError(
-                path,
-                index
-            );
+            throw projectionPathError(path,index);
         }
 
-
-        value =
-            (
-                value as Record<
-                    string,
-                    unknown
-                >
-            )[
-                segment
-                ];
+        value = (
+            value as Record<string,unknown>
+        )[segment];
     }
-
 
     return value;
 }
 
 
-/*
+/**
  * Projection failures are exceptional rather than parser Errors.
  *
  * These messages are deliberately generated only on the failure path.
  */
-
 function projectionPathError(
-    path:
-    readonly string[],
-    failedIndex:
-    number
+    path: readonly string[],
+    failedIndex: number
 ): Error {
-
     return new Error(
         `JSON projection path not found: ${formatPath(
             path,
@@ -251,54 +153,29 @@ function projectionPathError(
 
 
 function projectionTypeError(
-    path:
-    readonly string[],
-    expected:
-    string
+    path: readonly string[],
+    expected: string
 ): Error {
-
     return new Error(
-        `JSON projection value at ${formatPath(
-            path
-        )} is not ${expected}`
+        `JSON projection value at ${formatPath(path)} is not ${expected}`
     );
 }
 
 
 function formatPath(
-    path:
-    readonly string[],
-    end:
-    number = path.length - 1
+    path: readonly string[],
+    end: number = path.length - 1
 ): string {
-
-    if (
-        path.length === 0
-    ) {
+    if (path.length === 0) {
         return "<root>";
     }
 
+    let result = path[0];
 
-    let result =
-        path[
-            0
-            ];
-
-
-    for (
-        let index = 1;
-        index <= end;
-        index++
-    ) {
-        result +=
-            ".";
-
-        result +=
-            path[
-                index
-                ];
+    for (let index = 1; index <= end; index++) {
+        result += ".";
+        result += path[index];
     }
-
 
     return result;
 }

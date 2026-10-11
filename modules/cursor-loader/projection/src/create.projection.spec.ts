@@ -12,10 +12,11 @@ import {
 } from "./projection.fixture";
 
 
-describe("createProjection", () => {
-    test("creates a projection over a flat representation", () => {
+describe("createProjection",() => {
+    test("creates a projection over a flat representation",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             customerProjection
         );
 
@@ -43,9 +44,10 @@ describe("createProjection", () => {
     });
 
 
-    test("uses explicit nested paths", () => {
+    test("uses explicit nested paths",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             orderSummaryProjection
         );
 
@@ -73,9 +75,10 @@ describe("createProjection", () => {
     });
 
 
-    test("created projections are independent", () => {
+    test("created projections are independent",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             customerProjection
         );
 
@@ -116,9 +119,10 @@ describe("createProjection", () => {
     });
 
 
-    test("rebinds the same projection after clear", () => {
+    test("rebinds the same projection after clear",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             customerProjection
         );
 
@@ -160,9 +164,10 @@ describe("createProjection", () => {
     });
 
 
-    test("rejects access while unbound", () => {
+    test("rejects access while unbound",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             customerProjection
         );
 
@@ -176,9 +181,10 @@ describe("createProjection", () => {
     });
 
 
-    test("rejects access after clear", () => {
+    test("rejects access after clear",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             customerProjection
         );
 
@@ -208,9 +214,10 @@ describe("createProjection", () => {
     });
 
 
-    test("rejects binding an already bound projection", () => {
+    test("rejects binding an already bound projection",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             customerProjection
         );
 
@@ -248,9 +255,10 @@ describe("createProjection", () => {
     });
 
 
-    test("uses the parser for integer access", () => {
+    test("uses the parser for integer access",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             customerProjection
         );
 
@@ -278,9 +286,10 @@ describe("createProjection", () => {
     });
 
 
-    test("uses the parser for character access", () => {
+    test("uses the parser for character access",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             customerProjection
         );
 
@@ -308,9 +317,10 @@ describe("createProjection", () => {
     });
 
 
-    test("accessors are lazy", () => {
+    test("accessors are lazy",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             customerProjection
         );
 
@@ -341,14 +351,14 @@ describe("createProjection", () => {
 });
 
 
-describe("defineProjection types", () => {
+describe("defineProjection types",() => {
     interface TypedCustomer {
         age(): number;
         name(): string;
     }
 
 
-    test("accepts compatible projection field types", () => {
+    test("accepts compatible projection field types",() => {
         defineProjection<TypedCustomer>({
             age: {
                 type: "integer"
@@ -369,7 +379,7 @@ describe("defineProjection types", () => {
     });
 
 
-    test("rejects a projection field with the wrong primitive type", () => {
+    test("rejects a projection field with the wrong primitive type",() => {
         defineProjection<TypedCustomer>({
             age: {
                 // @ts-expect-error string cannot implement () => number
@@ -382,7 +392,7 @@ describe("defineProjection types", () => {
     });
 
 
-    test("rejects a projection with a missing field", () => {
+    test("rejects a projection with a missing field",() => {
         defineProjection<TypedCustomer>(
             // @ts-expect-error name is required by TypedCustomer
             {

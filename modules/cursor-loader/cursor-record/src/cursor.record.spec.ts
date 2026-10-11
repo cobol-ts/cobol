@@ -1,9 +1,19 @@
 import {
+    ErrorsException
+} from "@cobol-ts/errors";
+
+import {
     type Parser,
     type ParserPhysicalRecordContent,
+    type ParserResult,
     type RecordCursorResult
 } from "@cobol-ts/cursor-loader-types";
-import {createRecordCursor} from "./cursor.record";
+
+import {
+    createRecordCursor,
+    openRecordCursor
+} from "./cursor.record";
+
 import {
     createDefaultPhysicalRecordConfig,
     type RecordCursorPhysicalRecord,
@@ -41,7 +51,7 @@ describe("createRecordCursor", () => {
         let parserRecord: ParserPhysicalRecordContent<TestRecordState> | undefined;
         let receivedDetails: TestParserDetails | undefined;
 
-        const parser = createParser(async (record, actualDetails) => {
+        const parser = createParser(async (record,actualDetails) => {
             parserRecord = record;
             receivedDetails = actualDetails;
 
@@ -57,8 +67,15 @@ describe("createRecordCursor", () => {
             return {value: 17};
         });
 
-        const iterator = createRecordCursor(parser, details, createTestConfig(BUFFER_SIZE));
-        const first = await nextRecord(iterator);
+        const iterator =
+            createRecordCursor(
+                parser,
+                details,
+                createTestConfig(BUFFER_SIZE)
+            );
+
+        const first =
+            await nextRecord(iterator);
 
         expect(receivedDetails).toBe(details);
         expect(first.result).toEqual({value: 17});
@@ -106,7 +123,13 @@ describe("createRecordCursor", () => {
             return {value: 3};
         });
 
-        const iterator = createRecordCursor(parser, createDetails(), createTestConfig(7));
+        const iterator =
+            createRecordCursor(
+                parser,
+                createDetails(),
+                createTestConfig(7)
+            );
+
         const first = await nextRecord(iterator);
         const second = await nextRecord(iterator);
         const third = await nextRecord(iterator);
@@ -121,6 +144,7 @@ describe("createRecordCursor", () => {
         first.physicalRecord.close();
         second.physicalRecord.close();
         third.physicalRecord.close();
+
         await expectFinished(iterator);
     });
 
@@ -139,9 +163,14 @@ describe("createRecordCursor", () => {
                 await record.readMore();
                 await record.readMore();
 
-                [firstBuffer, middleBuffer, finalBuffer] = record.buffers;
+                [firstBuffer,middleBuffer,finalBuffer] =
+                    record.buffers;
+
                 expect(record.lastValidByte).toBe(BUFFER_SIZE * 3);
-                record.endByte = (BUFFER_SIZE * 2) + 3;
+
+                record.endByte =
+                    (BUFFER_SIZE * 2) + 3;
+
                 return {value: 1};
             }
 
@@ -151,21 +180,32 @@ describe("createRecordCursor", () => {
             expect(record.buffers[0]).not.toBe(middleBuffer);
             expect(record.startByte).toBe(3);
             expect(record.lastValidByte).toBe(BUFFER_SIZE);
+
             record.endByte = 4;
             return {value: 2};
         });
 
-        const iterator = createRecordCursor(
-            parser,
-            createDetails(),
-            createTestConfig(BUFFER_SIZE, BUFFER_SIZE, BUFFER_SIZE)
-        );
+        const iterator =
+            createRecordCursor(
+                parser,
+                createDetails(),
+                createTestConfig(
+                    BUFFER_SIZE,
+                    BUFFER_SIZE,
+                    BUFFER_SIZE
+                )
+            );
 
-        const first = await nextRecord(iterator);
+        const first =
+            await nextRecord(iterator);
+
         first.physicalRecord.close();
 
-        const second = await nextRecord(iterator);
+        const second =
+            await nextRecord(iterator);
+
         second.physicalRecord.close();
+
         await iterator.return();
     });
 
@@ -190,23 +230,39 @@ describe("createRecordCursor", () => {
 
                 expect(record.buffers).toHaveLength(2);
                 expect(record.lastValidByte).toBe(BUFFER_SIZE * 2);
-                record.endByte = BUFFER_SIZE + 4;
+
+                record.endByte =
+                    BUFFER_SIZE + 4;
+
                 return {value: 2};
             }
 
             expect(record.startByte).toBe(4);
             expect(record.lastValidByte).toBe(BUFFER_SIZE);
+
             record.endByte = 5;
             return {value: 3};
         });
 
-        const iterator = createRecordCursor(parser, createDetails(), createTestConfig(BUFFER_SIZE, BUFFER_SIZE));
+        const iterator =
+            createRecordCursor(
+                parser,
+                createDetails(),
+                createTestConfig(
+                    BUFFER_SIZE,
+                    BUFFER_SIZE
+                )
+            );
+
         const first = await nextRecord(iterator);
         first.physicalRecord.close();
+
         const second = await nextRecord(iterator);
         second.physicalRecord.close();
+
         const third = await nextRecord(iterator);
         third.physicalRecord.close();
+
         await iterator.return();
     });
 
@@ -221,8 +277,13 @@ describe("createRecordCursor", () => {
             if (parseCount === 1) {
                 await record.readMore();
                 await record.readMore();
-                finalBuffer = record.buffers[1];
-                record.endByte = BUFFER_SIZE * 2;
+
+                finalBuffer =
+                    record.buffers[1];
+
+                record.endByte =
+                    BUFFER_SIZE * 2;
+
                 return {value: 1};
             }
 
@@ -236,20 +297,30 @@ describe("createRecordCursor", () => {
             expect(record.buffers).toHaveLength(2);
             expect(record.lastValidByte).toBe(BUFFER_SIZE + 3);
             expect(record.fileFinished).toBe(true);
-            record.endByte = BUFFER_SIZE + 3;
+
+            record.endByte =
+                BUFFER_SIZE + 3;
+
             return {value: 2};
         });
 
-        const iterator = createRecordCursor(
-            parser,
-            createDetails(),
-            createTestConfig(BUFFER_SIZE, BUFFER_SIZE, 3)
-        );
+        const iterator =
+            createRecordCursor(
+                parser,
+                createDetails(),
+                createTestConfig(
+                    BUFFER_SIZE,
+                    BUFFER_SIZE,
+                    3
+                )
+            );
 
         const first = await nextRecord(iterator);
         first.physicalRecord.close();
+
         const second = await nextRecord(iterator);
         second.physicalRecord.close();
+
         await expectFinished(iterator);
     });
 
@@ -263,18 +334,30 @@ describe("createRecordCursor", () => {
 
             if (parseCount === 1) {
                 await record.readMore();
-                sharedBuffer = record.buffers[0];
+
+                sharedBuffer =
+                    record.buffers[0];
+
                 record.endByte = 3;
+
                 return {value: 1};
             }
 
             expect(record.buffers[0]).toBe(sharedBuffer);
             expect(record.startByte).toBe(3);
+
             record.endByte = 5;
+
             return {value: 2};
         });
 
-        const iterator = createRecordCursor(parser, createDetails(), createTestConfig(BUFFER_SIZE));
+        const iterator =
+            createRecordCursor(
+                parser,
+                createDetails(),
+                createTestConfig(BUFFER_SIZE)
+            );
+
         const first = await nextRecord(iterator);
         const second = await nextRecord(iterator);
 
@@ -283,20 +366,33 @@ describe("createRecordCursor", () => {
 
         first.physicalRecord.close();
         second.physicalRecord.close();
+
         await iterator.return();
     });
 
 
     test("closes a cursor-owned record when the parser throws", async () => {
-        const expectedError = new Error("parser failed");
-        const resources = createTrackingResources(BUFFER_SIZE);
+        const expectedError =
+            new Error("parser failed");
+
+        const resources =
+            createTrackingResources(BUFFER_SIZE);
+
         const parser = createParser(async record => {
             await record.readMore();
             throw expectedError;
         });
 
-        const iterator = createRecordCursor(parser, createDetails(), resources);
-        await expect(iterator.next()).rejects.toBe(expectedError);
+        const iterator =
+            createRecordCursor(
+                parser,
+                createDetails(),
+                resources
+            );
+
+        await expect(
+            iterator.next()
+        ).rejects.toBe(expectedError);
 
         expect(resources.activeRecords).toBe(0);
         expect(resources.carriedReferences).toBe(0);
@@ -304,15 +400,24 @@ describe("createRecordCursor", () => {
 
 
     test("releases cursor ownership when iteration is abandoned but leaves the yielded record open", async () => {
-        const resources = createTrackingResources(BUFFER_SIZE);
+        const resources =
+            createTrackingResources(BUFFER_SIZE);
+
         const parser = createParser(async record => {
             await record.readMore();
             record.endByte = 3;
             return {value: 1};
         });
 
-        const iterator = createRecordCursor(parser, createDetails(), resources);
-        const first = await nextRecord(iterator);
+        const iterator =
+            createRecordCursor(
+                parser,
+                createDetails(),
+                resources
+            );
+
+        const first =
+            await nextRecord(iterator);
 
         expect(resources.activeRecords).toBe(1);
         expect(resources.carriedReferences).toBe(1);
@@ -323,62 +428,298 @@ describe("createRecordCursor", () => {
         expect(resources.carriedReferences).toBe(0);
 
         first.physicalRecord.close();
+
         expect(resources.activeRecords).toBe(0);
     });
 
 
     test("does not retain a carry reference for the final record", async () => {
-        const resources = createTrackingResources(5);
+        const resources =
+            createTrackingResources(5);
+
         const parser = createParser(async record => {
             await record.readMore();
+
             expect(record.fileFinished).toBe(true);
-            record.endByte = record.lastValidByte;
+
+            record.endByte =
+                record.lastValidByte;
+
             return {value: 1};
         });
 
-        const iterator = createRecordCursor(parser, createDetails(), resources);
-        const first = await nextRecord(iterator);
+        const iterator =
+            createRecordCursor(
+                parser,
+                createDetails(),
+                resources
+            );
+
+        const first =
+            await nextRecord(iterator);
 
         expect(resources.activeRecords).toBe(1);
         expect(resources.carriedReferences).toBe(0);
 
         first.physicalRecord.close();
+
         expect(resources.activeRecords).toBe(0);
+
         await expectFinished(iterator);
     });
 
 
     test("closes the cursor-owned record when parser output is invalid", async () => {
-        const resources = createTrackingResources(5);
+        const resources =
+            createTrackingResources(5);
+
         const parser = createParser(async record => {
             await record.readMore();
-            record.endByte = record.lastValidByte + 1;
+
+            record.endByte =
+                record.lastValidByte + 1;
+
             return {value: 1};
         });
 
-        const iterator = createRecordCursor(parser, createDetails(), resources);
+        const iterator =
+            createRecordCursor(
+                parser,
+                createDetails(),
+                resources
+            );
 
-        await expect(iterator.next()).rejects.toThrow(
+        await expect(
+            iterator.next()
+        ).rejects.toThrow(
             "Parser returned a physical record range outside its byte buffers"
         );
+
         expect(resources.activeRecords).toBe(0);
         expect(resources.carriedReferences).toBe(0);
     });
 
 
     test("rejects a non-final record containing no physical byte buffer", async () => {
-        const resources = createTrackingResources();
+        const resources =
+            createTrackingResources();
+
         const parser = createParser(async record => {
             record.endByte = 0;
             return {value: 1};
         });
 
-        const iterator = createRecordCursor(parser, createDetails(), resources);
+        const iterator =
+            createRecordCursor(
+                parser,
+                createDetails(),
+                resources
+            );
 
-        await expect(iterator.next()).rejects.toThrow(
+        await expect(
+            iterator.next()
+        ).rejects.toThrow(
             "Parser completed a non-final physical record without a byte buffer"
         );
+
         expect(resources.activeRecords).toBe(0);
+    });
+});
+
+
+describe("openRecordCursor", () => {
+    test("prepares the source and carries already-read bytes into the first data record", async () => {
+        const config =
+            createParserConfig();
+
+        const details =
+            createDetails();
+
+        let preparedBuffer:
+            Uint8Array | undefined;
+
+        const parser =
+            createPreparingParser(
+                async (record,actualConfig) => {
+                    expect(actualConfig).toBe(config);
+
+                    await record.readMore();
+
+                    preparedBuffer =
+                        record.buffers[0];
+
+                    expect(record.startByte).toBe(0);
+                    expect(record.lastValidByte).toBe(7);
+                    expect(record.fileFinished).toBe(true);
+
+                    record.endByte = 2;
+
+                    return details;
+                },
+
+                async (record,actualDetails) => {
+                    expect(actualDetails).toBe(details);
+
+                    expect(record.buffers).toHaveLength(1);
+                    expect(record.buffers[0]).toBe(preparedBuffer);
+                    expect(record.startByte).toBe(2);
+                    expect(record.lastValidByte).toBe(7);
+                    expect(record.fileFinished).toBe(true);
+
+                    record.endByte = 7;
+
+                    return {value: 17};
+                }
+            );
+
+        const opened =
+            await openRecordCursor(
+                parser,
+                config,
+                createTestConfig(7)
+            );
+
+        expect(opened.details).toBe(details);
+
+        const first =
+            await nextRecord(
+                opened.recordCursor
+            );
+
+        expect(first.result).toEqual({
+            value: 17
+        });
+
+        expect(
+            first.physicalRecord.buffers[0]
+        ).toBe(preparedBuffer);
+
+        first.physicalRecord.close();
+
+        await expectFinished(
+            opened.recordCursor
+        );
+    });
+
+
+    test("throws preparation errors and releases the bootstrap record", async () => {
+        const resources =
+            createTrackingResources(BUFFER_SIZE);
+
+        const parser =
+            createPreparingParser(
+                async record => {
+                    await record.readMore();
+
+                    return {
+                        errors: [
+                            "invalid header"
+                        ]
+                    };
+                },
+
+                async () => {
+                    throw new Error(
+                        "Data parser must not run"
+                    );
+                }
+            );
+
+        await expect(
+            openRecordCursor(
+                parser,
+                createParserConfig(),
+                resources
+            )
+        ).rejects.toBeInstanceOf(
+            ErrorsException
+        );
+
+        expect(resources.activeRecords).toBe(0);
+        expect(resources.carriedReferences).toBe(0);
+    });
+
+
+    test("closing before iteration releases carried bytes and makes the data cursor terminal", async () => {
+        const resources =
+            createTrackingResources(BUFFER_SIZE);
+
+        let parseCount = 0;
+
+        const parser =
+            createPreparingParser(
+                async record => {
+                    await record.readMore();
+
+                    record.endByte = 3;
+
+                    return createDetails();
+                },
+
+                async record => {
+                    parseCount++;
+
+                    record.endByte =
+                        record.lastValidByte;
+
+                    return {value: 1};
+                }
+            );
+
+        const opened =
+            await openRecordCursor(
+                parser,
+                createParserConfig(),
+                resources
+            );
+
+        expect(resources.activeRecords).toBe(0);
+        expect(resources.carriedReferences).toBe(1);
+
+        opened.close();
+
+        expect(resources.activeRecords).toBe(0);
+        expect(resources.carriedReferences).toBe(0);
+
+        expect(
+            (await opened.recordCursor.next()).done
+        ).toBe(true);
+
+        expect(parseCount).toBe(0);
+    });
+
+
+    test("closes the bootstrap record when prepare throws", async () => {
+        const resources =
+            createTrackingResources(BUFFER_SIZE);
+
+        const expectedError =
+            new Error("prepare failed");
+
+        const parser =
+            createPreparingParser(
+                async record => {
+                    await record.readMore();
+                    throw expectedError;
+                },
+
+                async () => {
+                    throw new Error(
+                        "Data parser must not run"
+                    );
+                }
+            );
+
+        await expect(
+            openRecordCursor(
+                parser,
+                createParserConfig(),
+                resources
+            )
+        ).rejects.toBe(expectedError);
+
+        expect(resources.activeRecords).toBe(0);
+        expect(resources.carriedReferences).toBe(0);
     });
 });
 
@@ -386,10 +727,13 @@ describe("createRecordCursor", () => {
 async function nextRecord<TRepresentation,TRecordState>(
     iterator: AsyncGenerator<RecordCursorResult<TRepresentation,TRecordState>,void,void>
 ): Promise<RecordCursorResult<TRepresentation,TRecordState>> {
-    const next = await iterator.next();
+    const next =
+        await iterator.next();
 
     if (next.done === true) {
-        throw new Error("Expected another record");
+        throw new Error(
+            "Expected another record"
+        );
     }
 
     return next.value;
@@ -399,7 +743,9 @@ async function nextRecord<TRepresentation,TRecordState>(
 async function expectFinished<TRepresentation,TRecordState>(
     iterator: AsyncGenerator<RecordCursorResult<TRepresentation,TRecordState>,void,void>
 ): Promise<void> {
-    expect((await iterator.next()).done).toBe(true);
+    expect(
+        (await iterator.next()).done
+    ).toBe(true);
 }
 
 
@@ -408,59 +754,128 @@ function createParser(
         record: ParserPhysicalRecordContent<TestRecordState>,
         details: TestParserDetails
     ) => Promise<TestRepresentation>
-): Parser<TestRepresentation,TestParserConfig,TestParserDetails,TestRecordState> {
-    const unsupported = () => {
-        throw new Error("Record cursor must not use projection support");
+) {
+    return {
+        parse
+    };
+}
+
+
+function createPreparingParser(
+    prepare: (
+        record: ParserPhysicalRecordContent<TestRecordState>,
+        config: TestParserConfig
+    ) => Promise<ParserResult<TestParserDetails>>,
+
+    parse: (
+        record: ParserPhysicalRecordContent<TestRecordState>,
+        details: TestParserDetails
+    ) => Promise<ParserResult<TestRepresentation>>
+): Parser<
+    TestRepresentation,
+    TestParserConfig,
+    TestParserDetails,
+    TestRecordState,
+    readonly string[]
+> {
+    const unsupported = (): never => {
+        throw new Error(
+            "Record cursor must not use projection support"
+        );
     };
 
     return {
+        prepare,
         parse,
-        integer: unsupported,
-        float: unsupported,
-        character: unsupported,
-        string: unsupported,
-        toDebugString: () => {
-            throw new Error("Record cursor must not render diagnostics");
-        }
+        compileProjectionPath:
+        unsupported,
+        integer:
+        unsupported,
+        float:
+        unsupported,
+        character:
+        unsupported,
+        string:
+        unsupported,
+        toDebugString:
+        unsupported
+    };
+}
+
+
+function createParserConfig(): TestParserConfig {
+    return {
+        unused: true
     };
 }
 
 
 function createDetails(): TestParserDetails {
-    return {name: "test"};
+    return {
+        name: "test"
+    };
 }
 
 
 function createTestConfig(...readLengths: number[]) {
-    const file: TestFile = {name: "test"};
+    const file: TestFile = {
+        name: "test"
+    };
+
     let readIndex = 0;
     let fillNumber = 1;
 
     return createDefaultPhysicalRecordConfig<TestRecordState,TestFile>({
-        source: SOURCE,
+        source:
+        SOURCE,
+
         file,
-        bufferSize: BUFFER_SIZE,
-        fillFileBuffer: async (actualFile, buffer) => {
-            expect(actualFile).toBe(file);
-            const bytesRead = readLengths[readIndex] ?? 0;
-            readIndex++;
 
-            if (bytesRead < 0 || bytesRead > buffer.length) {
-                throw new Error("Invalid test read length");
-            }
+        bufferSize:
+        BUFFER_SIZE,
 
-            for (let index = 0; index < bytesRead; index++) {
-                buffer[index] = fillNumber;
-            }
-            fillNumber++;
-            return bytesRead;
-        },
-        createRecordState: () => ({value: 0})
+        fillFileBuffer:
+            async (actualFile,buffer) => {
+                expect(actualFile).toBe(file);
+
+                const bytesRead =
+                    readLengths[readIndex] ?? 0;
+
+                readIndex++;
+
+                if (
+                    bytesRead < 0
+                    || bytesRead > buffer.length
+                ) {
+                    throw new Error(
+                        "Invalid test read length"
+                    );
+                }
+
+                for (
+                    let index = 0;
+                    index < bytesRead;
+                    index++
+                ) {
+                    buffer[index] =
+                        fillNumber;
+                }
+
+                fillNumber++;
+
+                return bytesRead;
+            },
+
+        createRecordState:
+            () => ({
+                value: 0
+            })
     });
 }
 
 
-interface TrackingResources extends RecordCursorResources<TestRecordState> {
+interface TrackingResources
+    extends RecordCursorResources<TestRecordState> {
     readonly activeRecords: number;
     readonly carriedReferences: number;
 }
@@ -469,10 +884,13 @@ interface TrackingResources extends RecordCursorResources<TestRecordState> {
 function createTrackingResources(...readLengths: number[]): TrackingResources {
     let readIndex = 0;
     let activeRecords = 0;
-    const carried = new Map<Uint8Array,number>();
+
+    const carried =
+        new Map<Uint8Array,number>();
 
     const resources: TrackingResources = {
-        bufferSize: BUFFER_SIZE,
+        bufferSize:
+        BUFFER_SIZE,
 
         get activeRecords() {
             return activeRecords;
@@ -480,44 +898,94 @@ function createTrackingResources(...readLengths: number[]): TrackingResources {
 
         get carriedReferences() {
             let total = 0;
-            for (const count of carried.values()) {
+
+            for (
+                const count
+                of carried.values()
+                ) {
                 total += count;
             }
+
             return total;
         },
 
-        acquireRecord(): RecordCursorPhysicalRecord<TestRecordState> {
+        acquireRecord():
+            RecordCursorPhysicalRecord<TestRecordState> {
             activeRecords++;
+
             let closed = false;
 
-            const record: RecordCursorPhysicalRecord<TestRecordState> = {
-                buffers: [],
-                recordState: {value: 0},
-                startByte: 0,
-                endByte: 0,
-                lastValidByte: 0,
-                fileFinished: false,
-                source: SOURCE,
-                recordNumber: 0,
+            const record:
+                RecordCursorPhysicalRecord<TestRecordState> = {
+                buffers:
+                    [],
+
+                recordState: {
+                    value: 0
+                },
+
+                startByte:
+                    0,
+
+                endByte:
+                    0,
+
+                lastValidByte:
+                    0,
+
+                fileFinished:
+                    false,
+
+                source:
+                SOURCE,
+
+                recordNumber:
+                    0,
 
                 async readMore() {
-                    const buffer = new Uint8Array(BUFFER_SIZE);
-                    const bytesRead = readLengths[readIndex] ?? BUFFER_SIZE;
+                    const buffer =
+                        new Uint8Array(
+                            BUFFER_SIZE
+                        );
+
+                    const bytesRead =
+                        readLengths[
+                            readIndex
+                            ]
+                        ?? BUFFER_SIZE;
+
                     readIndex++;
-                    record.buffers.push(buffer);
-                    record.lastValidByte += bytesRead;
-                    if (bytesRead < BUFFER_SIZE) {
-                        record.fileFinished = true;
+
+                    record.buffers.push(
+                        buffer
+                    );
+
+                    record.lastValidByte +=
+                        bytesRead;
+
+                    if (
+                        bytesRead
+                        < BUFFER_SIZE
+                    ) {
+                        record.fileFinished =
+                            true;
                     }
                 },
 
                 close() {
                     if (closed) {
-                        throw new Error("Physical record closed twice");
+                        throw new Error(
+                            "Physical record closed twice"
+                        );
                     }
-                    closed = true;
+
+                    closed =
+                        true;
+
                     activeRecords--;
-                    record.buffers.length = 0;
+
+                    record.buffers.length =
+                        0;
                 }
             };
 
@@ -525,18 +993,36 @@ function createTrackingResources(...readLengths: number[]): TrackingResources {
         },
 
         retainBuffer(buffer) {
-            carried.set(buffer, (carried.get(buffer) ?? 0) + 1);
+            carried.set(
+                buffer,
+                (carried.get(buffer) ?? 0) + 1
+            );
         },
 
         releaseBuffer(buffer) {
-            const count = carried.get(buffer);
-            if (count === undefined || count === 0) {
-                throw new Error("Released an unretained carry buffer");
+            const count =
+                carried.get(
+                    buffer
+                );
+
+            if (
+                count === undefined
+                || count === 0
+            ) {
+                throw new Error(
+                    "Released an unretained carry buffer"
+                );
             }
+
             if (count === 1) {
-                carried.delete(buffer);
+                carried.delete(
+                    buffer
+                );
             } else {
-                carried.set(buffer, count - 1);
+                carried.set(
+                    buffer,
+                    count - 1
+                );
             }
         }
     };

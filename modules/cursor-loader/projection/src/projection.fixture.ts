@@ -1,6 +1,6 @@
 import {
     type PhysicalRecordDebugRenderer,
-    type ProjectionSupport
+    type ProjectionSupport, utf8RangeToString
 } from "@cobol-ts/cursor-loader-types";
 
 import {defineProjection} from "./create.projection";
@@ -77,15 +77,20 @@ export const orderSummaryProjection = defineProjection<OrderSummary>({
 });
 
 
-export const fakeParser:
-    ProjectionSupport<Representation>
-    & PhysicalRecordDebugRenderer = {
+export const fakeParser = {
+    compileProjectionPath(
+        _details: undefined,
+        path: readonly string[]
+    ): readonly string[] {
+        return path;
+    },
 
-    integer(representation, path): number {
-        const value = valueAtPath(
-            representation,
-            path
-        );
+    integer(
+        representation: Representation,
+        _details: undefined,
+        path: readonly string[]
+    ): number {
+        const value = valueAtPath(representation,path);
 
         if (
             typeof value !== "number"
@@ -99,11 +104,12 @@ export const fakeParser:
         return value;
     },
 
-    float(representation, path): number {
-        const value = valueAtPath(
-            representation,
-            path
-        );
+    float(
+        representation: Representation,
+        _details: undefined,
+        path: readonly string[]
+    ): number {
+        const value = valueAtPath(representation,path);
 
         if (typeof value !== "number") {
             throw new Error(
@@ -114,11 +120,12 @@ export const fakeParser:
         return value;
     },
 
-    character(representation, path): string {
-        const value = valueAtPath(
-            representation,
-            path
-        );
+    character(
+        representation: Representation,
+        _details: undefined,
+        path: readonly string[]
+    ): string {
+        const value = valueAtPath(representation,path);
 
         if (
             typeof value !== "string"
@@ -132,11 +139,12 @@ export const fakeParser:
         return value;
     },
 
-    string(representation, path): string {
-        const value = valueAtPath(
-            representation,
-            path
-        );
+    string(
+        representation: Representation,
+        _details: undefined,
+        path: readonly string[]
+    ): string {
+        const value = valueAtPath(representation,path);
 
         if (typeof value !== "string") {
             throw new Error(
@@ -147,10 +155,12 @@ export const fakeParser:
         return value;
     },
 
-    toDebugString(): string {
-        return "<test record>";
-    }
-};
+    toDebugString: utf8RangeToString
+} satisfies ProjectionSupport<
+    Representation,
+    undefined,
+    readonly string[]
+> & PhysicalRecordDebugRenderer;
 
 
 function valueAtPath(

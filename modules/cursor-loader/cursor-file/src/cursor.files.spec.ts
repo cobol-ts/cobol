@@ -1,11 +1,7 @@
-import {type Errors, isValue} from "@cobol-ts/errors";
-
 import {
-    type PhysicalRecordContent,
-    type ProjectionFactory,
-    type RecordCursor,
-    type RecordCursorResult
-} from "@cobol-ts/cursor-loader-types";
+    type Errors,
+    isValue
+} from "@cobol-ts/errors";
 
 import {
     createErrorsOrFileCursor,
@@ -14,22 +10,25 @@ import {
     createThrowingFileCursor
 } from "./cursor.file";
 
-import {type FileCursorResult} from "./cursor.file.result";
+import {
+    type FileCursorResult
+} from "./cursor.file.result";
+
+import {
+    type Customer,
+    createTestFile,
+    createTestInfrastructure,
+    customerFileDefinition
+} from "./cursor.file.fixture";
 
 
-interface Customer {
-    name(): string;
-}
-
-
-type Representation = {
-    name: string;
-};
-
-
-function cursorValue<T>(result: IteratorResult<T,void>): T {
+function cursorValue<T>(
+    result: IteratorResult<T,void>
+): T {
     if (result.done === true) {
-        throw new Error("Expected cursor value");
+        throw new Error(
+            "Expected cursor value"
+        );
     }
 
     return result.value;
@@ -37,7 +36,9 @@ function cursorValue<T>(result: IteratorResult<T,void>): T {
 
 
 function projectedValue<T>(
-    result: FileCursorResult<T> | string[]
+    result:
+        FileCursorResult<T>
+        | string[]
 ): FileCursorResult<T> {
     if (Array.isArray(result)) {
         throw new Error(
@@ -49,398 +50,327 @@ function projectedValue<T>(
 }
 
 
-function customerProjection(): ProjectionFactory<Customer,Representation> {
-    const bindings = new WeakMap<Customer,Representation>();
+describe("createFileCursor",() => {
+    test("selects the parser through the registry and returns a projected value",async () => {
+        const cursor =
+            createFileCursor(
+                customerFileDefinition,
+                createTestFile("A"),
+                createTestInfrastructure()
+            );
 
-    return {
-        create(): Customer {
-            const projection: Customer = {
-                name: () => {
-                    const representation = bindings.get(projection);
-
-                    if (representation === undefined) {
-                        throw new Error("Projection is not bound");
-                    }
-
-                    return representation.name;
-                }
-            };
-
-            return projection;
-        },
-
-        bind(projection, representation): void {
-            bindings.set(projection, representation);
-        },
-
-        clear(projection): void {
-            bindings.delete(projection);
-        }
-    };
-}
-
-
-function physicalRecord(onClose: () => void): PhysicalRecordContent<undefined> {
-    return {
-        buffers: [],
-        recordState: undefined,
-        startByte: 0,
-        endByte: 0,
-        lastValidByte: 0,
-        fileFinished: true,
-        source: "test-source",
-        recordNumber: 1,
-        close: onClose
-    };
-}
-
-
-function recordCursor(
-    ...records: RecordCursorResult<Representation,undefined>[]
-): RecordCursor<Representation,undefined> {
-    return (
-        async function* () {
-            for (const record of records) {
-                yield record;
-            }
-        }
-    )();
-}
-
-
-describe("createFileCursor", () => {
-    test("returns a projected value", async () => {
-        let closeCount = 0;
-
-        const cursor = createFileCursor(
-            recordCursor({
-                result: {
-                    name: "Alice"
-                },
-                physicalRecord: physicalRecord(
-                    () => closeCount++
+        const result =
+            projectedValue(
+                cursorValue(
+                    await cursor.next()
                 )
-            }),
-            customerProjection()
-        );
+            );
 
-        const result = projectedValue(
-            cursorValue(
-                await cursor.next()
-            )
+        expect(
+            result.result.name()
+        ).toBe(
+            "Alice"
         );
-
-        expect(result.result.name()).toBe("Alice");
-        expect(closeCount).toBe(0);
 
         result.close();
 
-        expect(closeCount).toBe(1);
+        await expectFinished(
+            cursor
+        );
     });
 
 
-    test("returns string errors and closes the failed physical record", async () => {
-        let closeCount = 0;
+    test("returns string errors and continues with the next row",async () => {
+        const cursor =
+            createFileCursor(
+                customerFileDefinition,
+                createTestFile("!A"),
+                createTestInfrastructure()
+            );
 
-        const cursor = createFileCursor(
-            recordCursor({
-                result: {
-                    errors: [
-                        "bad row"
-                    ]
-                },
-                physicalRecord: physicalRecord(
-                    () => closeCount++
-                )
-            }),
-            customerProjection()
-        );
+        const error =
+            cursorValue(
+                await cursor.next()
+            );
 
-        const result = cursorValue(
-            await cursor.next()
-        );
-
-        expect(result).toEqual([
+        expect(error).toEqual([
             "bad row"
         ]);
 
-        expect(closeCount).toBe(1);
-    });
-
-
-    test("clears the projection and closes the physical record when the result closes", async () => {
-        let clearCount = 0;
-        let closeCount = 0;
-
-        const base = customerProjection();
-
-        const projection: ProjectionFactory<Customer,Representation> = {
-            create: base.create,
-            bind: base.bind,
-
-            clear(value): void {
-                clearCount++;
-                base.clear(value);
-            }
-        };
-
-        const cursor = createFileCursor(
-            recordCursor({
-                result: {
-                    name: "Alice"
-                },
-                physicalRecord: physicalRecord(
-                    () => closeCount++
+        const result =
+            projectedValue(
+                cursorValue(
+                    await cursor.next()
                 )
-            }),
-            projection
-        );
+            );
 
-        const result = projectedValue(
-            cursorValue(
-                await cursor.next()
-            )
+        expect(
+            result.result.name()
+        ).toBe(
+            "Alice"
         );
-
-        expect(result.result.name()).toBe("Alice");
-        expect(clearCount).toBe(0);
-        expect(closeCount).toBe(0);
 
         result.close();
 
-        expect(clearCount).toBe(1);
-        expect(closeCount).toBe(1);
+        await expectFinished(
+            cursor
+        );
+    });
+
+
+    test("clears the lazy projection when the result closes",async () => {
+        const cursor =
+            createFileCursor(
+                customerFileDefinition,
+                createTestFile("A"),
+                createTestInfrastructure()
+            );
+
+        const result =
+            projectedValue(
+                cursorValue(
+                    await cursor.next()
+                )
+            );
+
+        expect(
+            result.result.name()
+        ).toBe(
+            "Alice"
+        );
+
+        result.close();
+
+        expect(
+            () => result.result.name()
+        ).toThrow(
+            "Projection is not bound"
+        );
+
+        await expectFinished(
+            cursor
+        );
     });
 });
 
 
-describe("createErrorsOrFileCursor", () => {
-    test("wraps a successful row in ErrorsOr", async () => {
-        const cursor = createErrorsOrFileCursor(
-            recordCursor({
-                result: {
-                    name: "Alice"
-                },
-                physicalRecord: physicalRecord(
-                    () => undefined
-                )
-            }),
-            customerProjection()
-        );
+describe("createErrorsOrFileCursor",() => {
+    test("wraps a successful row in ErrorsOr",async () => {
+        const cursor =
+            createErrorsOrFileCursor(
+                customerFileDefinition,
+                createTestFile("A"),
+                createTestInfrastructure()
+            );
 
-        const result = cursorValue(
-            await cursor.next()
-        );
+        const result =
+            cursorValue(
+                await cursor.next()
+            );
 
         if (!isValue(result)) {
-            throw new Error("Expected value");
+            throw new Error(
+                "Expected value"
+            );
         }
 
-        expect(result.value.result.name()).toBe("Alice");
+        expect(
+            result.value.result.name()
+        ).toBe(
+            "Alice"
+        );
 
         result.value.close();
+
+        await expectFinished(
+            cursor
+        );
     });
 
 
-    test("returns Errors unchanged", async () => {
-        const errors: Errors = {
+    test("returns Errors unchanged",async () => {
+        const cursor =
+            createErrorsOrFileCursor(
+                customerFileDefinition,
+                createTestFile("!"),
+                createTestInfrastructure()
+            );
+
+        const result =
+            cursorValue(
+                await cursor.next()
+            );
+
+        expect(result).toEqual({
             errors: [
                 "bad row"
             ],
-            reference: "row-7"
-        };
 
-        const cursor = createErrorsOrFileCursor(
-            recordCursor({
-                result: errors,
-                physicalRecord: physicalRecord(
-                    () => undefined
-                )
-            }),
-            customerProjection()
+            reference:
+                "row-1"
+        });
+
+        await expectFinished(
+            cursor
         );
-
-        const result = cursorValue(
-            await cursor.next()
-        );
-
-        expect(result).toBe(errors);
     });
 });
 
 
-describe("createThrowingFileCursor", () => {
-    test("throws ErrorsException for a row error", async () => {
-        let closeCount = 0;
-
-        const cursor = createThrowingFileCursor(
-            recordCursor({
-                result: {
-                    errors: [
-                        "bad row"
-                    ],
-                    reference: "row-7"
-                },
-                physicalRecord: physicalRecord(
-                    () => closeCount++
-                )
-            }),
-            customerProjection()
-        );
+describe("createThrowingFileCursor",() => {
+    test("throws ErrorsException for a row error",async () => {
+        const cursor =
+            createThrowingFileCursor(
+                customerFileDefinition,
+                createTestFile("!"),
+                createTestInfrastructure()
+            );
 
         await expect(
             cursor.next()
         ).rejects.toEqual(
             expect.objectContaining({
-                name: "ErrorsException",
+                name:
+                    "ErrorsException",
+
                 errors: [
                     "bad row"
                 ],
-                reference: "row-7"
+
+                reference:
+                    "row-1"
             })
         );
-
-        expect(closeCount).toBe(1);
     });
 
 
-    test("returns successful rows normally", async () => {
-        const cursor = createThrowingFileCursor(
-            recordCursor({
-                result: {
-                    name: "Alice"
-                },
-                physicalRecord: physicalRecord(
-                    () => undefined
-                )
-            }),
-            customerProjection()
-        );
+    test("returns successful rows normally",async () => {
+        const cursor =
+            createThrowingFileCursor(
+                customerFileDefinition,
+                createTestFile("A"),
+                createTestInfrastructure()
+            );
 
-        const result = cursorValue(
-            await cursor.next()
-        );
+        const result =
+            cursorValue(
+                await cursor.next()
+            );
 
-        expect(result.result.name()).toBe("Alice");
+        expect(
+            result.result.name()
+        ).toBe(
+            "Alice"
+        );
 
         result.close();
+
+        await expectFinished(
+            cursor
+        );
     });
 });
 
 
-describe("createIgnoringFileCursor", () => {
-    test("skips errors and continues to the next successful row", async () => {
-        let failedCloseCount = 0;
+describe("createIgnoringFileCursor",() => {
+    test("skips errors and continues to the next successful row",async () => {
+        const cursor =
+            createIgnoringFileCursor(
+                customerFileDefinition,
+                createTestFile("!A"),
+                createTestInfrastructure()
+            );
 
-        const cursor = createIgnoringFileCursor(
-            recordCursor(
-                {
-                    result: {
-                        errors: [
-                            "bad row"
-                        ]
-                    },
-                    physicalRecord: physicalRecord(
-                        () => failedCloseCount++
-                    )
-                },
-                {
-                    result: {
-                        name: "Alice"
-                    },
-                    physicalRecord: physicalRecord(
-                        () => undefined
-                    )
-                }
-            ),
-            customerProjection()
+        const result =
+            cursorValue(
+                await cursor.next()
+            );
+
+        expect(
+            result.result.name()
+        ).toBe(
+            "Alice"
         );
-
-        const result = cursorValue(
-            await cursor.next()
-        );
-
-        expect(failedCloseCount).toBe(1);
-        expect(result.result.name()).toBe("Alice");
 
         result.close();
+
+        await expectFinished(
+            cursor
+        );
     });
 
 
-    test("calls onError with the full Errors object", async () => {
-        const received: Errors[] = [];
+    test("calls onError with the full Errors object",async () => {
+        const received:
+            Errors[] =
+            [];
 
-        const errors: Errors = {
-            errors: [
-                "bad row"
-            ],
-            reference: "row-7",
-            extras: {
-                line: 7
-            }
-        };
+        const cursor =
+            createIgnoringFileCursor(
+                customerFileDefinition,
+                createTestFile("!"),
+                createTestInfrastructure(),
+                error => received.push(error)
+            );
 
-        const cursor = createIgnoringFileCursor(
-            recordCursor({
-                result: errors,
-                physicalRecord: physicalRecord(
-                    () => undefined
-                )
-            }),
-            customerProjection(),
-            error => received.push(error)
+        const next =
+            await cursor.next();
+
+        expect(
+            next.done
+        ).toBe(
+            true
         );
 
-        const next = await cursor.next();
-
-        expect(next.done).toBe(true);
         expect(received).toEqual([
-            errors
+            {
+                errors: [
+                    "bad row"
+                ],
+
+                reference:
+                    "row-1"
+            }
         ]);
     });
-});
 
 
-describe("projection failure", () => {
-    test("closes the physical record before propagating a binding exception", async () => {
-        let closeCount = 0;
+    test("does not swallow configuration failures",async () => {
+        const received:
+            Errors[] =
+            [];
 
-        const projection: ProjectionFactory<Customer,Representation> = {
-            create(): Customer {
-                return {
-                    name: () => {
-                        throw new Error("Projection is not bound");
+        const cursor =
+            createIgnoringFileCursor(
+                customerFileDefinition,
+                createTestFile("A"),
+                createTestInfrastructure(
+                    () => {
+                        throw new Error(
+                            "bad configuration"
+                        );
                     }
-                };
-            },
-
-            bind(): void {
-                throw new Error("projection failed");
-            },
-
-            clear(): void {
-                // Nothing was successfully bound.
-            }
-        };
-
-        const cursor = createFileCursor(
-            recordCursor({
-                result: {
-                    name: "Alice"
-                },
-                physicalRecord: physicalRecord(
-                    () => closeCount++
-                )
-            }),
-            projection
-        );
+                ),
+                error => received.push(error)
+            );
 
         await expect(
             cursor.next()
         ).rejects.toThrow(
-            "projection failed"
+            "bad configuration"
         );
 
-        expect(closeCount).toBe(1);
+        expect(received).toEqual([]);
     });
 });
+
+
+async function expectFinished<T>(
+    cursor: AsyncGenerator<T,void,void>
+): Promise<void> {
+    expect(
+        (await cursor.next()).done
+    ).toBe(
+        true
+    );
+}

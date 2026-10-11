@@ -1,5 +1,5 @@
 {
-  "template": "typescript",
+  "template": "node",
   "name": "@cobol-ts/cursor-loader-csv",
   "description": "parser for csv to support the cursor loader package",
   "links": [

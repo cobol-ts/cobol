@@ -405,8 +405,9 @@ export type RecordCursor<
  *         ]
  *     }
  *
- * Canonicalisation happens once during configuration. Runtime projection code
- * consumes only the canonical form.
+ * Canonicalisation happens once during configuration. The canonical path remains
+ * an ergonomic string path. Before runtime access, the parser compiles that path
+ * into its own TProjectionPath for the opened source.
  */
 
 
@@ -671,57 +672,85 @@ export interface ProjectionFactory<
  * ProjectionSupport exposes the parser-specific operations required by the
  * parser-independent projection layer.
  *
- * The projection describes a logical field using an already-tokenised path.
- * The parser decides what that path means for the representation it produces.
+ * Canonical projection definitions use readonly string[] paths because that is
+ * the portable authoring form. Those paths are not required to be the runtime
+ * representation used by a parser.
+ *
+ * compileProjectionPath() converts one canonical string path into the parser's
+ * TProjectionPath for this opened source. This happens outside the record hot
+ * path.
  *
  * Examples:
  *
  *     JSONL
- *         ["customer", "age"]
- *         traverses object properties.
+ *         readonly string[] -> readonly string[]
+ *         Property traversal can retain the canonical path unchanged.
  *
  *     CSV
- *         ["AGE"]
- *         identifies a column.
+ *         ["AGE"] -> 3
+ *         Header lookup happens once; row access uses the numeric column index.
  *
  *     COBOL
- *         ["CUSTOMER", "PERSON", "AGE"]
- *         identifies one interpretation of bytes through the record layout.
+ *         ["CUSTOMER", "PERSON", "AGE"] -> parser-specific compiled layout
+ *         The eventual runtime path may contain offsets, usage, scale or other
+ *         information needed to interpret the physical bytes efficiently.
  *
- * Paths are supplied as string arrays so implementations do not need to parse
- * compound path strings such as "customer.person.age" on the processing path.
+ * representation is the successfully parsed representation for the current
+ * physical record.
+ *
+ * details is the opened-source information prepared once for the physical
+ * source and shared by parsing and projection.
  *
  * ProjectionSupport is deliberately part of Parser rather than an independently
- * configurable strategy. Each parser owns the interpretation of the
- * representation it produces.
+ * configurable strategy. Each parser owns both compilation of projection paths
+ * and execution of those compiled paths against its representation.
  */
-export interface ProjectionSupport<TRepresentation> {
+export interface ProjectionSupport<
+    TRepresentation,
+    TParserDetails,
+    TProjectionPath
+> {
+    compileProjectionPath(
+        details:
+        TParserDetails,
+        path:
+        readonly string[]
+    ): TProjectionPath;
+
     integer(
         representation:
         TRepresentation,
+        details:
+        TParserDetails,
         path:
-        readonly string[]
+        TProjectionPath
     ): number;
 
     float(
         representation:
         TRepresentation,
+        details:
+        TParserDetails,
         path:
-        readonly string[]
+        TProjectionPath
     ): number;
 
     character(
         representation:
         TRepresentation,
+        details:
+        TParserDetails,
         path:
-        readonly string[]
+        TProjectionPath
     ): string;
 
     string(
         representation:
         TRepresentation,
+        details:
+        TParserDetails,
         path:
-        readonly string[]
+        TProjectionPath
     ): string;
 }
 
@@ -729,7 +758,7 @@ export interface ProjectionSupport<TRepresentation> {
 /*
  * Parser.
  *
- * A parser has four associated types.
+ * A parser has five associated types.
  *
  * TRepresentation
  *     The successfully parsed representation exposed for one data record.
@@ -747,6 +776,10 @@ export interface ProjectionSupport<TRepresentation> {
  *     derived from a bootstrap physical record. For example, CSV may combine
  *     configured logical columns with information obtained from a header.
  *
+ *     The same details object is supplied to parse() and ProjectionSupport.
+ *     It therefore holds source-scoped interpretation state which should not be
+ *     copied into each pooled recordState.
+ *
  * TRecordState
  *     Parser-specific state associated with one pooled physical record.
  *
@@ -754,6 +787,14 @@ export interface ProjectionSupport<TRepresentation> {
  *
  *     The state belongs to the parser. Generic cursor/lifetime machinery does
  *     not interpret or reset it.
+ *
+ * TProjectionPath
+ *     Parser-specific compiled representation of one canonical string path.
+ *
+ *     Compilation happens once for the opened source through
+ *     compileProjectionPath(). Runtime accessors use the compiled value directly.
+ *     CSV can therefore use a numeric column index while JSONL can retain its
+ *     string path unchanged.
  *
  * Physical input model
  * --------------------
@@ -796,9 +837,10 @@ export interface ProjectionSupport<TRepresentation> {
  * Projection model
  * ----------------
  *
- * The parser supplies ProjectionSupport for its representation. Generic
- * projection code asks for typed values at logical paths; the parser owns the
- * format-specific meaning and execution of those paths.
+ * The parser supplies ProjectionSupport for its representation, prepared source
+ * details and compiled projection-path type. Generic projection setup converts
+ * canonical string paths once with compileProjectionPath(). Lazy access then
+ * supplies the current representation, source details and compiled path directly.
  *
  * Diagnostic rendering
  * --------------------
@@ -811,9 +853,10 @@ export type Parser<
     TRepresentation,
     TParserConfig,
     TParserDetails,
-    TRecordState
+    TRecordState,
+    TProjectionPath
 > =
-    ProjectionSupport<TRepresentation>
+    ProjectionSupport<TRepresentation,TParserDetails,TProjectionPath>
     & PhysicalRecordDebugRenderer
     & {
 
@@ -837,8 +880,8 @@ export type Parser<
      * completed bootstrap record, firstRecord.endByte must describe its
      * exclusive physical end.
      *
-     * The returned TParserDetails are retained and supplied to parse() for
-     * subsequent data records.
+     * The returned TParserDetails are retained and supplied to parse() and
+     * ProjectionSupport for subsequent data records.
      */
     readonly prepare?: (
         firstRecord:
@@ -887,7 +930,7 @@ export type Parser<
 /*
  * Parser associated-type extraction.
  *
- * These helpers keep higher-level generic code from having to repeat all four
+ * These helpers keep higher-level generic code from having to repeat all five
  * Parser type parameters merely to recover one associated type.
  */
 export type ParserRepresentation<TParser> =
@@ -895,7 +938,8 @@ export type ParserRepresentation<TParser> =
             infer Representation,
             infer _Config,
             infer _Details,
-            infer _RecordState
+            infer _RecordState,
+            infer _ProjectionPath
         >
         ? Representation
         : never;
@@ -906,7 +950,8 @@ export type ParserConfig<TParser> =
             infer _Representation,
             infer Config,
             infer _Details,
-            infer _RecordState
+            infer _RecordState,
+            infer _ProjectionPath
         >
         ? Config
         : never;
@@ -917,7 +962,8 @@ export type ParserDetails<TParser> =
             infer _Representation,
             infer _Config,
             infer Details,
-            infer _RecordState
+            infer _RecordState,
+            infer _ProjectionPath
         >
         ? Details
         : never;
@@ -928,7 +974,20 @@ export type ParserRecordState<TParser> =
             infer _Representation,
             infer _Config,
             infer _Details,
-            infer RecordState
+            infer RecordState,
+            infer _ProjectionPath
         >
         ? RecordState
+        : never;
+
+
+export type ParserProjectionPath<TParser> =
+    TParser extends Parser<
+            infer _Representation,
+            infer _Config,
+            infer _Details,
+            infer _RecordState,
+            infer ProjectionPath
+        >
+        ? ProjectionPath
         : never;

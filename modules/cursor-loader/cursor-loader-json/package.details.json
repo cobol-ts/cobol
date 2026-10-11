@@ -1,5 +1,5 @@
 {
-  "template": "typescript",
+  "template": "node",
   "name": "@cobol-ts/cursor-loader-json",
   "description": "parser for json to support the cursor loader package",
   "links": [
