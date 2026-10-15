@@ -1,21 +1,40 @@
 # @cobol-ts/cursor-file
 
-Application-facing cursor adapters for the byte-backed `@cobol-ts` pipeline.
+Application-facing file cursor orchestration for the byte-backed `@cobol-ts` pipeline.
 
-Despite the historical package name, this package is **not** the physical file-reading layer in the current architecture.
+This package now owns the normal end-to-end source-opening path. Given a file definition, a physical source object and infrastructure, it:
 
-It consumes parsed `RecordCursor` results, binds successful parser representations to reusable lazy projections, and exposes those projections through a small application-facing cursor API.
+- selects the parser from the parser registry;
+- derives parser configuration from the file definition;
+- creates pooled physical-record resources;
+- runs optional parser preparation;
+- compiles projection paths against the prepared source;
+- creates a reusable projection factory;
+- iterates parsed records;
+- applies the selected row-error policy;
+- manages successful result/projection lifetime.
 
 ## Position in the pipeline
 
 ```text
-RecordCursor
+CursorFileDefinition + file + FileCursorInfrastructure
     ↓
-RecordCursorResult
-    ├── parser representation or Errors
-    └── open physical record
+parser registry lookup
     ↓
-@cobol-ts/cursor-file
+createDefaultPhysicalRecordConfig()
+    ↓
+openRecordCursor()
+    ├── optional parser.prepare()
+    └── RecordCursor
+    ↓
+createProjection(
+    parser,
+    opened details,
+    preparation context,
+    canonical projection
+)
+    ↓
+data rows
     ↓
 pooled FileCursorResult
     ├── reusable bound projection
@@ -24,205 +43,218 @@ pooled FileCursorResult
 application code
 ```
 
-This package is the point where physical-record lifetime becomes part of the user-facing result lifetime.
+## File definitions
+
+A file definition contains only source-level information required by generic cursor orchestration:
+
+```ts
+interface CursorFileDefinition<
+    TProjection,
+    TFileType extends string
+> {
+    readonly filename: string;
+    readonly fileType: TFileType;
+    readonly projection:
+        CanonicalProjection<
+            ProjectionDefinition<TProjection>
+        >;
+}
+```
+
+Parser-specific configuration can be added by a more specific application/file-definition type and extracted by the registry entry's `parserConfig(definition)` function.
+
+For example, the integration tests add CSV separator/quote configuration to their CSV file definitions without making generic `CursorFileDefinition` understand CSV.
+
+## Infrastructure
+
+The generic infrastructure is:
+
+```ts
+interface FileCursorInfrastructure<
+    TFile,
+    TFileType extends string
+> {
+    readonly parsers: ParserRegistry<TFileType>;
+    readonly bufferSize: number;
+    readonly fillFileBuffer: FillFileBuffer<TFile>;
+}
+```
+
+The physical `TFile` abstraction is application-defined. The cursor requires only the ability to fill a supplied pooled `Uint8Array` from the current source position.
+
+## Parser registry
+
+Each file type resolves to a registration containing:
+
+```ts
+parser
+parserConfig(definition)
+createRecordState()
+```
+
+The registration is where a file-definition shape is connected to the parser's configuration and per-record state.
+
+After runtime file-type lookup, generic cursor orchestration deliberately erases the concrete parser-family generics at that narrow registry boundary.
+
+## Source setup
+
+Before any data row is yielded, `cursor-file`:
+
+1. looks up the parser;
+2. obtains parser configuration;
+3. creates byte-buffer and physical-record pools;
+4. calls `openRecordCursor()`;
+5. receives opened-source details and optional preparation context;
+6. calls `createProjection()` and compiles every projection path once.
+
+Configuration, parser preparation and projection-path compilation failures therefore happen before the normal data-row loop and **throw** for every cursor policy.
+
+This is intentional: setup failures are not recoverable row data errors.
 
 ## The normal application model
 
-Application code gets a cursor, uses the fields required for its calculation, and closes the result when finished.
-
-For example:
+Application code consumes only the values required by its calculation and closes each successful result when finished:
 
 ```ts
 for await (const row of cursor) {
     if (Array.isArray(row)) {
-        // Recoverable parser errors.
+        // Recoverable row Errors represented as string[].
         continue;
     }
 
     try {
-        console.log(
+        use(
             row.result.id(),
             row.result.name()
         );
-    }
-    finally {
+    } finally {
         row.close();
     }
 }
 ```
 
-The projection presents an ordinary application-facing interface:
-
-```ts
-interface Customer {
-    id(): number;
-    name(): string;
-    balance(): number;
-}
-```
-
-Those methods are lazy accessors.
-
-For formats such as CSV and COBOL they can eventually result in only the requested fields being interpreted.
+Projection methods are lazy accessors.
 
 ## Cursor variants
 
-The package provides several error-handling styles.
-
 ### `createFileCursor`
 
-Returns either a successful:
+Returns successful rows as:
 
 ```ts
 FileCursorResult<TProjection>
 ```
 
-or recoverable:
+and recoverable **data-row** parser errors as:
 
 ```ts
-Errors
+string[]
 ```
 
-result according to the underlying types.
+Only the `errors` array is exposed in this lowest-overhead policy.
 
-This avoids introducing an additional success-wrapper abstraction around every normal projected row.
+Setup failures throw.
 
 ### `createErrorsOrFileCursor`
 
-Exposes a uniform `ErrorsOr<FileCursorResult<TProjection>>` result shape.
+Returns each data row as:
 
-This can be convenient to callers that prefer an explicit success/error wrapper.
+```ts
+ErrorsOr<FileCursorResult<TProjection>>
+```
+
+Recoverable row errors retain the full `Errors` object, including fields such as `reference`.
+
+Setup failures still throw.
 
 ### `createThrowingFileCursor`
 
-Returns successful projected records and converts recoverable parser errors into `ErrorsException`.
+Returns successful rows normally and converts recoverable row `Errors` into `ErrorsException`.
+
+Setup failures also throw.
 
 ### `createIgnoringFileCursor`
 
-Skips recoverable parser errors and continues processing.
+Skips recoverable row errors and continues.
 
-An optional callback may be used to observe ignored errors.
+An optional callback receives the full `Errors` object for ignored rows.
+
+Setup failures are never swallowed or passed to `onError`.
 
 ## `FileCursorResult`
 
-A successful row has a deliberately small public shape.
-
-Conceptually:
+A successful result has the small public shape:
 
 ```ts
 interface FileCursorResult<TResult> {
-    readonly result:
-        TResult;
-
-    close():
-        void;
+    readonly result: TResult;
+    close(): void;
 }
 ```
 
-`result` is the application-facing lazy projection.
+`result` is the reusable lazy application projection.
 
-`close()` ends the borrowed record lifetime.
+`close()` ends its borrowed physical-record lifetime.
+
+## Result and projection pooling
+
+Each pooled `FileCursorResult` owns one reusable projection object for its entire lifetime.
+
+The wrapper object's shape is permanent. Its `physicalRecord` slot is internally either:
+
+```text
+undefined
+    while inactive
+
+PhysicalRecordLifetime
+    while an active lease owns a record
+```
+
+On a successful row:
+
+1. the permanent projection is bound to the current parser representation and physical record;
+2. the physical record is stored in the result wrapper;
+3. the wrapper is returned to the application.
+
+On `close()`:
+
+1. the projection binding is cleared;
+2. the wrapper's physical-record slot is reset to `undefined`;
+3. the physical record is closed;
+4. the unchanged wrapper returns to its pool.
+
+No new projection object or accessor functions are required for normal row-to-row reuse.
 
 ## Why `close()` is explicit
 
-The projection may still depend on the physical source record.
+A lazy projection may still depend on the current physical source bytes.
 
-For a future CSV implementation:
+For CSV, the current representation stores field byte ranges in `recordState`, and an accessor decodes the requested range only when called.
 
-```ts
-customer.balance()
-```
+The physical record therefore has to remain live until application code has finished using the projection.
 
-might ultimately read the required byte range from a borrowed CSV representation backed by that physical record.
-
-The physical source therefore has to remain alive for as long as the application is allowed to invoke projection accessors.
-
-`close()` performs the ownership release.
-
-Conceptually:
-
-```text
-application finishes row
-    ↓
-clear projection binding
-    ↓
-release physical record
-    ↓
-return reusable result wrapper to pool
-```
-
-## Result and projection reuse
-
-`FileCursorResult` wrappers are pooled.
-
-Each reusable result can own a reusable projection object created by the associated `ProjectionFactory`.
-
-On a successful parsed row the existing projection is bound to:
-
-- the current parser representation;
-- the current physical record.
-
-When the result closes, that binding is cleared.
-
-The result wrapper and projection object can then be reused for another source record.
-
-Normal row-to-row processing therefore does not require construction of a new projection object and a new set of accessor functions.
-
-## Borrowed result lifetime
-
-Both the `FileCursorResult` and its projection are borrowed.
-
-Once:
-
-```ts
-row.close();
-```
-
-has been called, neither should be used again.
-
-Because these objects are pooled, a retained stale reference may later refer to an object which has been rebound to another source record.
-
-The framework does not attempt to make such stale references safe.
-
-The application contract is explicit:
-
-```text
-before close
-    valid
-
-after close
-    invalid
-```
-
-This avoids adding ownership/generation checking to every hot-path accessor.
+Once `close()` has been called, both the result wrapper and projection reference are invalid for application use. The same pooled objects may later represent another row.
 
 ## Several live results
 
-The architecture permits more than one result to remain live.
+Several successful results may remain live simultaneously.
 
-If application code retains several open rows, the pools can grow to provide independent result wrappers, projections, physical records and buffer ownership for those simultaneously live rows.
+The pools grow to support the maximum simultaneous demand for:
 
-Memory usage is therefore primarily related to:
+- result wrappers;
+- projection objects;
+- physical-record holders;
+- physical buffers.
 
-```text
-maximum simultaneously live results
-```
-
-rather than:
-
-```text
-number of records processed
-```
-
-Bounded memory depends on callers eventually closing results they no longer need.
+Memory is therefore tied to live work rather than total input size, assuming callers eventually close results.
 
 ## Error lifetime
 
-When the parser returns recoverable `Errors`, there is no successful projected application result which needs to retain that physical record.
+If `Parser.parse()` returns recoverable row `Errors`, no successful projection lease is created. `cursor-file` closes that physical record immediately and applies the selected error policy.
 
-The cursor adapter therefore applies the selected error policy and releases the physical-record lifetime appropriately.
+If successful parser output cannot be bound into a result, the physical record is also closed before the exception propagates.
 
-Likewise, if projection binding fails, the physical record must not be left owned by an application result which was never successfully created.
+Lazy projection accessor errors happen later while a successful result is open. They propagate as exceptions enriched by the projection layer with the currently bound source, record number, logical path and parser-specific physical rendering.
 
 ## Example
 
@@ -237,22 +269,34 @@ const customerProjection =
         id: {
             type: "integer"
         },
-
         name: {
             type: "string"
         }
     });
 
-const factory =
-    createProjection(
-        jsonParser,
-        customerProjection
-    );
+const customerFile = {
+    filename: "customers.jsonl",
+    fileType: "json" as const,
+    projection: customerProjection
+};
+
+const infrastructure = {
+    parsers: {
+        json: {
+            parser: jsonParser,
+            parserConfig: () => undefined,
+            createRecordState: () => undefined
+        }
+    },
+    bufferSize: 64 * 1024,
+    fillFileBuffer
+};
 
 const cursor =
     createFileCursor(
-        recordCursor,
-        factory
+        customerFile,
+        file,
+        infrastructure
     );
 
 for await (const value of cursor) {
@@ -266,8 +310,7 @@ for await (const value of cursor) {
             value.result.id(),
             value.result.name()
         );
-    }
-    finally {
+    } finally {
         value.close();
     }
 }
@@ -275,9 +318,7 @@ for await (const value of cursor) {
 
 ## Performance intent
 
-This layer exists to provide a simple application API without requiring an eagerly materialised application object for every row.
-
-The intended steady-state success path reuses:
+The steady-state success path reuses:
 
 ```text
 FileCursorResult wrapper
@@ -288,12 +329,6 @@ physical byte buffers
 parser record state
 ```
 
-The projection then asks the parser only for values actually requested by the calculation.
+File-scoped setup performs parser preparation and projection-path compilation once before the row hot path.
 
-For JSONL, the JSON object has already been eagerly created, so the benefit is principally API and lifetime validation.
-
-For CSV and COBOL, the same interface is intended to sit over genuinely byte-backed late materialisation.
-
-The broader performance hypothesis is that reducing the amount of memory created, populated and moved through the CPU will increase throughput once parser/application computation becomes comparatively cheap.
-
-That hypothesis is deliberately subject to benchmarking.
+For JSON, `JSON.parse()` has already eagerly materialised the source record. For CSV, the same application API sits over a genuinely byte-backed representation and materialises only requested field values.

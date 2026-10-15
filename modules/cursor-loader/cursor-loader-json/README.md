@@ -1,187 +1,149 @@
 # @cobol-ts/cursor-loader-json
 
-JSON Lines parser and JSON projection support for the byte-backed cursor architecture.
+JSON Lines parsing and JSON projection support for the byte-backed cursor architecture.
 
-JSONL is deliberately the first/reference parser for the current cursor infrastructure.
+JSONL is the simple/reference parser for the framework. It exercises parser-controlled record recognition, `readMore()`, cross-buffer records, recoverable parser errors, lazy projection errors and borrowed lifetimes.
 
-It exercises:
+It is not the strongest demonstration of late materialisation because `JSON.parse()` necessarily creates the complete JavaScript JSON value for each record.
 
-- pooled physical source buffers;
-- pooled physical records;
-- parser-controlled record recognition;
-- `readMore()`;
-- records crossing physical buffer boundaries;
-- parser results and recoverable errors;
-- cursor lifetime;
-- reusable projections;
-- physical diagnostic rendering.
+## Public API
 
-It is **not** intended to demonstrate the ultimate performance potential of the architecture.
+The package exports `jsonParser` together with JSON value/parser types.
 
-`JSON.parse()` necessarily materialises the complete JSON representation of each record.
+Its parser type is conceptually:
+
+```ts
+Parser<
+    JsonValue,
+    undefined,
+    undefined,
+    undefined,
+    readonly string[]
+>
+```
+
+JSON currently has:
+
+- no parser configuration;
+- no preparation record;
+- no opened-source details;
+- no per-record parser state;
+- no separate compiled path representation beyond the canonical string path.
 
 ## Position in the pipeline
 
 ```text
-pooled PhysicalRecordContent
+pooled parser physical record
     ↓
-@cobol-ts/cursor-loader-json
-    ├── finds the JSONL record boundary
+jsonParser.parse()
+    ├── finds LF itself
     ├── calls readMore() when necessary
     ├── establishes endByte
-    ├── decodes the record as UTF-8
+    ├── decodes [startByte,endByte) as UTF-8
     └── JSON.parse()
     ↓
-JavaScript JSON representation
+JsonValue
     ↓
 JSON ProjectionSupport
     ↓
-lazy application projection
-```
-
-## Public API
-
-The package exports the stateless parser singleton:
-
-```ts
-jsonParser
-```
-
-The JSON parser currently requires no meaningful:
-
-- parser configuration;
-- preparation details;
-- per-record parser state.
-
-Conceptually its parser types are:
-
-```ts
-Parser<
-    unknown,
-    undefined,
-    undefined,
-    undefined
->
+application projection
 ```
 
 ## JSONL record recognition
 
-The parser owns JSONL line recognition.
+The parser starts at `record.startByte` and scans for LF (`0x0a`).
 
-The record cursor provides:
-
-```ts
-record.startByte
-```
-
-The JSON parser starts scanning from there.
-
-It looks for LF:
-
-```text
-0x0a
-```
-
-If no line terminator is currently available and EOF has not yet been established, the parser requests more source data:
+If all currently valid bytes have been scanned and EOF is not known, it calls:
 
 ```ts
 await record.readMore();
 ```
 
-It then continues scanning inside the same parser invocation.
+and continues from its existing local scanning state.
 
-When it finds LF, it establishes:
-
-```ts
-record.endByte =
-    scanByte + 1;
-```
-
-so `endByte` remains exclusive.
-
-The LF is included in the physical JSON record. JSON permits trailing whitespace, so the resulting text can be passed directly to `JSON.parse()`.
-
-At EOF, a final JSON record without a newline can use:
+When LF is found:
 
 ```ts
-record.endByte =
-    record.lastValidByte;
+record.endByte = scanByte + 1;
 ```
+
+The LF remains in the physical JSON record. JSON accepts it as trailing whitespace.
+
+CRLF also works naturally because the CR remains JSON whitespace immediately before the LF.
+
+The final record may terminate at EOF without LF, in which case `endByte` becomes `lastValidByte`.
 
 ## Records spanning physical buffers
 
-A JSON record may:
+A JSON record may begin partway through a buffer, span many buffers and end in a buffer which also contains later records.
 
-- begin partway through one physical buffer;
-- span several buffers;
-- end partway through its final buffer;
-- share that final buffer with the next JSON record.
-
-The parser operates on logical byte offsets across:
-
-```ts
-record.buffers
-```
-
-It does not assume one source record corresponds to one `Uint8Array`.
-
-The authoritative limit of source data is:
-
-```ts
-record.lastValidByte
-```
-
-not the capacity of the final physical buffer.
+The parser works in logical byte offsets across `record.buffers` and treats `record.lastValidByte`, not final-buffer capacity, as the authoritative end of source data.
 
 ## Decoding and parsing
 
-After recognizing the physical boundary, the parser decodes exactly:
+After physical recognition, the parser decodes exactly:
 
 ```text
-[startByte, endByte)
+[startByte,endByte)
 ```
 
-as UTF-8 and calls:
+as UTF-8 and calls `JSON.parse()`.
 
-```ts
-JSON.parse(text)
+The successful representation may be any valid JSON value:
+
+```text
+object
+array
+string
+number
+boolean
+null
 ```
 
-This intentionally creates:
+## Recoverable parse errors
 
-- a JavaScript string;
-- the complete JSON value/object graph.
+Malformed JSON is returned as recoverable `Errors` after the parser has established the record boundary.
 
-That behaviour is acceptable because JSONL currently exists primarily to validate the architecture around the parser.
+The diagnostic includes:
 
-It is not the format expected to show the strongest late-materialisation benefit.
+- source name;
+- one-based physical record number;
+- the `JSON.parse()` reason;
+- the physical JSON record text.
+
+For example:
+
+```text
+customers.jsonl: record 3: JSON parse error ...
+{...bad json...}
+```
+
+`cursor-file` subsequently applies the selected row-error policy and closes the failed physical record.
 
 ## Projection support
 
-`jsonParser` also implements the generic typed projection operations.
-
-A tokenised path such as:
+JSON projection compilation is deliberately trivial:
 
 ```ts
-[
-    "address",
-    "postcode"
-]
+compileProjectionPath(
+    undefined,
+    undefined,
+    path
+)
 ```
 
-is interpreted as successive property accesses through the JSON representation.
+returns the same tokenised string path.
 
-Array positions are represented as path segments too:
+Runtime projection operations traverse object/array properties through that path.
+
+Examples:
 
 ```ts
-[
-    "customers",
-    "0",
-    "age"
-]
+["address","postcode"]
+["customers","0","age"]
 ```
 
-Current typed reads include:
+The current scalar operations are:
 
 ```text
 integer
@@ -190,117 +152,85 @@ character
 string
 ```
 
-For example, an integer projection requires a JavaScript number satisfying `Number.isInteger()`.
+An integer requires a JavaScript number satisfying `Number.isInteger()`. A character requires a string of length one.
 
-The projection package does not itself understand JSON object traversal.
+## JSON projection diagnostics
 
-That logic remains parser-specific.
+JSON-specific runtime failures report the precise reason but deliberately do not duplicate generic provenance.
 
-## Parse errors
+Examples include:
 
-Malformed JSON is represented as a recoverable parser error.
+```text
+JSON value is string "forty two"; expected an integer.
+```
 
-Before attempting `JSON.parse()`, the parser has already recognized the complete physical JSONL record and established `record.endByte`.
+```text
+JSON property "postcode" does not exist in object at address. Available properties: "line1", "line2".
+```
 
-If `JSON.parse()` fails, the parser returns an `Errors` value whose diagnostic message includes useful context such as:
+```text
+JSON path cannot continue at customer: value is null; cannot resolve property "name".
+```
 
-- source name;
-- physical record number;
-- the parse error;
-- the physical JSON record text.
+The generic projection layer then adds the **current data record**:
 
-The diagnostic information is formatted into the returned error rather than exposed as a separate structured JSON-error object.
+```text
+source: record N: projection logical.path: JSON-specific reason
+physical JSON record
+```
 
-The physical record remains part of the cursor result until the consuming layer applies its normal error/lifetime policy.
+This separation keeps parser-specific reasoning in the JSON package while provenance and physical rendering remain generic.
 
-## Typical wiring
+## Normal wiring through `cursor-file`
+
+The normal application path is to register `jsonParser` and let `@cobol-ts/cursor-file` create physical resources, open the record cursor and compile the projection:
 
 ```ts
-const physical =
-    createDefaultPhysicalRecordConfig<
-        undefined,
-        MyFile
-    >({
-        source:
-            "customers.jsonl",
+const definition = {
+    filename: "customers.jsonl",
+    fileType: "json" as const,
+    projection: customerProjection
+};
 
-        file,
-
-        bufferSize:
-            64 * 1024,
-
-        fillFileBuffer,
-
-        createRecordState:
-            () => undefined
-    });
-
-const records =
-    createRecordCursor(
-        jsonParser,
-        undefined,
-        physical
-    );
-
-const projection =
-    createProjection(
-        jsonParser,
-        customerProjection
-    );
+const infrastructure = {
+    parsers: {
+        json: {
+            parser: jsonParser,
+            parserConfig: () => undefined,
+            createRecordState: () => undefined
+        }
+    },
+    bufferSize: 64 * 1024,
+    fillFileBuffer
+};
 
 const cursor =
     createFileCursor(
-        records,
-        projection
+        definition,
+        file,
+        infrastructure
     );
 ```
 
-Application code then uses the same cursor/projection model intended for future CSV and COBOL parsers.
+Lower-level code may still use `createDefaultPhysicalRecordConfig()` and `createRecordCursor()` directly when opened-source details are already known.
 
-## Why JSONL first?
+## Why JSON remains useful
 
-JSONL is intentionally a poor showcase for the final optimisation thesis.
+JSON eagerly pays for a UTF-8 string and complete JavaScript value graph, so it cannot realise the full memory-traffic optimisation thesis.
 
-A conventional JSON parser wants to do:
-
-```text
-source bytes
-    ↓
-UTF-8 string
-    ↓
-complete JavaScript object graph
-```
-
-That means it necessarily pays for representation of fields the application may never access.
-
-Its value here is architectural.
-
-It allows the surrounding machinery to be developed and exercised before the more important parsers are implemented:
+Its value is as a simple parser which exercises the surrounding architecture:
 
 ```text
 buffer pooling
 record pooling
-record recognition
+parser-controlled recognition
 readMore()
 cross-buffer handling
-cursor ownership
-projection binding
-error handling
-lifetime management
+record ownership
+projection binding and reuse
+rich diagnostics
+row-error policies
+borrowed lifetime
 ```
 
-Once those mechanisms work, CSV and COBOL can concentrate on parser-specific interpretation.
-
-For those formats the intended path is much closer to:
-
-```text
-source bytes
-    ↓
-small reusable structural description
-    ↓
-only requested values interpreted
-    ↓
-application processing
-```
-
-That is where the larger throughput experiment becomes interesting.
+CSV then demonstrates the more important byte-backed path where field structure is retained and only projected values are decoded.

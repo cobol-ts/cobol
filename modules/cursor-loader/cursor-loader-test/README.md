@@ -1,195 +1,127 @@
 # @cobol-ts/cursor-loader-test
 
-Cross-package integration tests and shared fixtures for the `@cobol-ts` cursor-loader packages.
+Cross-package integration tests and shared application projections for the current `@cobol-ts` cursor-loader stack.
 
-This package verifies that independently tested modules agree on their shared contracts.
+This package verifies that the separately tested packages agree on their shared contracts when used through the normal `@cobol-ts/cursor-file` orchestration path.
 
-## Integration strategy
+## Current integration path
 
-The package contains integration tests at two levels.
-
-### Focused loader/parser integration
-
-Some CSV tests deliberately supply a simple test record reader.
-
-Their path is:
+Both JSONL and CSV integration suites use the same architecture:
 
 ```text
-fixture file
+fixture bytes
     ↓
-Node file/line reader used by the test
+test file object with current offset
     ↓
-PhysicalRecordContent
-    ↓
-@cobol-ts/cursor-loader
-    ↓
-CSV preparation
-    ↓
-CSV parsing
-    ↓
-projection
-    ↓
-application values
-```
-
-These tests focus on:
-
-- parser preparation;
-- CSV syntax;
-- header mapping;
-- projection;
-- recoverable parser errors;
-- continuation after malformed data;
-- application-level values.
-
-They intentionally do not retest the production physical byte and line-framing layers.
-
-### Full cursor-stack integration
-
-At least one integration test exercises the complete production path:
-
-```text
-fixture file
-    ↓
-real filesystem
+FileCursorInfrastructure.fillFileBuffer
     ↓
 @cobol-ts/cursor-file
     ↓
-pooled byte buffers
-    ↓
 @cobol-ts/cursor-record
+    ├── pooled byte buffers
+    ├── pooled physical-record holders
+    └── optional parser preparation
     ↓
-line record reader
+format parser
+    ├── recognizes its own physical records
+    └── establishes endByte
     ↓
-newline boundary detector
+source-scoped projection compilation
     ↓
-PhysicalRecordContent
-    ↓
-@cobol-ts/cursor-loader
-    ↓
-CSV preparation
-    ↓
-CSV parser
-    ↓
-projection
+pooled FileCursorResult + reusable projection
     ↓
 application values
 ```
 
-This verifies the contracts between:
+The fixture helpers load test files from disk into a simple in-memory `bytes + offset` file abstraction. `fillFileBuffer` then feeds those bytes into the production pooled cursor machinery in deliberately small chunks.
+
+The tests therefore exercise the production cursor-record, parser, projection and cursor-file contracts while keeping OS-specific streaming I/O outside the scope of this package.
+
+There is no generic line reader or newline boundary detector in the current architecture.
+
+## Shared application projections
+
+`src/cursor.loader.fixture.ts` defines the shared application-facing projections used by both JSON and CSV integration tests.
+
+The full `Customer` projection includes nested JSON paths such as address fields.
+
+CSV uses its own canonical projection with flat header names for those same application accessors.
+
+A `MinimalCustomer` projection deliberately accesses only a subset of fields, demonstrating that the same physical source can support different application views.
+
+## JSONL integration coverage
+
+The JSONL suite covers:
+
+- complete customer records and nested projection paths;
+- a second projection over the same source records;
+- malformed JSON returned as recoverable row `Errors` with continuation;
+- pooled projection rebinding;
+- lazy projection errors reporting the **current** record after rebinding;
+- `createErrorsOrFileCursor` row-error behaviour;
+- `createThrowingFileCursor` row-error behaviour;
+- `createIgnoringFileCursor` callbacks and continuation.
+
+The lazy-error test verifies the fully composed diagnostic, including:
 
 ```text
-physical byte I/O
-record framing
-record offsets
-buffer lifetime
-parser access
-projection timing
+filename
+record number
+logical projection path
+JSON-specific type/value reason
+physical JSON record
 ```
 
-rather than testing those layers only in isolation.
+## CSV integration coverage
 
-## CSV fixtures
+The CSV suite covers:
 
-The package contains fixtures covering:
-
-- ordinary comma-separated data;
+- ordinary comma-separated customers;
 - quoted fields containing commas;
+- doubled quotes;
 - empty fields;
-- escaped quotes;
-- pipe-separated data;
-- malformed unterminated quoted fields;
-- rows with additional physical columns;
-- malformed headers.
+- quoted numeric values;
+- a different projection over the same CSV records;
+- source-specific separator configuration through the file definition/registry;
+- physical row-width mismatch returned as recoverable row `Errors` and continuation;
+- missing projected header columns as setup failures with header provenance and available columns;
+- malformed quoted input proving that a newline inside a quoted field is not treated as a record boundary.
 
-Shared customer configuration is exported from:
+The tests use small physical buffer sizes specifically to force parser behaviour across pooled buffer boundaries.
 
-```text
-src/cursor.loader.fixture.ts
-```
+## What belongs in package-level tests
 
-It includes:
+The parser packages themselves own detailed unit coverage for grammar and conversion rules.
 
-- a full `Customer` projection;
-- a `MinimalCustomer` projection which deliberately accesses only a subset of CSV fields.
+For example:
 
-The minimal projection exercises the low-allocation CSV design.
+- JSON parser tests cover LF/CRLF recognition, EOF, carried records, multi-buffer JSON, UTF-8 boundaries and parse diagnostics;
+- JSON projection tests cover path traversal and precise type/path reasons;
+- CSV walker tests cover quoting, embedded newlines, malformed syntax, EOF and arbitrary physical-buffer boundaries;
+- CSV projection tests cover compiled header indexes, field decoding and scalar conversion;
+- `cursor-record` tests cover carry, pools, offsets and physical lifetimes;
+- `cursor-file` tests cover result pooling and row-error policies.
 
-The CSV parser must scan the complete physical record to validate syntax and locate field boundaries, but unused string fields do not need to be decoded or materialised.
-
-## Fixed-width integration tests
-
-Fixed-width tests create real temporary files so that record size and physical contents can be controlled exactly.
-
-These tests exercise:
-
-```text
-temporary file
-    ↓
-real filesystem
-    ↓
-@cobol-ts/cursor-file
-    ↓
-pooled byte buffers
-    ↓
-@cobol-ts/cursor-record
-    ↓
-fixed-width record reader
-    ↓
-fixed-width boundary detector
-    ↓
-@cobol-ts/cursor-loader
-    ↓
-parser
-    ↓
-projection
-```
-
-Cases deliberately include record boundaries which do not align with physical read-buffer boundaries.
-
-Examples include:
-
-```text
-record size 5
-buffer size 4
-```
-
-and records which span several or even one-byte physical buffers.
-
-The tests also cover incomplete final fixed-width records.
+This package focuses on the contracts between those modules rather than duplicating every local rule.
 
 ## Why this package exists
 
-Unit tests in the individual packages verify local invariants.
+The integration suites are intended to catch cross-package mistakes such as:
 
-This package verifies that those packages agree with one another.
+- stale parser/projection signatures;
+- incorrect source setup ordering;
+- preparation-context loss;
+- physical record numbering;
+- carried-buffer mistakes;
+- projection rebinding/lifetime errors;
+- wrong row-error policy behaviour;
+- setup failures accidentally being treated as recoverable rows;
+- diagnostics referring to the wrong physical record.
 
-In particular it is intended to catch errors in contracts such as:
+## Type checking and Jest
 
-- physical buffer lifetime;
-- logical record offsets;
-- framing exclusion;
-- line/header numbering;
-- parser preparation;
-- projection timing;
-- recoverable error propagation;
-- configuration typing;
-- physical-reader dispatch.
+Jest exercises runtime behaviour, but it is not sufficient to validate evolving TypeScript contracts.
 
-## Type checking
+CI/CD should compile the package separately with `tsc` as well as running Jest. This catches stale call signatures even when the test transpilation path would otherwise execute them as JavaScript.
 
-Jest is used for runtime behaviour.
-
-TypeScript is checked separately before the Jest suite runs:
-
-```text
-tsc --noEmit
-    ↓
-Jest
-```
-
-This is intentional.
-
-A runtime test runner must not be relied upon to detect stale TypeScript contracts such as a removed property name.
-
-The package test command should therefore run both type checking and Jest.
+The current package `test` script itself runs Jest only; TypeScript compilation is therefore a separate build/CI responsibility rather than something performed by that npm script.

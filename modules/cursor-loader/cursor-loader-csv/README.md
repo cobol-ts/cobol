@@ -1,148 +1,242 @@
 # @cobol-ts/cursor-loader-csv
 
-Low-allocation CSV parsing for the `@cobol-ts` cursor stack.
+Byte-backed CSV parsing and lazy CSV projection support for the `@cobol-ts` cursor stack.
 
-The CSV parser consumes one already-framed `PhysicalRecordContent` at a time.
+The CSV parser owns both CSV record recognition and structural field scanning. There is no lower generic line-framing pass.
 
-Physical file I/O and line detection are handled by lower layers.
+That is essential because CR/LF inside a quoted field is data rather than a record boundary.
 
-## Position in the cursor stack
+## Position in the stack
 
 ```text
 @cobol-ts/cursor-file
     ↓
 @cobol-ts/cursor-record
     ↓
-PhysicalRecordContent
+parser physical record starting at startByte
     ↓
-@cobol-ts/cursor-loader-csv
+csvParser.prepare() / csvParser.parse()
+    ├── walkCsvRecord()
+    ├── calls readMore() as required
+    ├── recognizes the CSV row boundary
+    ├── establishes endByte
+    └── records field byte ranges
     ↓
-CsvRow
+CsvRepresentation
+    = PhysicalRecordData<CsvRecordState>
     ↓
-projection
+compiled numeric projection paths
+    ↓
+lazy field decoding
 ```
 
-`@cobol-ts/cursor-loader` orchestrates parser preparation, parsing, validation and projection.
+## Parser configuration
 
-## Parser registration
+The current CSV parser configuration contains only physical CSV syntax bytes:
 
 ```ts
-import {
-    csvParser
-} from "@cobol-ts/cursor-loader-csv";
+interface CsvParserConfig {
+    readonly separator?: number;
+    readonly quote?: number;
+}
+```
 
+Values are byte numbers, for example:
 
-const parsers = {
-    csv:
-        csvParser
+```ts
+const config: CsvParserConfig = {
+    separator: ",".charCodeAt(0),
+    quote: "\"".charCodeAt(0)
 };
 ```
 
-## CSV configuration
+The defaults are comma and double quote.
 
-```ts
-const customerCsvDetails = {
-    separator:
-        ",",
+Separator and quote must be distinct byte values in the range 0..255.
 
-    quote:
-        "\"",
-
-    columns: [
-        {
-            name:
-                "id",
-
-            type:
-                "integer"
-        },
-        {
-            name:
-                "name",
-
-            type:
-                "string"
-        },
-        {
-            name:
-                "balance",
-
-            type:
-                "float"
-        }
-    ]
-} satisfies CsvParserDetails;
-```
+Logical projected columns are defined by the application projection, not by `CsvParserConfig`.
 
 ## Header preparation
 
 CSV uses parser preparation.
 
-The first physical record is treated as the CSV header.
+The first CSV record is treated as the header. `prepare()` performs the same CSV grammatical scan used for data rows and may call `readMore()` if the header spans physical buffers.
 
-Preparation:
-
-- parses the header;
-- records the actual physical column names;
-- validates configured required columns;
-- maps logical configured columns to physical positions;
-- prepares reusable state for later records.
-
-The header is not projected as application data.
-
-## CsvRow
-
-Data records produce a `CsvRow`.
-
-Configured logical columns are accessed by index:
+Preparation produces:
 
 ```ts
-const customer = {
-    id:
-        row.integer(
-            0
-        ),
-
-    name:
-        row.string(
-            1
-        ),
-
-    balance:
-        row.float(
-            2
-        )
-};
+interface CsvParserDetails {
+    readonly columns: ReadonlyMap<string,number>;
+    readonly columnCount: number;
+    readonly separator: number;
+    readonly quote: number;
+}
 ```
+
+`columns` maps the decoded header names to physical column indexes.
+
+The bootstrap header record is not projected as application data. `openRecordCursor()` retains only its `{source,recordNumber}` context after closing it.
+
+That context is later available while projection paths are compiled.
+
+## Projection-path compilation
+
+CSV canonical projection paths must contain exactly one logical header name:
+
+```ts
+["age"]
+```
+
+During source setup:
+
+```ts
+compileProjectionPath(
+    details,
+    preparationContext,
+    ["age"]
+)
+```
+
+looks up the prepared header once and returns the numeric column index.
+
+Runtime access therefore does not perform a map lookup by column name.
+
+Missing or malformed projected paths are setup/configuration failures and throw before data-row processing. Diagnostics include:
+
+- header source;
+- header record number;
+- requested column/path;
+- available columns.
+
+For example:
+
+```text
+customers.csv: record 1: CSV column "postcode" does not exist. Available columns: "id", "name", "age".
+```
+
+## Data-row representation
+
+CSV does not construct a `CsvRow` object containing materialised values.
+
+Its representation is the physical record data itself:
+
+```ts
+type CsvRepresentation =
+    PhysicalRecordData<CsvRecordState>;
+```
+
+with reusable structural state:
+
+```ts
+interface CsvRecordState {
+    starts: Int32Array;
+    ends: Int32Array;
+    fieldCount: number;
+}
+```
+
+The parser scans each row and records field start/end byte offsets. The structural arrays remain attached to the pooled physical-record holder and are reused.
+
+## Parser-controlled record recognition
+
+`walkCsvRecord()` starts at `record.startByte` and recognizes LF, CRLF or EOF as the end of the current CSV row **only when outside a quoted field**.
+
+It also handles:
+
+- separators;
+- quoted fields;
+- doubled quotes;
+- CR/LF inside quoted fields;
+- records spanning arbitrary physical buffer boundaries;
+- carried records starting partway through an already-read buffer;
+- final records without a line terminator.
+
+When more bytes are required, it calls `record.readMore()` and continues in the same invocation.
+
+This fuses boundary recognition and structural parsing into one scan.
 
 ## Lazy value materialisation
 
-The parser scans the complete CSV record because it must validate syntax and identify field boundaries.
+The parser must scan the complete CSV row to validate grammar and identify field boundaries.
 
-It does not need to decode every field into a JavaScript string.
+It does **not** decode every field to a JavaScript string.
 
-Unused string fields therefore need not be materialised.
+A runtime projection accessor already has a compiled numeric column index, so it reads the corresponding start/end byte range and decodes only that field when requested.
 
-## Physical records
+Quoted string materialisation collapses doubled quote characters as part of decoding.
 
-The CSV parser does not locate physical line endings.
+Unused fields therefore avoid string allocation and value parsing.
 
-It receives one complete physical record from `@cobol-ts/cursor-record`.
+## Row width errors
 
-A CSV record may span multiple physical byte buffers without requiring the complete record to be copied first.
+After a data row is scanned, `csvParser.parse()` compares its physical field count with the prepared header count.
+
+A mismatch is returned as recoverable `Errors`:
+
+```text
+CSV record has 9 columns; header has 8
+```
+
+`cursor-file` then applies the selected row-error policy and can continue with following records.
+
+## CSV syntax errors
+
+Structural syntax failures discovered by the walker throw an exception with physical provenance and logical byte position.
+
+Examples include:
+
+- quote inside an unquoted field;
+- unexpected data after a closing quote;
+- malformed CRLF after a closing quote;
+- an unterminated quoted field at EOF.
+
+A representative diagnostic is:
+
+```text
+customers.csv: record 3: CSV column 4: unexpected byte after closing quote at logical byte 80
+```
+
+Because quoted newlines are not treated as boundaries, an error may legitimately be reported later than the first physical newline encountered inside the malformed quoted field.
+
+## Runtime projection errors
+
+Typed accessors validate the requested value lazily.
+
+Examples:
+
+```text
+CSV value is empty; expected an integer
+CSV value "twelve" is not an integer
+CSV value "AB" is not a character
+```
+
+The CSV support returns only the parser-specific reason. The generic projection layer adds:
+
+- source;
+- current data-record number;
+- logical projection path;
+- the rendered physical CSV record.
 
 ## Lifetime
 
-`CsvRow` may refer to cursor-owned physical buffers and parser-owned reusable state.
+`CsvRepresentation` borrows both the physical byte buffers and the `CsvRecordState` attached to that physical record.
 
-It should therefore be considered ephemeral.
+A successful application projection is therefore valid only until its `FileCursorResult` is closed.
 
-Projection must complete before the underlying physical record cursor advances.
+`cursor-file` keeps the physical record alive for that lease and clears the projection before releasing it.
 
-`@cobol-ts/cursor-loader` guarantees this ordering.
+## Performance intent
 
-## Errors
+CSV is the first parser in this stack which exercises the late-materialisation design directly:
 
-CSV syntax and schema problems are returned as recoverable `Errors`.
+```text
+scan row once
+    ↓
+retain field byte ranges in reusable arrays
+    ↓
+compile logical column names once per opened source
+    ↓
+decode only fields the application asks for
+```
 
-`@cobol-ts/cursor-loader` subsequently adds filename and physical line information.
+This reduces per-row materialisation without duplicating a generic line-framing scan.
