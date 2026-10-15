@@ -7,9 +7,10 @@ import {
 } from "@cobol-ts/errors";
 
 import {
-    AnyParser,
+    type AnyParser,
     type CanonicalProjection,
-    type FillFileBuffer, ParserRegistry,
+    type FillFileBuffer,
+    type ParserRegistry,
     type ProjectionDefinition,
     type ProjectionFactory,
     type RecordCursor,
@@ -31,8 +32,6 @@ import {
     type FileCursorResult,
     type FileCursorResultPool
 } from "./cursor.file.result";
-
-
 
 
 type ProjectRecordResult<TProjection> =
@@ -261,6 +260,11 @@ export async function* createIgnoringFileCursor<
 /**
  * Resolve the parser from the file definition and prepare all file-scoped
  * state before entering the row-processing hot path.
+ *
+ * Projection paths are compiled against that prepared state. Where preparation
+ * used a physical record, its thin PhysicalRecordContext is supplied so parser-
+ * specific projection compilation can report source and record provenance
+ * without retaining the preparation record itself.
  */
 async function openFileCursor<
     TProjection,
@@ -319,6 +323,7 @@ async function openFileCursor<
             createProjection(
                 parser,
                 opened.details,
+                opened.preparationContext,
                 definition.projection
             );
 

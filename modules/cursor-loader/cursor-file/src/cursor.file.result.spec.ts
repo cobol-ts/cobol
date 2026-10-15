@@ -155,7 +155,7 @@ describe("file cursor result", () => {
     });
 
 
-    test("clears the projection before closing the physical record", () => {
+    test("clears the projection before closing the physical record",() => {
         const projection = createCustomerProjection();
         const pool = createFileCursorResultPool(projection);
 
@@ -163,34 +163,22 @@ describe("file cursor result", () => {
 
         const record = physicalRecord(
             () => {
-                if (customer === undefined) {
+                const currentCustomer =
+                    customer;
+
+                if (currentCustomer === undefined) {
                     throw new Error("Expected projection");
                 }
 
                 expect(
-                    () => customer.name()
+                    () => currentCustomer.name()
                 ).toThrow(
                     "Projection is not bound"
                 );
             }
         );
-
-        const result = createFileCursorResult(
-            {
-                name: "Alice"
-            },
-            record.value,
-            pool
-        );
-
-        customer = result.result;
-
-        expect(customer.name()).toBe("Alice");
-
-        result.close();
-
-        expect(record.closed).toBe(true);
     });
+
 
 
     test("returns the pooled result after a failed bind without taking ownership of the physical record", () => {

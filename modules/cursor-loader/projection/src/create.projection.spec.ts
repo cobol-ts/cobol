@@ -1,4 +1,6 @@
-import {type ProjectionPhysicalRecord} from "@cobol-ts/cursor-loader-types";
+import {
+    type ProjectionPhysicalRecord
+} from "@cobol-ts/cursor-loader-types";
 
 import {
     createProjection,
@@ -16,6 +18,7 @@ describe("createProjection",() => {
     test("creates a projection over a flat representation",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             undefined,
             customerProjection
         );
@@ -48,6 +51,7 @@ describe("createProjection",() => {
         const factory = createProjection(
             fakeParser,
             undefined,
+            undefined,
             orderSummaryProjection
         );
 
@@ -78,6 +82,7 @@ describe("createProjection",() => {
     test("created projections are independent",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             undefined,
             customerProjection
         );
@@ -122,6 +127,7 @@ describe("createProjection",() => {
     test("rebinds the same projection after clear",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             undefined,
             customerProjection
         );
@@ -168,6 +174,7 @@ describe("createProjection",() => {
         const factory = createProjection(
             fakeParser,
             undefined,
+            undefined,
             customerProjection
         );
 
@@ -184,6 +191,7 @@ describe("createProjection",() => {
     test("rejects access after clear",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             undefined,
             customerProjection
         );
@@ -217,6 +225,7 @@ describe("createProjection",() => {
     test("rejects binding an already bound projection",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             undefined,
             customerProjection
         );
@@ -259,6 +268,7 @@ describe("createProjection",() => {
         const factory = createProjection(
             fakeParser,
             undefined,
+            undefined,
             customerProjection
         );
 
@@ -290,6 +300,7 @@ describe("createProjection",() => {
         const factory = createProjection(
             fakeParser,
             undefined,
+            undefined,
             customerProjection
         );
 
@@ -320,6 +331,7 @@ describe("createProjection",() => {
     test("accessors are lazy",() => {
         const factory = createProjection(
             fakeParser,
+            undefined,
             undefined,
             customerProjection
         );
@@ -405,7 +417,9 @@ describe("defineProjection types",() => {
 });
 
 
-function physicalRecord(recordNumber = 1): ProjectionPhysicalRecord {
+function physicalRecord(
+    recordNumber = 1
+): ProjectionPhysicalRecord {
     return {
         buffers: [
             new Uint8Array([

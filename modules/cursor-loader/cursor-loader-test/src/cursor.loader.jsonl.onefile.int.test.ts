@@ -269,7 +269,7 @@ describe("JSONL file cursor integration",() => {
             error.message
         ).toBe(
             `${lazyErrorCustomerJsonlDefinition.filename}: record 2: projection age: `
-            + `JSON projection value at age is not integer\n`
+            + `JSON value is string "forty two"; expected an integer.\n`
             + `{"id":1002,"name":"Broken Age","age":"forty two","address":{"line1":"8 Station Road","line2":"","postcode":"LS1 4AB"},"status":"I","balance":98.75}\n`
         );
 

@@ -607,7 +607,6 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-record@workspace:modules/cursor-loader/cursor-record"
   dependencies:
-    "@cobol-ts/cursor-file": "npm:0.0.1"
     "@cobol-ts/cursor-loader-types": "npm:0.0.1"
     "@cobol-ts/ref_counted_pool": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"

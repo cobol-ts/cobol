@@ -490,12 +490,10 @@ export type CanonicalProjection<
 export type ProjectionFieldValue<
     TField extends ProjectionFieldAuthoring
 > =
-    TField["type"] extends
-        | "integer"
+    TField["type"] extends | "integer"
         | "float"
         ? number
-        : TField["type"] extends
-            | "character"
+        : TField["type"] extends | "character"
             | "string"
             ? string
             : never;
@@ -665,95 +663,50 @@ export interface ProjectionFactory<
     ): void;
 }
 
-
-/*
- * Projection support.
+/**
+ * Parser-specific support for the parser-independent projection layer.
  *
- * ProjectionSupport exposes the parser-specific operations required by the
- * parser-independent projection layer.
- *
- * Canonical projection definitions use readonly string[] paths because that is
- * the portable authoring form. Those paths are not required to be the runtime
- * representation used by a parser.
- *
- * compileProjectionPath() converts one canonical string path into the parser's
- * TProjectionPath for this opened source. This happens outside the record hot
- * path.
+ * Projection definitions use readonly string[] paths as their portable authoring
+ * form. compileProjectionPath() converts that canonical path once, when the
+ * source is opened, into the parser's efficient runtime TProjectionPath.
  *
  * Examples:
  *
  *     JSONL
- *         readonly string[] -> readonly string[]
- *         Property traversal can retain the canonical path unchanged.
+ *         ["address", "postcode"] -> ["address", "postcode"]
  *
  *     CSV
  *         ["AGE"] -> 3
- *         Header lookup happens once; row access uses the numeric column index.
  *
  *     COBOL
- *         ["CUSTOMER", "PERSON", "AGE"] -> parser-specific compiled layout
- *         The eventual runtime path may contain offsets, usage, scale or other
- *         information needed to interpret the physical bytes efficiently.
+ *         ["CUSTOMER", "PERSON", "AGE"] -> compiled layout information
  *
- * representation is the successfully parsed representation for the current
- * physical record.
+ * details contains parser-specific information prepared for the opened source.
  *
- * details is the opened-source information prepared once for the physical
- * source and shared by parsing and projection.
+ * context identifies the physical record from which those details were prepared,
+ * when there is one. It exists for diagnostics during projection-path compilation
+ * without exposing the complete physical record or its lifetime/I/O capabilities.
+ * Parsers which require no preparation record may receive undefined.
  *
- * ProjectionSupport is deliberately part of Parser rather than an independently
- * configurable strategy. Each parser owns both compilation of projection paths
- * and execution of those compiled paths against its representation.
+ * representation is the successfully parsed representation of the current data
+ * record. Runtime accessors operate on the already-compiled path; failures there
+ * are enriched by the projection layer using the bound physical-record context.
+ *
+ * ProjectionSupport is part of Parser because the parser owns both compilation
+ * of logical projection paths and interpretation of its runtime representation.
  */
-export interface ProjectionSupport<
-    TRepresentation,
-    TParserDetails,
-    TProjectionPath
-> {
+export interface ProjectionSupport<TRepresentation,TParserDetails,TProjectionPath> {
     compileProjectionPath(
-        details:
-        TParserDetails,
-        path:
-        readonly string[]
+        details: TParserDetails,
+        context: PhysicalRecordContext | undefined,
+        path: readonly string[]
     ): TProjectionPath;
 
-    integer(
-        representation:
-        TRepresentation,
-        details:
-        TParserDetails,
-        path:
-        TProjectionPath
-    ): number;
-
-    float(
-        representation:
-        TRepresentation,
-        details:
-        TParserDetails,
-        path:
-        TProjectionPath
-    ): number;
-
-    character(
-        representation:
-        TRepresentation,
-        details:
-        TParserDetails,
-        path:
-        TProjectionPath
-    ): string;
-
-    string(
-        representation:
-        TRepresentation,
-        details:
-        TParserDetails,
-        path:
-        TProjectionPath
-    ): string;
+    integer(representation: TRepresentation,details: TParserDetails,path: TProjectionPath): number;
+    float(representation: TRepresentation,details: TParserDetails,path: TProjectionPath): number;
+    character(representation: TRepresentation,details: TParserDetails,path: TProjectionPath): string;
+    string(representation: TRepresentation,details: TParserDetails,path: TProjectionPath): string;
 }
-
 
 /*
  * Parser.
@@ -856,7 +809,7 @@ export type Parser<
     TRecordState,
     TProjectionPath
 > =
-    ProjectionSupport<TRepresentation,TParserDetails,TProjectionPath>
+    ProjectionSupport<TRepresentation, TParserDetails, TProjectionPath>
     & PhysicalRecordDebugRenderer
     & {
 
@@ -884,8 +837,7 @@ export type Parser<
      * ProjectionSupport for subsequent data records.
      */
     readonly prepare?: (
-        firstRecord:
-        ParserPhysicalRecordContent<TRecordState>,
+        firstRecord: ParserPhysicalRecordContent<TRecordState>,
         config:
         TParserConfig
     ) => Promise<
@@ -917,8 +869,7 @@ export type Parser<
      * the corresponding PhysicalRecordContent remains open.
      */
     readonly parse: (
-        record:
-        ParserPhysicalRecordContent<TRecordState>,
+        record: ParserPhysicalRecordContent<TRecordState>,
         details:
         TParserDetails
     ) => Promise<

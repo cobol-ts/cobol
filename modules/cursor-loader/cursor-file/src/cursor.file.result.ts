@@ -5,6 +5,7 @@ import {
 
 import {
     type PhysicalRecordContent,
+    type PhysicalRecordLifetime,
     type ProjectionFactory
 } from "@cobol-ts/cursor-loader-types";
 
@@ -29,26 +30,23 @@ export interface FileCursorResult<TResult> {
 
 
 /**
- * Inactive pooled file-cursor result.
+ * Pooled file-cursor result.
  *
  * The complete JavaScript object is created once and never changes shape.
  *
- * result is also permanent. It is one reusable projection object created with
+ * result is permanent. It is one reusable projection object created with
  * ProjectionFactory.create() when this pooled entry is first constructed.
  *
- * While the pooled entry is inactive:
+ * physicalRecord is:
  *
- *     result
- *         exists but is unbound;
+ *     undefined
+ *         while the pooled entry is inactive;
  *
- *     physicalRecord
- *         is undefined.
+ *     PhysicalRecordLifetime
+ *         while the entry owns an active lease.
  *
- * Acquiring a lease binds result to the current parser representation and
- * physical record.
- *
- * Releasing the lease clears that binding and restores physicalRecord to
- * undefined.
+ * Releasing the lease clears the projection binding and restores
+ * physicalRecord to undefined.
  */
 export interface PooledFileCursorResult<
     TProjection,
@@ -71,7 +69,8 @@ export interface PooledFileCursorResult<
         TProjection;
 
     physicalRecord:
-        undefined;
+        PhysicalRecordLifetime
+        | undefined;
 
     close():
         void;
@@ -79,7 +78,7 @@ export interface PooledFileCursorResult<
 
 
 /**
- * Pool containing inactive file-cursor result objects.
+ * Pool containing file-cursor result objects.
  *
  * Each pooled entry owns one reusable projection object for its entire
  * lifetime.
@@ -94,60 +93,6 @@ export type FileCursorResultPool<
             TRepresentation
         >
     >;
-
-
-/**
- * Active typed view of the same pooled JavaScript object.
- *
- * result is the same permanent projection object held by the inactive pooled
- * entry. Only its binding has changed.
- *
- * physicalRecord is present while this lease owns the physical record.
- */
-type ActiveFileCursorResult<
-    TProjection,
-    TRepresentation,
-    TRecordState
-> =
-    Omit<
-        PooledFileCursorResult<
-            TProjection,
-            TRepresentation
-        >,
-        "physicalRecord"
-    >
-    & {
-    physicalRecord:
-        PhysicalRecordContent<
-            TRecordState
-        >;
-};
-
-
-/**
- * Lifetime-only active view used by close().
- *
- * close() does not need TRecordState. It only needs the physical lifetime
- * owned by the current lease.
- */
-type ActiveFileCursorResultLifetime<
-    TProjection,
-    TRepresentation
-> =
-    Omit<
-        PooledFileCursorResult<
-            TProjection,
-            TRepresentation
-        >,
-        "physicalRecord"
-    >
-    & {
-    readonly physicalRecord: {
-
-        close():
-            void;
-    };
-};
 
 
 /**
@@ -252,14 +197,6 @@ export function createFileCursorResult<
         resultPool.acquire();
 
 
-    const active =
-        pooled as ActiveFileCursorResult<
-            TProjection,
-            TRepresentation,
-            TRecordState
-        >;
-
-
     try {
         pooled.projection.bind(
             pooled.result,
@@ -267,11 +204,11 @@ export function createFileCursorResult<
             physicalRecord
         );
 
-        active.physicalRecord =
+        pooled.physicalRecord =
             physicalRecord;
 
 
-        return active;
+        return pooled;
     } catch (error) {
         pooled.projection.clear(
             pooled.result
@@ -309,14 +246,14 @@ function closeFileCursorResult<
     >
 ): void {
 
-    const active =
-        this as ActiveFileCursorResultLifetime<
-            TProjection,
-            TRepresentation
-        >;
-
     const physicalRecord =
-        active.physicalRecord;
+        this.physicalRecord;
+
+    if (physicalRecord === undefined) {
+        throw new Error(
+            "File cursor result is not active"
+        );
+    }
 
 
     this.projection.clear(

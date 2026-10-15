@@ -1,4 +1,7 @@
-import {type ProjectionSupport} from "@cobol-ts/cursor-loader-types";
+import {
+    type PhysicalRecordContext,
+    type ProjectionSupport
+} from "@cobol-ts/cursor-loader-types";
 
 import {
     type CsvParserDetails,
@@ -17,28 +20,34 @@ export const csvProjectionSupport = {
     float,
     character,
     string
-} satisfies ProjectionSupport<
-    CsvRepresentation,
-    CsvParserDetails,
-    CsvProjectionPath
->;
+} satisfies ProjectionSupport<CsvRepresentation,CsvParserDetails,CsvProjectionPath>;
 
 
 function compileProjectionPath(
     details: CsvParserDetails,
+    context: PhysicalRecordContext | undefined,
     path: readonly string[]
 ): CsvProjectionPath {
+    if (context === undefined) {
+        throw new Error("CSV projection compilation requires preparation record context");
+    }
+
     if (path.length !== 1) {
         throw new Error(
-            "CSV projection path must contain exactly one column name"
+            `${context.source}: record ${context.recordNumber}: `
+            + `CSV projection path ${JSON.stringify(path)} must contain exactly one column name. `
+            + `Available columns: ${formatColumns(details)}.`
         );
     }
 
-    const column = details.columns.get(path[0]);
+    const name = path[0];
+    const column = details.columns.get(name);
 
     if (column === undefined) {
         throw new Error(
-            `CSV column ${JSON.stringify(path[0])} does not exist`
+            `${context.source}: record ${context.recordNumber}: `
+            + `CSV column ${JSON.stringify(name)} does not exist. `
+            + `Available columns: ${formatColumns(details)}.`
         );
     }
 
@@ -54,17 +63,13 @@ function integer(
     const value = fieldString(representation,details,column);
 
     if (value.length === 0) {
-        throw new Error(
-            "CSV value is empty; expected an integer"
-        );
+        throw new Error("CSV value is empty; expected an integer");
     }
 
     const result = Number(value);
 
     if (!Number.isInteger(result)) {
-        throw new Error(
-            `CSV value ${JSON.stringify(value)} is not an integer`
-        );
+        throw new Error(`CSV value ${JSON.stringify(value)} is not an integer`);
     }
 
     return result;
@@ -79,17 +84,13 @@ function float(
     const value = fieldString(representation,details,column);
 
     if (value.length === 0) {
-        throw new Error(
-            "CSV value is empty; expected a number"
-        );
+        throw new Error("CSV value is empty; expected a number");
     }
 
     const result = Number(value);
 
     if (!Number.isFinite(result)) {
-        throw new Error(
-            `CSV value ${JSON.stringify(value)} is not a number`
-        );
+        throw new Error(`CSV value ${JSON.stringify(value)} is not a number`);
     }
 
     return result;
@@ -104,9 +105,7 @@ function character(
     const value = fieldString(representation,details,column);
 
     if (value.length !== 1) {
-        throw new Error(
-            `CSV value ${JSON.stringify(value)} is not a character`
-        );
+        throw new Error(`CSV value ${JSON.stringify(value)} is not a character`);
     }
 
     return value;
@@ -136,4 +135,10 @@ function fieldString(
         true,
         details.quote
     );
+}
+
+
+function formatColumns(details: CsvParserDetails): string {
+    const columns = [...details.columns.keys()].map(column => JSON.stringify(column));
+    return columns.length === 0 ? "<none>" : columns.join(", ");
 }

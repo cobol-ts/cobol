@@ -1,8 +1,17 @@
-import {type Parser, type ParserPhysicalRecordContent, ParserRegistry} from "@cobol-ts/cursor-loader-types";
+import {
+    type Parser,
+    type ParserPhysicalRecordContent,
+    type ParserRegistry
+} from "@cobol-ts/cursor-loader-types";
 
-import {defineProjection} from "@cobol-ts/cursor-projection";
+import {
+    defineProjection
+} from "@cobol-ts/cursor-projection";
 
-import {type CursorFileDefinition, type FileCursorInfrastructure} from "./cursor.file";
+import {
+    type CursorFileDefinition,
+    type FileCursorInfrastructure
+} from "./cursor.file";
 
 
 export interface Customer {
@@ -46,7 +55,7 @@ export const customerProjection =
 
 
 export const customerFileDefinition:
-    CursorFileDefinition<Customer, "test"> = {
+    CursorFileDefinition<Customer,"test"> = {
     filename:
         "test.customer",
 
@@ -125,6 +134,7 @@ const testParser: TestParser = {
 
     compileProjectionPath(
         _details,
+        _context,
         path
     ) {
         return path;
@@ -202,7 +212,7 @@ export function createTestInfrastructure(
     parserConfig:
     (() => undefined) =
     () => undefined
-): FileCursorInfrastructure<TestFile, "test"> {
+): FileCursorInfrastructure<TestFile,"test"> {
     return {
         parsers: {
             test: {
@@ -220,7 +230,7 @@ export function createTestInfrastructure(
         BUFFER_SIZE,
 
         fillFileBuffer:
-            async (file, target) => {
+            async (file,target) => {
                 const available =
                     file.bytes.length
                     - file.offset;

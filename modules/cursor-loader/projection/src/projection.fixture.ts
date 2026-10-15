@@ -80,6 +80,7 @@ export const orderSummaryProjection = defineProjection<OrderSummary>({
 export const fakeParser = {
     compileProjectionPath(
         _details: undefined,
+        _context,
         path: readonly string[]
     ): readonly string[] {
         return path;

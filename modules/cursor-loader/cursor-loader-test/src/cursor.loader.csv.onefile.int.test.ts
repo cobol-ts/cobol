@@ -4,10 +4,6 @@ import {
 } from "@cobol-ts/cursor-file";
 
 import {
-    ErrorsException
-} from "@cobol-ts/errors";
-
-import {
     type Customer,
     type MinimalCustomer
 } from "./cursor.loader.fixture";
@@ -349,7 +345,7 @@ describe("CSV file cursor integration",() => {
     });
 
 
-    test("throws when CSV header preparation fails",async () => {
+    test("throws when a projected CSV column does not exist",async () => {
         const cursor =
             createFileCursor(
                 badHeaderCustomerCsvDefinition,
@@ -359,21 +355,19 @@ describe("CSV file cursor integration",() => {
                 createCsvInfrastructure(7)
             );
 
-        await expectErrorsException(
-            cursor.next(),
-            [
-                "CSV header is missing required columns: "
-                + "\"addressLine2\", \"postcode\", \"balance\". "
-                + "Actual header columns are: "
-                + "\"id\", \"name\", \"age\", \"addressLine1\", \"status\"."
-            ]
+        await expect(
+            cursor.next()
+        ).rejects.toEqual(
+            new Error(
+                'test.comma.bad-header.csv: record 1: '
+                + 'CSV column "addressLine2" does not exist. '
+                + 'Available columns: "id", "name", "age", "addressLine1", "status".'
+            )
         );
     });
 
 
     test("does not treat a newline inside an unterminated quoted field as a record boundary",async () => {
-        const results: Array<number | string[]> = [];
-
         const cursor =
             createFileCursor(
                 unterminatedCustomerCsvDefinition,
@@ -383,25 +377,30 @@ describe("CSV file cursor integration",() => {
                 createCsvInfrastructure(7)
             );
 
-        for await (const result of cursor) {
-            if (Array.isArray(result)) {
-                results.push(result);
-                continue;
-            }
+        const first =
+            await cursor.next();
 
-            results.push(
-                result.result.id()
-            );
-
-            result.close();
+        if (first.done === true) {
+            throw new Error("Expected first CSV record");
         }
 
-        expect(results).toEqual([
-            1001,
-            [
-                "CSV record column 5 contains an unterminated quoted field at byte 129"
-            ]
-        ]);
+        if (Array.isArray(first.value)) {
+            throw new Error(
+                `Expected projected value but got errors: ${first.value.join(", ")}`
+            );
+        }
+
+        expect(first.value.result.id()).toBe(1001);
+        first.value.close();
+
+        await expect(
+            cursor.next()
+        ).rejects.toEqual(
+            new Error(
+                "test.comma.unterminated.csv: record 3: "
+                + "CSV column 4: unexpected byte after closing quote at logical byte 80"
+            )
+        );
     });
 });
 
@@ -416,30 +415,6 @@ function projectedValue<T>(
     }
 
     return result;
-}
-
-
-async function expectErrorsException(
-    promise: Promise<unknown>,
-    expectedErrors: string[]
-): Promise<void> {
-    try {
-        await promise;
-    } catch (error) {
-        if (!(error instanceof ErrorsException)) {
-            throw error;
-        }
-
-        expect(error.errors).toEqual(
-            expectedErrors
-        );
-
-        return;
-    }
-
-    throw new Error(
-        "Expected ErrorsException"
-    );
 }
 
 

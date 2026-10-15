@@ -1,4 +1,7 @@
-import {type ProjectionSupport} from "@cobol-ts/cursor-loader-types";
+import {
+    type PhysicalRecordContext,
+    type ProjectionSupport
+} from "@cobol-ts/cursor-loader-types";
 
 
 /**
@@ -6,6 +9,13 @@ import {type ProjectionSupport} from "@cobol-ts/cursor-loader-types";
  *
  * JSON already uses tokenised string paths as its runtime projection path, so
  * compileProjectionPath() simply returns the canonical path unchanged.
+ *
+ * JSON has no source-preparation record, therefore the optional preparation
+ * context is deliberately unused.
+ *
+ * Runtime projection failures contain only the JSON-specific reason. The
+ * generic projection layer adds source, record number, logical projection path
+ * and the rendered physical record.
  */
 export const jsonProjectionSupport = {
     compileProjectionPath,
@@ -21,7 +31,10 @@ export const jsonProjectionSupport = {
             typeof value !== "number"
             || !Number.isInteger(value)
         ) {
-            throw projectionTypeError(path,"integer");
+            throw projectionTypeError(
+                value,
+                "an integer"
+            );
         }
 
         return value;
@@ -35,7 +48,10 @@ export const jsonProjectionSupport = {
         const value = jsonValue(representation,path);
 
         if (typeof value !== "number") {
-            throw projectionTypeError(path,"float");
+            throw projectionTypeError(
+                value,
+                "a number"
+            );
         }
 
         return value;
@@ -52,7 +68,10 @@ export const jsonProjectionSupport = {
             typeof value !== "string"
             || value.length !== 1
         ) {
-            throw projectionTypeError(path,"character");
+            throw projectionTypeError(
+                value,
+                "a single character"
+            );
         }
 
         return value;
@@ -66,7 +85,10 @@ export const jsonProjectionSupport = {
         const value = jsonValue(representation,path);
 
         if (typeof value !== "string") {
-            throw projectionTypeError(path,"string");
+            throw projectionTypeError(
+                value,
+                "a string"
+            );
         }
 
         return value;
@@ -80,6 +102,7 @@ export const jsonProjectionSupport = {
 
 function compileProjectionPath(
     _details: undefined,
+    _context: PhysicalRecordContext | undefined,
     path: readonly string[]
 ): readonly string[] {
     return path;
@@ -104,17 +127,23 @@ function jsonValue(
     representation: unknown,
     path: readonly string[]
 ): unknown {
-    let value = representation;
+    let value =
+        representation;
 
     for (let index = 0; index < path.length; index++) {
+        const segment =
+            path[index];
+
         if (
             value === null
             || typeof value !== "object"
         ) {
-            throw projectionPathError(path,index);
+            throw pathCannotContinueError(
+                value,
+                path,
+                index
+            );
         }
-
-        const segment = path[index];
 
         if (
             !Object.prototype.hasOwnProperty.call(
@@ -122,12 +151,17 @@ function jsonValue(
                 segment
             )
         ) {
-            throw projectionPathError(path,index);
+            throw missingPropertyError(
+                value,
+                path,
+                index
+            );
         }
 
-        value = (
-            value as Record<string,unknown>
-        )[segment];
+        value =
+            (
+                value as Record<string,unknown>
+            )[segment];
     }
 
     return value;
@@ -137,28 +171,111 @@ function jsonValue(
 /**
  * Projection failures are exceptional rather than parser Errors.
  *
- * These messages are deliberately generated only on the failure path.
+ * Source, record number, complete logical projection path and physical JSON are
+ * added by the generic projection layer. These helpers therefore describe only
+ * the JSON-specific cause of the failure.
  */
-function projectionPathError(
+function pathCannotContinueError(
+    value: unknown,
     path: readonly string[],
     failedIndex: number
 ): Error {
+    const location =
+        failedIndex === 0
+            ? "<root>"
+            : formatPath(
+                path,
+                failedIndex - 1
+            );
+
     return new Error(
-        `JSON projection path not found: ${formatPath(
-            path,
-            failedIndex
-        )}`
+        `JSON path cannot continue at ${location}: `
+        + `value is ${describeValue(value)}; `
+        + `cannot resolve property ${JSON.stringify(path[failedIndex])}.`
+    );
+}
+
+
+function missingPropertyError(
+    value: object,
+    path: readonly string[],
+    failedIndex: number
+): Error {
+    const location =
+        failedIndex === 0
+            ? "<root>"
+            : formatPath(
+                path,
+                failedIndex - 1
+            );
+
+    return new Error(
+        `JSON property ${JSON.stringify(path[failedIndex])} `
+        + `does not exist in ${jsonContainerType(value)} at ${location}. `
+        + `Available properties: ${formatProperties(value)}.`
     );
 }
 
 
 function projectionTypeError(
-    path: readonly string[],
+    value: unknown,
     expected: string
 ): Error {
     return new Error(
-        `JSON projection value at ${formatPath(path)} is not ${expected}`
+        `JSON value is ${describeValue(value)}; expected ${expected}.`
     );
+}
+
+
+function describeValue(
+    value: unknown
+): string {
+    if (value === null) {
+        return "null";
+    }
+
+    if (Array.isArray(value)) {
+        return "an array";
+    }
+
+    switch (typeof value) {
+        case "string":
+            return `string ${JSON.stringify(value)}`;
+
+        case "number":
+            return `number ${value}`;
+
+        case "boolean":
+            return `boolean ${value}`;
+
+        case "object":
+            return "an object";
+
+        default:
+            return typeof value;
+    }
+}
+
+
+function jsonContainerType(
+    value: object
+): string {
+    return Array.isArray(value)
+        ? "array"
+        : "object";
+}
+
+
+function formatProperties(
+    value: object
+): string {
+    const properties =
+        Object.keys(value)
+            .map(property => JSON.stringify(property));
+
+    return properties.length === 0
+        ? "<none>"
+        : properties.join(", ");
 }
 
 
@@ -170,7 +287,8 @@ function formatPath(
         return "<root>";
     }
 
-    let result = path[0];
+    let result =
+        path[0];
 
     for (let index = 1; index <= end; index++) {
         result += ".";

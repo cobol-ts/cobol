@@ -63,6 +63,7 @@ test("parses and projects a CSV file",async () => {
     const projection = createProjection(
         csvParser,
         prepared,
+        header,
         rowProjection
     );
 

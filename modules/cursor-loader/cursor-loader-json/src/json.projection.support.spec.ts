@@ -9,6 +9,7 @@ describe("jsonProjectionSupport",() => {
             expect(
                 jsonProjectionSupport.compileProjectionPath(
                     undefined,
+                    undefined,
                     path
                 )
             ).toBe(path);
@@ -79,7 +80,7 @@ describe("jsonProjectionSupport",() => {
 
 
         test("rejects a non-integer number",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.integer(
                     {
                         value: 12.5
@@ -88,15 +89,14 @@ describe("jsonProjectionSupport",() => {
                     [
                         "value"
                     ]
-                )
-            ).toThrow(
-                "JSON projection value at value is not integer"
+                ),
+                "JSON value is number 12.5; expected an integer."
             );
         });
 
 
         test("rejects a string containing an integer",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.integer(
                     {
                         value: "12"
@@ -105,9 +105,8 @@ describe("jsonProjectionSupport",() => {
                     [
                         "value"
                     ]
-                )
-            ).toThrow(
-                "JSON projection value at value is not integer"
+                ),
+                'JSON value is string "12"; expected an integer.'
             );
         });
     });
@@ -145,7 +144,7 @@ describe("jsonProjectionSupport",() => {
 
 
         test("rejects a numeric string",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.float(
                     {
                         value: "12.5"
@@ -154,9 +153,8 @@ describe("jsonProjectionSupport",() => {
                     [
                         "value"
                     ]
-                )
-            ).toThrow(
-                "JSON projection value at value is not float"
+                ),
+                'JSON value is string "12.5"; expected a number.'
             );
         });
     });
@@ -179,7 +177,7 @@ describe("jsonProjectionSupport",() => {
 
 
         test("rejects an empty string",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.character(
                     {
                         value: ""
@@ -188,15 +186,14 @@ describe("jsonProjectionSupport",() => {
                     [
                         "value"
                     ]
-                )
-            ).toThrow(
-                "JSON projection value at value is not character"
+                ),
+                'JSON value is string ""; expected a single character.'
             );
         });
 
 
         test("rejects a multi-character string",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.character(
                     {
                         value: "AB"
@@ -205,15 +202,14 @@ describe("jsonProjectionSupport",() => {
                     [
                         "value"
                     ]
-                )
-            ).toThrow(
-                "JSON projection value at value is not character"
+                ),
+                'JSON value is string "AB"; expected a single character.'
             );
         });
 
 
         test("rejects a non-string value",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.character(
                     {
                         value: 65
@@ -222,9 +218,8 @@ describe("jsonProjectionSupport",() => {
                     [
                         "value"
                     ]
-                )
-            ).toThrow(
-                "JSON projection value at value is not character"
+                ),
+                "JSON value is number 65; expected a single character."
             );
         });
     });
@@ -265,7 +260,7 @@ describe("jsonProjectionSupport",() => {
 
 
         test("rejects a number",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.string(
                     {
                         value: 123
@@ -274,15 +269,14 @@ describe("jsonProjectionSupport",() => {
                     [
                         "value"
                     ]
-                )
-            ).toThrow(
-                "JSON projection value at value is not string"
+                ),
+                "JSON value is number 123; expected a string."
             );
         });
 
 
         test("rejects null",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.string(
                     {
                         value: null
@@ -291,9 +285,8 @@ describe("jsonProjectionSupport",() => {
                     [
                         "value"
                     ]
-                )
-            ).toThrow(
-                "JSON projection value at value is not string"
+                ),
+                "JSON value is null; expected a string."
             );
         });
     });
@@ -378,7 +371,7 @@ describe("jsonProjectionSupport",() => {
 
 
         test("reports a missing first path segment",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.string(
                     {
                         customer: {
@@ -390,15 +383,15 @@ describe("jsonProjectionSupport",() => {
                         "missing",
                         "name"
                     ]
-                )
-            ).toThrow(
-                "JSON projection path not found: missing"
+                ),
+                'JSON property "missing" does not exist in object at <root>. '
+                + 'Available properties: "customer".'
             );
         });
 
 
         test("reports the path up to a missing nested segment",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.string(
                     {
                         customer: {
@@ -411,15 +404,15 @@ describe("jsonProjectionSupport",() => {
                         "address",
                         "postcode"
                     ]
-                )
-            ).toThrow(
-                "JSON projection path not found: customer.address.postcode"
+                ),
+                'JSON property "postcode" does not exist in object at customer.address. '
+                + "Available properties: <none>."
             );
         });
 
 
         test("fails when traversal encounters null",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.string(
                     {
                         customer: null
@@ -429,15 +422,15 @@ describe("jsonProjectionSupport",() => {
                         "customer",
                         "name"
                     ]
-                )
-            ).toThrow(
-                "JSON projection path not found: customer.name"
+                ),
+                "JSON path cannot continue at customer: "
+                + 'value is null; cannot resolve property "name".'
             );
         });
 
 
         test("fails when traversal encounters a primitive",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.string(
                     {
                         customer: "Fred"
@@ -447,9 +440,9 @@ describe("jsonProjectionSupport",() => {
                         "customer",
                         "name"
                     ]
-                )
-            ).toThrow(
-                "JSON projection path not found: customer.name"
+                ),
+                "JSON path cannot continue at customer: "
+                + 'value is string "Fred"; cannot resolve property "name".'
             );
         });
 
@@ -462,16 +455,16 @@ describe("jsonProjectionSupport",() => {
             const representation =
                 Object.create(prototype);
 
-            expect(
+            expectError(
                 () => jsonProjectionSupport.integer(
                     representation,
                     undefined,
                     [
                         "age"
                     ]
-                )
-            ).toThrow(
-                "JSON projection path not found: age"
+                ),
+                'JSON property "age" does not exist in object at <root>. '
+                + "Available properties: <none>."
             );
         });
     });
@@ -479,43 +472,58 @@ describe("jsonProjectionSupport",() => {
 
     describe("JSON primitive distinctions",() => {
         test("boolean is not accepted as an integer",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.integer(
                     true,
                     undefined,
                     []
-                )
-            ).toThrow(
-                "JSON projection value at <root> is not integer"
+                ),
+                "JSON value is boolean true; expected an integer."
             );
         });
 
 
         test("boolean is not accepted as a string",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.string(
                     false,
                     undefined,
                     []
-                )
-            ).toThrow(
-                "JSON projection value at <root> is not string"
+                ),
+                "JSON value is boolean false; expected a string."
             );
         });
 
 
         test("null cannot be traversed",() => {
-            expect(
+            expectError(
                 () => jsonProjectionSupport.string(
                     null,
                     undefined,
                     [
                         "name"
                     ]
-                )
-            ).toThrow(
-                "JSON projection path not found: name"
+                ),
+                "JSON path cannot continue at <root>: "
+                + 'value is null; cannot resolve property "name".'
             );
         });
     });
 });
+
+
+function expectError(
+    action: () => unknown,
+    message: string
+): void {
+    try {
+        action();
+    } catch (error) {
+        expect(error).toEqual(
+            new Error(message)
+        );
+        return;
+    }
+
+    throw new Error("Expected error");
+}

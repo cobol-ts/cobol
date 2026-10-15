@@ -1,20 +1,18 @@
-import {
-    ErrorsException,
-    isErrors
-} from "@cobol-ts/errors";
+import {ErrorsException,isErrors} from "@cobol-ts/errors";
 
 import {
     type Parser,
     type ParserPhysicalRecordContent,
     type ParserResult,
     type PhysicalRecordContent,
+    type PhysicalRecordContext,
     type RecordCursorResult
 } from "@cobol-ts/cursor-loader-types";
 
 import {
     type RecordCursorPhysicalRecord,
     type RecordCursorResources
-} from "@cobol-ts/cursor-record";
+} from "./physical.record";
 
 
 export interface OpenedRecordCursor<
@@ -23,6 +21,8 @@ export interface OpenedRecordCursor<
     TRecordState
 > {
     readonly details: TParserDetails;
+    readonly preparationContext?: PhysicalRecordContext;
+
     readonly recordCursor:
         AsyncGenerator<
             RecordCursorResult<TRepresentation,TRecordState>,
@@ -86,6 +86,9 @@ export function createRecordCursor<
  * the bootstrap record therefore become the start of the first data record
  * without copying or rereading.
  *
+ * The physical bootstrap record itself is released after preparation. Only its
+ * thin source/record-number context is retained for later setup diagnostics.
+ *
  * Preparation failures are configuration/setup failures and throw.
  */
 export async function openRecordCursor<
@@ -120,12 +123,14 @@ export async function openRecordCursor<
 
         return {
             details,
+
             recordCursor:
                 createRecordCursorFromState(
                     parser,
                     details,
                     state
                 ),
+
             close:
                 () => closeRecordCursorState(state)
         };
@@ -142,7 +147,7 @@ export async function openRecordCursor<
                 config
             );
 
-        /*
+        /**
          * Preparation errors terminate the source.
          *
          * Do not create a carry reference because no data-record run will
@@ -156,6 +161,15 @@ export async function openRecordCursor<
         }
 
         /*
+         * Retain only the provenance needed after the bootstrap record itself
+         * has been released.
+         */
+        const preparationContext: PhysicalRecordContext = {
+            source: record.source,
+            recordNumber: record.recordNumber
+        };
+
+        /**
          * Establish the carry before releasing the bootstrap record's own
          * references.
          */
@@ -175,6 +189,8 @@ export async function openRecordCursor<
         return {
             details:
             prepared,
+
+            preparationContext,
 
             recordCursor:
                 createRecordCursorFromState(
@@ -232,7 +248,7 @@ async function* createRecordCursorFromState<
                 physicalRecord
             };
 
-            /*
+            /**
              * Ownership transfers to the consumer before suspension.
              */
             record =
@@ -241,7 +257,7 @@ async function* createRecordCursorFromState<
             yield cursorResult;
         }
     } finally {
-        /*
+        /**
          * Only an unyielded record remains cursor-owned.
          */
         record?.close();

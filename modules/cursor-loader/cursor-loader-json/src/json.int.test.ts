@@ -45,6 +45,7 @@ test("parses and projects a JSONL file",async () => {
     const projection = createProjection(
         jsonParser,
         undefined,
+        undefined,
         rowProjection
     );
 

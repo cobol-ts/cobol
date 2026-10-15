@@ -1,4 +1,8 @@
 import {
+    type PhysicalRecordContext
+} from "@cobol-ts/cursor-loader-types";
+
+import {
     type CsvParserDetails,
     type CsvRecordState,
     type CsvRepresentation
@@ -10,6 +14,11 @@ import {csvProjectionSupport} from "./csv.projection.support";
 const ENCODER = new TextEncoder();
 const SEPARATOR = ",".charCodeAt(0);
 const QUOTE = "\"".charCodeAt(0);
+
+const CONTEXT: PhysicalRecordContext = {
+    source: "customers.csv",
+    recordNumber: 1
+};
 
 
 describe("csvProjectionSupport",() => {
@@ -23,9 +32,27 @@ describe("csvProjectionSupport",() => {
         expect(
             csvProjectionSupport.compileProjectionPath(
                 details,
+                CONTEXT,
                 ["age"]
             )
         ).toBe(2);
+    });
+
+
+    test("requires preparation record context",() => {
+        const details = csvDetails(
+            "id"
+        );
+
+        expectError(
+            () =>
+                csvProjectionSupport.compileProjectionPath(
+                    details,
+                    undefined,
+                    ["id"]
+                ),
+            "CSV projection compilation requires preparation record context"
+        );
     });
 
 
@@ -34,14 +61,14 @@ describe("csvProjectionSupport",() => {
             "id"
         );
 
-        expect(
+        expectError(
             () =>
                 csvProjectionSupport.compileProjectionPath(
                     details,
+                    CONTEXT,
                     []
-                )
-        ).toThrow(
-            "CSV projection path must contain exactly one column name"
+                ),
+            'customers.csv: record 1: CSV projection path [] must contain exactly one column name. Available columns: "id".'
         );
     });
 
@@ -51,14 +78,14 @@ describe("csvProjectionSupport",() => {
             "name"
         );
 
-        expect(
+        expectError(
             () =>
                 csvProjectionSupport.compileProjectionPath(
                     details,
+                    CONTEXT,
                     ["customer","name"]
-                )
-        ).toThrow(
-            "CSV projection path must contain exactly one column name"
+                ),
+            'customers.csv: record 1: CSV projection path ["customer","name"] must contain exactly one column name. Available columns: "name".'
         );
     });
 
@@ -69,14 +96,14 @@ describe("csvProjectionSupport",() => {
             "name"
         );
 
-        expect(
+        expectError(
             () =>
                 csvProjectionSupport.compileProjectionPath(
                     details,
+                    CONTEXT,
                     ["age"]
-                )
-        ).toThrow(
-            "CSV column \"age\" does not exist"
+                ),
+            'customers.csv: record 1: CSV column "age" does not exist. Available columns: "id", "name".'
         );
     });
 
@@ -219,15 +246,14 @@ describe("csvProjectionSupport",() => {
             "value"
         );
 
-        expect(
+        expectError(
             () =>
                 csvProjectionSupport.integer(
                     representation,
                     details,
                     0
-                )
-        ).toThrow(
-            "CSV value \"42.5\" is not an integer"
+                ),
+            'CSV value "42.5" is not an integer'
         );
     });
 
@@ -241,14 +267,13 @@ describe("csvProjectionSupport",() => {
             "value"
         );
 
-        expect(
+        expectError(
             () =>
                 csvProjectionSupport.integer(
                     representation,
                     details,
                     0
-                )
-        ).toThrow(
+                ),
             "CSV value is empty; expected an integer"
         );
     });
@@ -282,15 +307,14 @@ describe("csvProjectionSupport",() => {
             "value"
         );
 
-        expect(
+        expectError(
             () =>
                 csvProjectionSupport.float(
                     representation,
                     details,
                     0
-                )
-        ).toThrow(
-            "CSV value \"banana\" is not a number"
+                ),
+            'CSV value "banana" is not a number'
         );
     });
 
@@ -304,14 +328,13 @@ describe("csvProjectionSupport",() => {
             "value"
         );
 
-        expect(
+        expectError(
             () =>
                 csvProjectionSupport.float(
                     representation,
                     details,
                     0
-                )
-        ).toThrow(
+                ),
             "CSV value is empty; expected a number"
         );
     });
@@ -345,15 +368,14 @@ describe("csvProjectionSupport",() => {
             "status"
         );
 
-        expect(
+        expectError(
             () =>
                 csvProjectionSupport.character(
                     representation,
                     details,
                     0
-                )
-        ).toThrow(
-            "CSV value \"AB\" is not a character"
+                ),
+            'CSV value "AB" is not a character'
         );
     });
 
@@ -367,18 +389,31 @@ describe("csvProjectionSupport",() => {
             "status"
         );
 
-        expect(
+        expectError(
             () =>
                 csvProjectionSupport.character(
                     representation,
                     details,
                     0
-                )
-        ).toThrow(
-            "CSV value \"\" is not a character"
+                ),
+            'CSV value "" is not a character'
         );
     });
 });
+
+
+function expectError(action: () => unknown,message: string): void {
+    try {
+        action();
+    } catch (error) {
+        expect(error).toEqual(
+            new Error(message)
+        );
+        return;
+    }
+
+    throw new Error("Expected error");
+}
 
 
 function csvDetails(...columns: string[]): CsvParserDetails {
