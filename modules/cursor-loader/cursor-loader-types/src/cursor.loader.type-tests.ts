@@ -12,6 +12,7 @@ import {
     type ParserRepresentation,
     type ParserResult,
     type PhysicalRecordContent,
+    type PhysicalRecordContext,
     type PhysicalRecordDebugRenderer,
     type PooledPhysicalRecordContent,
     type ProjectionAuthoring,
@@ -105,6 +106,7 @@ function parserSupport<
     compileProjectionPath:
     (
         details: TParserDetails,
+        context: PhysicalRecordContext | undefined,
         path: readonly string[]
     ) => TProjectionPath
 ): ProjectionSupport<
@@ -139,7 +141,7 @@ const customerParser: Parser<
         undefined,
         CustomerProjectionPath
     >(
-        (_details,path) => path
+        (_details,_context,path) => path
     ),
 
     parse: async () => ({
@@ -162,7 +164,7 @@ const delimitedCustomerParser: Parser<
         DelimitedParserDetails,
         DelimitedProjectionPath
     >(
-        (details,path) => {
+        (details,_context,path) => {
             const column =
                 path.length === 1
                     ? details.columns.get(path[0])
@@ -442,7 +444,7 @@ const invalidCustomerParserResult: Parser<
         undefined,
         CustomerProjectionPath
     >(
-        (_details,path) => path
+        (_details,_context,path) => path
     ),
 
     // @ts-expect-error parse must return CustomerRow or Errors
@@ -465,7 +467,7 @@ const synchronousCustomerParser: Parser<
         undefined,
         CustomerProjectionPath
     >(
-        (_details,path) => path
+        (_details,_context,path) => path
     ),
 
     // @ts-expect-error parse is asynchronous
@@ -489,7 +491,7 @@ const invalidPrepareResult: Parser<
         DelimitedParserDetails,
         DelimitedProjectionPath
     >(
-        (_details,_path) => 0
+        (_details,_context,_path) => 0
     ),
 
     // @ts-expect-error prepare must return DelimitedParserDetails or Errors
@@ -518,7 +520,7 @@ const synchronousPrepare: Parser<
         DelimitedParserDetails,
         DelimitedProjectionPath
     >(
-        (_details,_path) => 0
+        (_details,_context,_path) => 0
     ),
 
     // @ts-expect-error prepare is asynchronous
@@ -1214,11 +1216,38 @@ customerProjectionFactory.bind(
  *
  * Canonical authoring paths are readonly string[]. The parser decides what
  * runtime path representation should be retained by the projection.
+ * The optional physical-record context provides source diagnostics during
+ * compilation, without exposing the record's I/O or lifetime capabilities.
  */
+
+const projectionCompilationContext: PhysicalRecordContext = {
+    source: "test-source",
+    recordNumber: 1
+};
+
+const compiledCustomerPathWithContext:
+    ParserProjectionPath<typeof customerParser> =
+    customerParser.compileProjectionPath(
+        undefined,
+        projectionCompilationContext,
+        ["name"]
+    );
+
+// @ts-expect-error projection compilation requires all three arguments
+customerParser.compileProjectionPath(undefined, ["name"]);
+
+customerParser.compileProjectionPath(
+    undefined,
+    // @ts-expect-error context must provide physical-record provenance
+    {source: "test-source"},
+    ["name"]
+);
+
 
 const compiledCustomerIdPath:
     ParserProjectionPath<typeof customerParser> =
     customerParser.compileProjectionPath(
+        undefined,
         undefined,
         [
             "id"
@@ -1230,16 +1259,18 @@ const compiledDelimitedAgePath:
     ParserProjectionPath<typeof delimitedCustomerParser> =
     delimitedCustomerParser.compileProjectionPath(
         delimitedDetails,
+        undefined,
         [
             "age"
         ]
     );
 
 
-    // @ts-expect-error compiled delimited paths are numbers
+// @ts-expect-error compiled delimited paths are numbers
 const invalidCompiledDelimitedPath:
     ParserProjectionPath<typeof delimitedCustomerParser> =
     customerParser.compileProjectionPath(
+        undefined,
         undefined,
         [
             "age"
@@ -1408,6 +1439,7 @@ void customerIdFromParser;
 void customerAgeFromParser;
 void delimitedAgeFromParser;
 void compiledCustomerIdPath;
+void compiledCustomerPathWithContext;
 void compiledDelimitedAgePath;
 void cursorParserResult;
 void cursorRecordState;

@@ -459,27 +459,9 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@cobol-ts/compile_copybook@npm:0.0.1, @cobol-ts/compile_copybook@workspace:modules/compile_copybook":
+"@cobol-ts/copybook@npm:0.0.1, @cobol-ts/copybook@workspace:modules/cursor-loader/copybook":
   version: 0.0.0-use.local
-  resolution: "@cobol-ts/compile_copybook@workspace:modules/compile_copybook"
-  dependencies:
-    "@cobol-ts/cobolcodec": "npm:0.0.1"
-    "@cobol-ts/copybook": "npm:0.0.1"
-    "@cobol-ts/copybookfiles": "npm:0.0.1"
-    "@cobol-ts/errors": "npm:0.0.1"
-    "@cobol-ts/string_utils": "npm:0.0.1"
-    "@testing-library/jest-dom": "npm:^6.1.4"
-    "@types/jest": "npm:^29.0.0"
-    "@types/node": "npm:^14.0.0"
-    jest: "npm:^29.0.0"
-    ts-jest: "npm:^29.0.0"
-    typescript: "npm:^5.2.2"
-  languageName: unknown
-  linkType: soft
-
-"@cobol-ts/copybook@npm:0.0.1, @cobol-ts/copybook@workspace:modules/copybook":
-  version: 0.0.0-use.local
-  resolution: "@cobol-ts/copybook@workspace:modules/copybook"
+  resolution: "@cobol-ts/copybook@workspace:modules/cursor-loader/copybook"
   dependencies:
     "@cobol-ts/errors": "npm:0.0.1"
     "@cobol-ts/string_utils": "npm:0.0.1"
@@ -698,7 +680,6 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@cobol-ts/integration_test@workspace:modules/integration_test"
   dependencies:
-    "@cobol-ts/compile_copybook": "npm:0.0.1"
     "@cobol-ts/copybook": "npm:0.0.1"
     "@cobol-ts/errors": "npm:0.0.1"
     "@cobol-ts/file_readers_writers": "npm:0.0.1"
@@ -759,6 +740,19 @@ __metadata:
   dependencies:
     "@cobol-ts/errors": "npm:0.0.1"
     "@cobol-ts/records": "npm:0.0.1"
+    "@testing-library/jest-dom": "npm:^6.1.4"
+    "@types/jest": "npm:^29.0.0"
+    "@types/node": "npm:^14.0.0"
+    jest: "npm:^29.0.0"
+    ts-jest: "npm:^29.0.0"
+    typescript: "npm:^5.2.2"
+  languageName: unknown
+  linkType: soft
+
+"@cobol-ts/size@workspace:modules/cursor-loader/size":
+  version: 0.0.0-use.local
+  resolution: "@cobol-ts/size@workspace:modules/cursor-loader/size"
+  dependencies:
     "@testing-library/jest-dom": "npm:^6.1.4"
     "@types/jest": "npm:^29.0.0"
     "@types/node": "npm:^14.0.0"

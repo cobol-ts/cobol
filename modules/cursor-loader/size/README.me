@@ -1,0 +1,227 @@
+# `@cobol-ts/size`
+
+Symbolic storage-size expressions for COBOL copybooks, with a recursive evaluator and a canonicalisation pass.
+
+**Design principle:** simple layouts should be cheap; complicated layouts must remain representable. Most fixed-layout expressions reduce to a number before a record is processed. Variable layouts retain just the operations needed to compute their size from the record.
+
+This module calculates **sizes in bits**. It does not parse copybooks, decode fields, or independently locate fields within physical records. Those responsibilities belong to the copybook metadata compiler and the record/projection layer.
+
+## The expression language
+
+The grammar has five forms (`size.expression.grammer.ts`):
+
+| Form | Shape | Meaning |
+| --- | --- | --- |
+| Constant | `80` | A fixed size in bits |
+| Sum | `{ kind: "sum", terms: [...] }` | Consecutive fields occupy the sum of their sizes |
+| Maximum | `{ kind: "max", terms: [...] }` | Alternative `REDEFINES` views share an extent |
+| Fixed `OCCURS` | `{ kind: "occurs", count: 3, expression: ... }` | Evaluate the child for **each** of three occurrences, then sum |
+| `OCCURS DEPENDING ON` | `{ kind: "depending-on", path: [...], expression: ... }` | Resolve the count from the record; evaluate the child for each occurrence, then sum |
+
+Both repetition forms introduce an implicit, zero-based occurrence-index binding. **Fixed `OCCURS` is not inherently multiplication.** A repeated group can contain a dependent table with a different length in each occurrence. Multiplication is valid only after establishing that the child size is invariant, notably when canonicalisation has reduced it to a constant.
+
+The child of a repetition is effectively a lambda. Its current occurrence index is available to nested count-field paths without needing named variables or JavaScript closures in the grammar.
+
+## Example: a fixed-size customer
+
+```cobol
+01 CUSTOMER-RECORD.
+   05 CUSTOMER-AGE      PIC 99.
+   05 CUSTOMER-NAME     PIC X(30).
+   05 CUSTOMER-POSTCODE PIC X(8).
+```
+
+Assuming one byte per DISPLAY character, the expression is:
+
+```typescript
+const size: StorageSizeExpression = {
+    kind: "sum",
+    terms: [16, 240, 64],
+};
+
+canonicaliseStorageSize(size); // 320 bits (40 bytes)
+```
+
+There is no need to invoke a resolver to evaluate this canonical form.
+
+## Example: nested dependent occurrences
+
+The following deliberately difficult example demonstrates the required algebra. Acceptance of nested dependencies and their physical placement depends on the COBOL dialect; this module does not itself decide whether a particular copybook is legal.
+
+```cobol
+01 BATCH-RECORD.
+   05 GROUP-COUNT PIC 9.
+   05 GROUPS OCCURS 0 TO 9 TIMES
+      DEPENDING ON GROUP-COUNT.
+      10 ITEM-COUNT PIC 9.
+      10 ITEMS OCCURS 0 TO 9 TIMES
+         DEPENDING ON ITEM-COUNT.
+         15 ITEM PIC X(10).
+```
+
+```typescript
+const size: StorageSizeExpression = {
+    kind: "sum",
+    terms: [
+        8, // GROUP-COUNT
+        {
+            kind: "depending-on",
+            path: ["BATCH-RECORD", "GROUP-COUNT"],
+            expression: {
+                kind: "sum",
+                terms: [
+                    8, // ITEM-COUNT in the current group
+                    {
+                        kind: "depending-on",
+                        path: [
+                            "BATCH-RECORD", "GROUPS", 0, "ITEM-COUNT",
+                        ],
+                        expression: 80, // ITEM PIC X(10)
+                    },
+                ],
+            },
+        },
+    ],
+};
+```
+
+The `0` in that **symbolic** count path means *the index of the nearest enclosing repetition*, not literal occurrence zero. If `GROUP-COUNT` is 3 and the three `ITEM-COUNT` values are 2, 5 and 1, evaluation gives:
+
+```text
+8 + (8 + 2 × 80) + (8 + 5 × 80) + (8 + 1 × 80)
+= 672 bits = 84 bytes
+```
+
+For a fixed outer `GROUPS OCCURS 3 TIMES`, replace the outer `depending-on` with `{ kind: "occurs", count: 3, expression: ... }` and omit the root `GROUP-COUNT` field. It still iterates all three groups separately, giving 664 bits (83 bytes) for the same inner counts.
+
+## Symbolic paths and relative bindings
+
+`DependsOnPath` is `readonly (string | number)[]`:
+
+- A **string** is a literal field name.
+- A **number** is the *relative depth* of an enclosing repetition: `0` denotes the nearest enclosing repetition, `1` the next outer repetition, and so on.
+
+For three nested dependencies, a count field belonging to the current item of the current group can be described as:
+
+```typescript
+const path: DependsOnPath = [
+    "DEEP-RECORD",
+    "GROUPS", 1, // group index: next enclosing repetition
+    "ITEMS", 0,  // item index: nearest enclosing repetition
+    "DETAIL-COUNT",
+];
+```
+
+The count path is resolved **before** the dependency's own new occurrence index is bound. Relative references allow expression fragments to be reused under equivalent enclosing binding structures; inserting a new enclosing repetition can still require adjusting free references.
+
+The evaluator expands symbolic paths to `ResolvedPath = readonly (string | number)[]`, where numbers now mean **concrete zero-based occurrence indices**. These types intentionally have the same runtime shape but different meanings. Keep the distinction explicit at their respective API boundaries.
+
+## Evaluation
+
+```typescript
+import { evaluateStorageSize } from "./storage.size.expression.evaluate";
+import type { ResolvedPath } from "./storage.size.expression.evaluate";
+
+const counts = [2, 5, 1];
+
+const resolve = (path: ResolvedPath): unknown => {
+    if (path.join("/") === "BATCH-RECORD/GROUP-COUNT") {
+        return 3;
+    }
+    if (path[0] === "BATCH-RECORD"
+        && path[1] === "GROUPS"
+        && path[3] === "ITEM-COUNT") {
+        return counts[path[2] as number];
+    }
+    throw new Error(`Unrecognised count path: ${JSON.stringify(path)}`);
+};
+
+const bits = evaluateStorageSize(size, resolve); // 672
+```
+
+Here `size` is the nested expression from the preceding example. The resolver is supplied by the caller and returns `unknown`; the evaluator checks that a resolved occurrence count is a non-negative safe integer. Missing relative bindings also cause an error. The evaluator does not enforce dialect-specific declared `OCCURS` minimum/maximum bounds; that requires metadata validation or richer compiled metadata.
+
+Each evaluation creates a private `number[]` binding stack. A repetition pushes one index, updates it for each occurrence, and restores the stack length when it returns (including if evaluation throws). No variable-name map or per-occurrence binding object is required.
+
+**Resolver contract:** the resolver must return the count for the *concrete* path it receives. In particular, navigating a variable-length physical buffer to find that count is the responsibility of the caller's compiled layout/projection machinery. The resolver should behave as a stable, side-effect-free lookup: canonicalisation may rearrange arithmetic terms and consequently change lookup order.
+
+## Canonicalisation
+
+```typescript
+import { canonicaliseStorageSize } from "./storage.size.expression.canonicalise";
+
+const canonical = canonicaliseStorageSize(size);
+```
+
+Canonicalisation is a pure, record-independent pass over an expression. It does not mutate the input. Its current rules include:
+
+- Recursively canonicalise children.
+- Flatten nested `sum` and `max` nodes.
+- Combine constants and eliminate redundant zero terms.
+- Collapse a fixed `occurs` to a number **when its canonical child is a number**.
+- Preserve any remaining repetition that may supply an index needed by nested expressions.
+- Keep `depending-on` nodes even when their child is constant: their count still comes from the record.
+
+For example:
+
+```typescript
+canonicaliseStorageSize({
+    kind: "occurs",
+    count: 3,
+    expression: { kind: "sum", terms: [8, 80] },
+}); // 264
+```
+
+An `occurs` whose child contains a dependent count path cannot generally collapse to multiplication. Nor can an `occurs` of count 1 simply be removed: removing its binding could change the meaning of relative path depths. An `occurs` of count 0 can reduce to zero because its body is never evaluated.
+
+These simplifications preserve **numeric size results** for valid inputs under the pure-resolver contract. They do not promise to preserve the sequence or number of resolver calls. The module intentionally avoids speculative algebraic rewrites of variable-dependent expressions.
+
+## API and files
+
+| File | Responsibility |
+| --- | --- |
+| `size.expression.grammer.ts` | Expression and symbolic-path types, plus the constant-size type guard |
+| `storage.size.expression.evaluate.ts` | `evaluateStorageSize(expression, resolve)` and concrete-path types |
+| `storage.size.expression.canonicalise.ts` | `canonicaliseStorageSize(expression)` |
+| `size.expression.evaluate.test.ts` | Jest evaluator tests using copybooks as fixtures in comments |
+| `storage.size.expression.canonicalise.spec.ts` | Jest canonicalisation and equivalence tests |
+
+The source filename `size.expression.grammer.ts` retains the project's current spelling, including `grammer`, so existing imports continue to work.
+
+## Boundaries and integration
+
+This module is a **size-expression engine**, not a full COBOL layout engine. Its consumers must still handle:
+
+1. **Copybook parsing and validation:** structural legality, count-field references, dialect restrictions, and declared occurrence bounds.
+2. **Elementary storage semantics:** PIC/USAGE encoding, signs, packed-decimal rounding, alignment and any required padding, expressed here as bit sizes.
+3. **Physical offsets and count lookup:** finding controlling fields in possibly variable-length byte-backed records, including the offset of preceding occurrences.
+4. **Overlay semantics:** determining the extent and placement of `REDEFINES` views according to the target dialect; `max` only provides a shared-region size operation.
+5. **Projection lifecycle:** caching calculated offsets or sizes per physical record where helpful, and invalidating those caches when pooled buffers are rebound.
+
+A reasonable integration sequence is:
+
+```text
+copybook AST
+  → dialect-aware validation and storage metadata
+  → size-expression construction
+  → canonicalisation (once per compiled layout)
+  → compiled projection / record-aware resolver
+  → evaluation only when a non-constant size is required
+```
+
+A numeric canonical expression can be used directly as a size or stride. For more complex data, the expression remains evaluable recursively; performance scales with the amount of variable structure that must actually be traversed. Further compilation and caching can be added based on measured need, without enlarging the grammar.
+
+## Testing strategy
+
+The Jest suites put each motivating COBOL copybook **before its `describe` group**, so tests document intent as well as arithmetic. They exercise constants, nested groups, fixed repetition, `REDEFINES`, two- and three-level dependencies, mixed fixed/dependent nesting, variable-index errors, zero counts, and canonicalisation equivalence over different record values.
+
+Important assertions include both:
+
+```typescript
+expect(canonicaliseStorageSize(expression)).toEqual(expectedCanonical);
+expect(evaluateStorageSize(canonical, resolve)).toBe(
+    evaluateStorageSize(expression, resolve),
+);
+```
+
+The remaining end-to-end verification is to feed the evaluator a **real byte-backed resolver**, rather than a test resolver that already knows the count-field locations. That is an integration test for physical layout and projections, not a reason to complicate the size-expression algebra prematurely.

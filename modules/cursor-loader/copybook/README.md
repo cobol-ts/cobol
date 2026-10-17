@@ -19,17 +19,22 @@ CopybookAst
       ↓
 validator
       ↓
-layout / semantic interpretation
+CopybookAst → AuthoringFileMetadata
       ↓
-generated TypeScript lenses over Uint8Array
+FileMetadata (compiled layout, sizes and byte-location strategies)
+      ↓
+compiled application projection
+      ↓
+lazy typed access to a live byte-backed physical record
 ```
 
 The important boundary is:
 
 * **parser** — what did the copybook declare?
 * **validator** — is this AST structurally and semantically valid?
-* **layout/interpreter** — what does this mean in bytes?
-* **code generator** — how do we expose those bytes to TypeScript?
+* **semantic compilation** — what storage descriptions, types and encodings follow from the declarations?
+* **layout compilation** — what sizes and reusable byte-location calculations describe the physical storage?
+* **projection compilation** — how does an application-requested path become a reusable typed accessor over a live physical record?
 
 ---
 
@@ -167,6 +172,8 @@ A copybook entry is either:
 type CopybookEntry =
     | GroupEntry
     | ElementaryEntry
+    | RenamesEntry
+    | ConstantEntry
 ```
 
 ## Names
@@ -523,6 +530,58 @@ The AST remains declarative: the parser records what COBOL declared and leaves i
 
 ---
 
+# Level 66 RENAMES
+
+A level 66 declaration names an existing contiguous range of storage rather than allocating another field. It is represented as an entry under the enclosing level 01 record. `RENAMES` declarations follow the ordinary data descriptions of that record, before an unrelated record or constant declaration. Their association with level 01 is determined by COBOL declaration order, not indentation.
+
+```cobol
+01 CUSTOMER.
+    05 FIRST-NAME PIC X(20).
+    05 LAST-NAME PIC X(20).
+    66 FULL-NAME RENAMES FIRST-NAME THRU LAST-NAME.
+```
+
+AST entry:
+
+```ts
+type RenamesEntry = {
+    kind: "renames"
+    level: 66
+    name: CopybookEntryName
+    from: string
+    through?: string
+    line: number
+}
+```
+
+`RENAMES name` is represented using `from`; `RENAMES name THRU other-name` also sets `through`. The parser preserves the referenced names. Resolving their storage extent and verifying their relationships belongs to layout analysis.
+
+---
+
+# Level 78 constants
+
+A level 78 declaration defines a named constant and occupies no record storage.
+
+```cobol
+78 MAX-ACCOUNTS VALUE 100.
+```
+
+AST entry:
+
+```ts
+type ConstantEntry = {
+    kind: "constant"
+    level: 78
+    name: CopybookEntryName
+    value: string
+    line: number
+}
+```
+
+The value is preserved as source text; its type and meaning are resolved in later analysis. The parser supports a single literal value for each level 78 declaration, rather than arbitrary constant expressions. Constants are represented as non-storage root entries.
+
+---
+
 # Level 88 conditions
 
 Level 88 entries are conditions on an elementary field.
@@ -736,7 +795,9 @@ Supported normal levels are:
 
 ```text
 01–49
+66
 77
+78
 88
 ```
 
@@ -750,17 +811,11 @@ Level 88 is handled as a condition attached to an elementary entry.
 
 ## Level 66
 
-Level 66 `RENAMES` is currently unsupported.
+Level 66 is represented as a `RenamesEntry` under the enclosing level 01 record. It names existing storage rather than creating another field.
 
-Example:
+## Level 78
 
-```cobol
-66 ALTERNATIVE RENAMES A THRU B.
-```
-
-The parser returns an explicit error.
-
-`RENAMES` can be added later if production copybooks require it.
+Level 78 is represented as a root-level `ConstantEntry` with its declared literal value. It occupies no record storage.
 
 ---
 
@@ -817,7 +872,7 @@ bad OCCURS syntax
 malformed level 88 VALUE
 unsupported level number
 unsupported COPY
-unsupported level 66
+malformed level 66 RENAMES or level 78 VALUE declarations
 ```
 
 ## Validator
@@ -842,6 +897,7 @@ invalid or empty INDEXED BY names
 elementary entry with neither PIC nor elementary-only USAGE
 elementary-only USAGE on a group
 invalid condition shape
+invalid RENAMES or constant entry shape
 FILLER condition name
 empty condition value array
 ```
@@ -850,7 +906,7 @@ Dependent semantic errors are suppressed when their inputs are already invalid.
 
 For example, if an OCCURS maximum is itself invalid, validation reports that error rather than also reporting that the minimum exceeds the invalid maximum.
 
-The validator recursively checks group children.
+The validator recursively checks group children, including level 66 aliases, and validates non-storage declarations such as level 78 constants.
 
 ---
 
@@ -907,6 +963,8 @@ Adding, removing or reordering fields or errors should fail the relevant tests.
 * groups and elementary fields;
 * levels 01–49;
 * level 77;
+* level 66 `RENAMES`;
+* level 78 constants (single literal values);
 * level 88;
 * `FILLER`;
 * `PIC` / `PICTURE`;
@@ -932,7 +990,7 @@ Adding, removing or reordering fields or errors should fail the relevant tests.
 ## Explicitly unsupported or incomplete
 
 * `COPY`;
-* level 66 `RENAMES`;
+* general level 78 constant expressions beyond a single literal;
 * COBOL syntax not yet encountered in the production corpus.
 
 The policy is to fail explicitly on unsupported syntax and add it when real copybooks require it.

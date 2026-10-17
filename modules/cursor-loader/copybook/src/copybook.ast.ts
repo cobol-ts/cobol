@@ -5,7 +5,9 @@ export type CopybookAst = {
 
 export type CopybookEntry =
     | GroupEntry
-    | ElementaryEntry;
+    | ElementaryEntry
+    | RenamesEntry
+    | ConstantEntry;
 
 export type CopybookEntryName =
     | {
@@ -32,6 +34,25 @@ export type ElementaryEntry = {
     picture?: string;
     clauses: CopybookClause[];
     conditions: ConditionEntry[];
+    line: number;
+};
+
+/** Level 66: an alias for a contiguous range; occupies no additional storage. */
+export type RenamesEntry = {
+    kind: "renames";
+    level: 66;
+    name: CopybookEntryName;
+    from: string;
+    through?: string;
+    line: number;
+};
+
+/** Level 78: a compile-time constant; occupies no record storage. */
+export type ConstantEntry = {
+    kind: "constant";
+    level: 78;
+    name: CopybookEntryName;
+    value: string;
     line: number;
 };
 

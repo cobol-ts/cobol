@@ -64,6 +64,56 @@ const validate = (
     )(ast);
 
 
+describe("level 66 and 78 validation", () => {
+    const named = (name: string) => ({kind: "named" as const, name});
+    const renames = (overrides: Record<string, unknown> = {}) => ({
+        kind: "renames" as const, level: 66 as const, name: named("ALIAS"),
+        from: "A", through: "B", line: 2, ...overrides,
+    });
+    const constant = (overrides: Record<string, unknown> = {}) => ({
+        kind: "constant" as const, level: 78 as const, name: named("LIMIT"),
+        value: "100", line: 1, ...overrides,
+    });
+
+    test("accepts RENAMES as a direct member of a level 01 record", () => {
+        expect(validate(astWith(group({children: [renames()]} as GroupEntry)))).toEqual([]);
+    });
+    test("rejects standalone RENAMES", () => {
+        expect(validate(astWith(renames()))).toEqual([
+            "copybook.entries[0] RENAMES must be directly within a level 01 record at source line 2",
+        ]);
+    });
+    test("rejects RENAMES nested below another group", () => {
+        expect(validate(astWith(group({children: [group({level: 5, children: [renames()]})]})))).toEqual([
+            "copybook.entries[0].children[0].children[0] RENAMES must be directly within a level 01 record at source line 2",
+        ]);
+    });
+    test("checks source line for RENAMES and constants", () => {
+        expect(validate(astWith(renames({line: 0}), constant({line: -2})))).toEqual([
+            "copybook.entries[0] RENAMES must be directly within a level 01 record",
+            "copybook.entries[0].line must be a positive integer but was 0",
+            "copybook.entries[1].line must be a positive integer but was -2",
+        ]);
+    });
+    test("checks RENAMES endpoint names", () => {
+        expect(validate(astWith(group({children: [renames({from: " ", through: ""})]})))).toEqual([
+            "copybook.entries[0].children[0].from must not be empty at source line 2",
+            "copybook.entries[0].children[0].through must not be empty at source line 2"
+        ]);
+    });
+    test("checks constants and special entry names", () => {
+        expect(validate(astWith(constant({value: " "}), constant({name: {kind: "filler"}})))).toEqual([
+            "copybook.entries[0].value must not be empty at source line 1",
+            "copybook.entries[1] constant must have a name at source line 1"
+        ]);
+    });
+    test("rejects FILLER as a RENAMES name", () => {
+        expect(validate(astWith(group({children: [renames({name: {kind: "filler"}})]})))).toEqual([
+            "copybook.entries[0].children[0] renames must have a name at source line 2"
+        ]);
+    });
+});
+
 describe("validateCopybook", () => {
 
     describe("valid copybooks", () => {
@@ -837,7 +887,7 @@ describe("validateCopybook", () => {
             expect(
                 validate(ast),
             ).toEqual([
-                "copybook.entries[0] has illegal type banana. Legal values are: elementary, group at source line 1",
+                "copybook.entries[0] has illegal type banana. Legal values are: elementary, group, renames, constant at source line 1"
             ]);
         });
 

@@ -111,7 +111,7 @@ Missing or malformed projected paths are setup/configuration failures and throw 
 For example:
 
 ```text
-customers.csv: record 1: CSV column "postcode" does not exist. Available columns: "id", "name", "age".
+customers.csv: record 1: CSV column "postcode" does not exist. Variable columns: "id", "name", "age".
 ```
 
 ## Data-row representation

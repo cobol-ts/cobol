@@ -1195,20 +1195,13 @@ describe("parseCopybook", () => {
         });
 
 
-        test("rejects level 66", () => {
-            const source =
-                "66 ALTERNATIVE RENAMES A THRU B.";
-
-            expectParseErrors(
-                source,
-                [
-                    {
-                        message:
-                            "Level 66 RENAMES entries are not supported",
-                        line: 1,
-                    },
-                ],
-            );
+        test("parses level 66 RENAMES", () => {
+            const ast = parse("66 ALTERNATIVE RENAMES A THRU B.");
+            expect(ast.entries).toMatchObject([{
+                kind: "renames", level: 66,
+                name: {kind: "named", name: "ALTERNATIVE"},
+                from: "A", through: "B", line: 1,
+            }]);
         });
 
 
@@ -1446,11 +1439,6 @@ describe("parseCopybook", () => {
                         message:
                             "Invalid OCCURS count 'BANANA'",
                         line: 2,
-                    },
-                    {
-                        message:
-                            "Level 66 RENAMES entries are not supported",
-                        line: 3,
                     },
                     {
                         message:
@@ -1995,7 +1983,7 @@ describe("level numbers", () => {
         "65",
         "67",
         "76",
-        "78",
+
         "99",
     ])(
         "rejects unsupported level %s",
@@ -2040,22 +2028,11 @@ describe("level numbers", () => {
     );
 
 
-    test("still gives level 66 its specific unsupported error", () => {
-        const source =
-            "66 ALTERNATIVE RENAMES A THRU B.";
-
-        expectParseErrors(
-            source,
-            [
-                {
-                    message:
-                        "Level 66 RENAMES entries are not supported",
-                    line: 1,
-                },
-            ],
-        );
+    test("rejects a level 78 declaration without VALUE", () => {
+        expectParseErrors("78 BAD PIC X.", [
+            {message: "Level 78 requires VALUE", line: 1},
+        ]);
     });
-
 
     test("rejects a standalone level 88 condition", () => {
         const source =
@@ -2075,7 +2052,47 @@ describe("level numbers", () => {
 
 });
 
+describe("level 78 constants", () => {
 
+    test("parses a level 78 constant", () => {
+        const ast = parse(
+            "78 MAX-ACCOUNTS VALUE 100."
+        );
+
+        expect(ast.entries).toEqual([
+            {
+                kind: "constant",
+                level: 78,
+                name: named("MAX-ACCOUNTS"),
+                value: "100",
+                line: 1,
+            },
+        ]);
+    });
+
+    test("requires a VALUE clause", () => {
+        const source = "78 BAD PIC X.";
+
+        expectParseErrors(source, [
+            {
+                message: "Level 78 requires VALUE",
+                line: 1,
+            },
+        ]);
+    });
+
+    test("rejects a missing constant value", () => {
+        const source = "78 BAD VALUE.";
+
+        expectParseErrors(source, [
+            {
+                message: "Level 78 requires exactly one constant value",
+                line: 1,
+            },
+        ]);
+    });
+
+});
 describe("pictureless elementary usages", () => {
 
     test.each([
@@ -2564,4 +2581,31 @@ describe("level 88 condition values", () => {
         );
     });
 
+});
+
+describe("non-storage declarations", () => {
+    test("level 66 RENAMES aliases a single name or range under the record", () => {
+        const ast = parse(`01 CUSTOMER.
+ 05 FIRST-NAME PIC X(10).
+ 05 LAST-NAME PIC X(10).
+ 66 FULL-NAME RENAMES FIRST-NAME THRU LAST-NAME.`);
+        const root = ast.entries[0];
+        expect(root.kind).toBe("group");
+        if (root.kind !== "group") throw new Error("expected group");
+        expect(root.children[2]).toMatchObject({kind: "renames", level: 66,
+            from: "FIRST-NAME", through: "LAST-NAME"});
+    });
+
+    test("level 78 constants are non-storage roots", () => {
+        const ast = parse(`78 MAX-ACCOUNTS VALUE 100.
+01 CUSTOMER.
+ 05 NAME PIC X(10).`);
+        expect(ast.entries[0]).toMatchObject({kind: "constant", level: 78, value: "100"});
+        expect(ast.entries[1].kind).toBe("group");
+    });
+
+    test("malformed RENAMES and VALUE declarations are rejected", () => {
+        expect(parseErrors("66 BAD RENAMES A THRU.").join("\n")).toContain("RENAMES expects");
+        expect(parseErrors("78 BAD VALUE.").join("\n")).toContain("exactly one constant value");
+    });
 });

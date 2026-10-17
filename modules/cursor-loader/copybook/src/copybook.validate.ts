@@ -20,6 +20,8 @@ import {
     CopybookEntryName,
     ElementaryEntry,
     GroupEntry,
+    RenamesEntry,
+    ConstantEntry,
     OccursClause,
     RedefinesClause,
     SignClause,
@@ -157,7 +159,7 @@ type PicturelessElementaryUsage =
 
 
 const hasPicturelessElementaryUsage = (
-    entry: Pick<CopybookEntry, "clauses">,
+    entry: Pick<GroupEntry | ElementaryEntry, "clauses">,
 ): boolean => {
     if (!Array.isArray(entry.clauses))
         return false;
@@ -878,6 +880,27 @@ const groupEntryValidator:
     };
 
 
+const renamesEntryValidator: Validator<RenamesEntry, CopybookSource> =
+    (ctx, options) => entry => copybookErrors(options, entry?.line,
+        mustBeObjectWithFields<RenamesEntry, CopybookSource>({
+            kind: mustBeValue("renames"),
+            level: mustBeValue(66),
+            name: copybookEntryNameValidator,
+            from: mustBeString,
+            through: mustBeStringIfPresent,
+            line: mustBeNumber,
+        })(ctx, options)(entry));
+
+const constantEntryValidator: Validator<ConstantEntry, CopybookSource> =
+    (ctx, options) => entry => copybookErrors(options, entry?.line,
+        mustBeObjectWithFields<ConstantEntry, CopybookSource>({
+            kind: mustBeValue("constant"),
+            level: mustBeValue(78),
+            name: copybookEntryNameValidator,
+            value: mustBeString,
+            line: mustBeNumber,
+        })(ctx, options)(entry));
+
 const elementaryEntryValidator:
     Validator<ElementaryEntry, CopybookSource> =
     (ctx, options) => entry =>
@@ -942,6 +965,12 @@ copybookEntryValidator =
                 options,
             )(entry as GroupEntry);
 
+        if (kind === "renames")
+            return renamesEntryValidator(ctx, options)(entry as RenamesEntry);
+
+        if (kind === "constant")
+            return constantEntryValidator(ctx, options)(entry as ConstantEntry);
+
         if (kind === "elementary")
             return elementaryEntryValidator(
                 ctx,
@@ -952,7 +981,7 @@ copybookEntryValidator =
             copybookError(
                 options,
                 line,
-                `${ctx} has illegal type ${String(kind)}. Legal values are: elementary, group`,
+                `${ctx} has illegal type ${String(kind)}. Legal values are: elementary, group, renames, constant`,
             ),
         ];
     };
@@ -972,6 +1001,29 @@ const validateEntrySemantics:
             return [];
 
         const result: string[] = [];
+
+        if (entry.kind === "renames" || entry.kind === "constant") {
+            result.push(...validateSourceLine(ctx, options)(entry));
+
+            if (entry.name?.kind === "filler" ||
+                (entry.name?.kind === "named" && entry.name.name.trim() === ""))
+                result.push(copybookError(options, entry.line,
+                    `${ctx} ${entry.kind} must have a name`));
+
+            if (entry.kind === "renames") {
+                if (typeof entry.from === "string" && entry.from.trim() === "")
+                    result.push(copybookError(options, entry.line,
+                        `${ctx}.from must not be empty`));
+                if (typeof entry.through === "string" && entry.through.trim() === "")
+                    result.push(copybookError(options, entry.line,
+                        `${ctx}.through must not be empty`));
+            }
+            else if (typeof entry.value === "string" && entry.value.trim() === "")
+                result.push(copybookError(options, entry.line,
+                    `${ctx}.value must not be empty`));
+
+            return result;
+        }
 
         result.push(
             ...validateLevel(
@@ -1021,13 +1073,17 @@ const validateEntrySemantics:
 
             if (Array.isArray(entry.children))
                 result.push(
-                    ...entry.children.flatMap(
-                        (child, index) =>
-                            validateEntrySemantics(
-                                `${ctx}.children[${index}]`,
-                                options,
-                            )(child),
-                    ),
+                    ...entry.children.flatMap((child, index) => {
+                        const childCtx = `${ctx}.children[${index}]`;
+                        const placementErrors = child?.kind === "renames" && entry.level !== 1
+                            ? [copybookError(options, child.line,
+                                `${childCtx} RENAMES must be directly within a level 01 record`)]
+                            : [];
+                        return [
+                            ...placementErrors,
+                            ...validateEntrySemantics(childCtx, options)(child),
+                        ];
+                    }),
                 );
         }
 
@@ -1096,13 +1152,16 @@ const validateCopybookSemantics:
         )
             return [];
 
-        return ast.entries.flatMap(
-            (entry, index) =>
-                validateEntrySemantics(
-                    `${ctx}.entries[${index}]`,
-                    options,
-                )(entry),
-        );
+        return ast.entries.flatMap((entry, index) => {
+            const entryCtx = `${ctx}.entries[${index}]`;
+            return [
+                ...(entry?.kind === "renames"
+                    ? [copybookError(options, entry.line,
+                        `${entryCtx} RENAMES must be directly within a level 01 record`)]
+                    : []),
+                ...validateEntrySemantics(entryCtx, options)(entry),
+            ];
+        });
     };
 
 

@@ -2,7 +2,7 @@ import {
     type Parser,
     type ParserConfig,
     type ParserRecordState
-} from "@cobol-ts/cursor-loader-types";
+} from "./cursor.loader.types";
 
 
 export type AnyParser =

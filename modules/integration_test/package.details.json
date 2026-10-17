@@ -4,7 +4,6 @@
   "description": "Integration tests for the @cobol-ts project",
   "links": [
     "@cobol-ts/copybook",
-    "@cobol-ts/compile_copybook",
     "@cobol-ts/file_readers_writers",
     "@cobol-ts/errors",
     "@cobol-ts/string_utils"

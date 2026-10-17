@@ -13,6 +13,8 @@ import {
     CopybookEntryName,
     CopybookClause,
     GroupEntry,
+    RenamesEntry,
+    ConstantEntry,
     ElementaryEntry,
     OccursClause,
     UsageClause,
@@ -62,6 +64,7 @@ type ParsedEntry = {
     picture?: string;
     clauses: CopybookClause[];
     conditionValues?: ConditionValue[];
+    renames?: {from: string; through?: string};
     line: number;
 };
 
@@ -84,6 +87,35 @@ type ParsedClauses = {
     clauses: CopybookClause[];
 };
 
+
+/*
+ * Non-storage declaration forms
+ */
+const parseRenames = (
+    tokens: Token[], line: number, lines: string[],
+): ErrorsOr<{from: string; through?: string}> => {
+    if (tokens[0]?.text.toUpperCase() !== "RENAMES")
+        return errors(diagnostic(lines, line, "Level 66 requires RENAMES"));
+    const from = tokens[1]?.text;
+    if (!from || ["THRU", "THROUGH"].includes(from.toUpperCase()))
+        return errors(diagnostic(lines, line, "RENAMES requires a starting data name"));
+    if (tokens.length === 2)
+        return value({from});
+    if (tokens.length === 4 && ["THRU", "THROUGH"].includes(tokens[2].text.toUpperCase()))
+        return value({from, through: tokens[3].text});
+    return errors(diagnostic(lines, line, "RENAMES expects name or name THRU name"));
+};
+
+const parseConstant = (
+    tokens: Token[], line: number, lines: string[],
+): ErrorsOr<string> => {
+    if (tokens[0]?.text.toUpperCase() !== "VALUE")
+        return errors(diagnostic(lines, line, "Level 78 requires VALUE"));
+    const index = tokens[1]?.text.toUpperCase() === "IS" ? 2 : 1;
+    if (tokens.length !== index + 1)
+        return errors(diagnostic(lines, line, "Level 78 requires exactly one constant value"));
+    return value(tokens[index].text);
+};
 
 /*
  * Clause parsing
@@ -296,6 +328,29 @@ const parseStatement = (
                     ),
                 );
 
+            if (declaration.level === 66)
+                return mapErrorsOr(
+                    parseRenames(declaration.clauseTokens, declaration.line, sourceLines),
+                    renames => ({
+                        line: declaration.line,
+                        level: 66,
+                        name: declaration.name,
+                        clauses: [],
+                        renames,
+                    } as ParsedEntry),
+                );
+
+            if (declaration.level === 78)
+                return mapErrorsOr(
+                    parseConstant(declaration.clauseTokens, declaration.line, sourceLines),
+                    constant => ({
+                        line: declaration.line,
+                        level: 78,
+                        name: declaration.name,
+                        clauses: [{kind: "value", value: constant}],
+                    } as ParsedEntry),
+                );
+
             return declaration.level === 88
                 ? mapErrorsOr(
                     parseConditionValues(
@@ -377,15 +432,6 @@ const parseDeclaration = (
             ),
         );
 
-    if (level === 66)
-        return errors(
-            diagnostic(
-                sourceLines,
-                first.line,
-                "Level 66 RENAMES entries are not supported",
-            ),
-        );
-
     const nameToken = tokens[1];
 
     if (!nameToken)
@@ -415,6 +461,7 @@ const isSupportedLevel = (
     (level >= 1 && level <= 49) ||
     level === 66 ||
     level === 77 ||
+    level === 78 ||
     level === 88;
 
 
@@ -1541,9 +1588,17 @@ const buildHierarchy = (
             children: [],
         };
 
-        if (parsedEntry.level === 77) {
+        if (parsedEntry.level === 77 || parsedEntry.level === 78) {
             roots.push(entry);
             stack.length = 0;
+            continue;
+        }
+
+        if (parsedEntry.level === 66) {
+            // Level 66 is a non-storage declaration belonging to the current 01.
+            const parent = [...stack].reverse().find(node => node.level === 1);
+            if (parent) parent.children.push(entry);
+            else roots.push(entry);
             continue;
         }
 
@@ -1610,6 +1665,20 @@ const classifyEntry = (
     entry: ParsedTreeEntry,
     sourceLines: string[],
 ): ErrorsOr<CopybookEntry> => {
+    if (entry.level === 66)
+        return value({
+            kind: "renames", level: 66, name: entry.name,
+            from: entry.renames!.from, through: entry.renames!.through,
+            line: entry.line,
+        } as RenamesEntry);
+
+    if (entry.level === 78)
+        return value({
+            kind: "constant", level: 78, name: entry.name,
+            value: (entry.clauses[0] as {kind: "value"; value: string}).value,
+            line: entry.line,
+        } as ConstantEntry);
+
     if (entry.level === 88)
         return errors(
             diagnostic(

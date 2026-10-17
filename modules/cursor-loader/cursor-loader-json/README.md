@@ -165,7 +165,7 @@ JSON value is string "forty two"; expected an integer.
 ```
 
 ```text
-JSON property "postcode" does not exist in object at address. Available properties: "line1", "line2".
+JSON property "postcode" does not exist in object at address. Variable properties: "line1", "line2".
 ```
 
 ```text

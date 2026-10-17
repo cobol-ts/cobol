@@ -1,6 +1,6 @@
 {
-  "name": "@cobol-ts/compile_copybook",
-  "description": "Converts a cobol copy book to our file dom",
+  "name": "@cobol-ts/size",
+  "description": "Evaluates the size of a COBOL copybook and its fields.",
   "version": "0.0.1",
   "main": "dist/index",
   "types": "dist/index",
@@ -15,13 +15,6 @@
       "not dead",
       "not op_mini all"
     ]
-  },
-  "dependencies": {
-    "@cobol-ts/cobolcodec": "0.0.1",
-    "@cobol-ts/copybook": "0.0.1",
-    "@cobol-ts/copybookfiles": "0.0.1",
-    "@cobol-ts/errors": "0.0.1",
-    "@cobol-ts/string_utils": "0.0.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.1.4",
