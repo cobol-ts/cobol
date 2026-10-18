@@ -86,6 +86,9 @@ export function evaluateStorageSize(
 
             case "depending-on": {
                 const count = resolveDependingOnCount(node.path, resolve, variables);
+                if ((node.min !== undefined && count < node.min) ||
+                    (node.max !== undefined && count > node.max))
+                    throw new Error(`ODO count ${count} outside declared bounds ${node.min ?? 0}..${node.max ?? "unbounded"} at ${JSON.stringify(node.path)}`);
                 const depth = variables.length;
                 let total = 0;
                 variables.push(0);

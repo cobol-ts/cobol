@@ -80,6 +80,8 @@ export function canonicaliseStorageSize(
                 kind: "depending-on",
                 path: expression.path,
                 expression: child,
+                ...(expression.min === undefined ? {} : {min: expression.min}),
+                ...(expression.max === undefined ? {} : {max: expression.max}),
             };
         }
 

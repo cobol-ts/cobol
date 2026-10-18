@@ -89,6 +89,11 @@ const targetOf = (source: Source): string | undefined => {
     const clause = source.clauses.find(c => c.kind === "redefines");
     return clause?.kind === "redefines" ? clause.target : undefined;
 };
+// IBM Enterprise COBOL 6.4 prohibits an explicit REDEFINES subject or
+// object from declaring OCCURS DEPENDING ON itself. Nested declarations
+// are not the subject or object of that particular REDEFINES clause.
+const declaresDependentOccurs = (source: Source): boolean =>
+    source.clauses.some(clause => clause.kind === "occurs" && !("count" in clause));
 
 const astTree: Tree<Exclude<CopybookEntry, GroupEntry>, GroupEntry> = {
     isLeaf: (node): node is Exclude<CopybookEntry, GroupEntry> => node.kind !== "group",
@@ -222,13 +227,12 @@ const afterPadding = (
     flatMapErrorsOr(policy.afterOccurrence(source, size, policyContext(source)), tail => checkedSize(source, tail));
 
 /**
- * Resolve a controller within the table's containing group.
- * A repeated ancestor introduces one occurrence-index binding, numbered
- * from the innermost repeated ancestor (0). The evaluator already uses
- * this convention for numeric components of DependsOnPath.
+ * IBM Enterprise COBOL 6.4 ODO object resolution.
  *
- * No traversal changes are required: the enclosing OCCURS expression binds
- * its index while evaluating the group's one-occurrence body.
+ * Controllers are found in the nearest enclosing declarative scope. They
+ * must describe one fixed-location integer, outside the table, and must
+ * not require a subscript (including a fixed OCCURS ancestor). This does
+ * not attempt COBOL qualification across disjoint groups or DATA DIVISIONs.
  */
 const resolvingScopedController = (
     ast: CopybookAst,
@@ -245,34 +249,68 @@ const resolvingScopedController = (
     };
     index(ast.entries, []);
 
-    return (source, controllingField) => {
-        const lineage = ancestors.get(source);
-        const fail = (message: string) => diagnostic(source, contextOf(source), message);
-        const owner = lineage?.at(-1);
-        if (!lineage || !owner) return fail(`ODO controlling field '${controllingField}' has no containing group`);
+    const hasOdo = (entry: Source): boolean =>
+        declaresDependentOccurs(entry) ||
+        (entry.kind === "group" && entry.children.some(c => isSource(c) && hasOdo(c)));
 
-        const matches = owner.children.filter(entry =>
-            isSource(entry) && entry.name.kind === "named" &&
-            entry.name.name.toUpperCase() === controllingField.toUpperCase());
-        if (!matches.length)
-            return fail(`ODO controlling field '${controllingField}' was not found in the containing group`);
-        if (matches.length > 1)
-            return fail(`ODO controlling field '${controllingField}' is ambiguous`);
-
-        const controller = matches[0];
-        if (controller.kind !== "elementary" || controller === source)
-            return fail(`ODO controlling field '${controllingField}' must be a distinct elementary field`);
-
-        const repeating = lineage.filter(parent =>
-            parent.clauses.some(clause => clause.kind === "occurs"));
-        const path: (string | number)[] = [];
-        for (const parent of lineage) {
-            path.push(nameOf(parent));
-            const ordinal = repeating.indexOf(parent);
-            if (ordinal >= 0) path.push(repeating.length - 1 - ordinal);
+    const isVariablyLocated = (controller: ElementaryEntry): boolean => {
+        const parents = ancestors.get(controller) ?? [];
+        let current: Source = controller;
+        for (let i = parents.length - 1; i >= 0; i--) {
+            const parent = parents[i];
+            for (const sibling of parent.children) {
+                if (sibling === current) break;
+                if (isSource(sibling) && hasOdo(sibling)) return true;
+            }
+            current = parent;
         }
-        path.push(nameOf(controller));
-        return value(path);
+        return false;
+    };
+
+    // An integer PICTURE may have an optional operational sign. An implied
+    // decimal point or an edited/alphanumeric PICTURE cannot control ODO.
+    const isInteger = (picture: string): boolean =>
+        /^S?(?:9(?:\([1-9][0-9]*\))?)+$/i.test(picture.replace(/\s+/g, ""));
+
+    return (subject, controllingField) => {
+        const fail = (message: string) => diagnostic(subject, contextOf(subject), message);
+        const lineage = ancestors.get(subject);
+        if (!lineage?.length)
+            return fail(`ODO controlling field '${controllingField}' has no containing record`);
+
+        // Search nearest lexical scope first; a local homonym shadows an
+        // outer one. It may be invalid, but we must not silently fall back.
+        for (let i = lineage.length - 1; i >= 0; i--) {
+            const owner = lineage[i];
+            const matches = owner.children.filter(entry =>
+                isSource(entry) && entry.name.kind === "named" &&
+                entry.name.name.toUpperCase() === controllingField.toUpperCase());
+            if (!matches.length) continue;
+            if (matches.length > 1)
+                return fail(`ODO controlling field '${controllingField}' is ambiguous`);
+            const candidate = matches[0];
+            if (candidate.kind !== "elementary" || candidate === subject)
+                return fail(`ODO controlling field '${controllingField}' must be a distinct elementary field`);
+            if (typeof candidate.picture !== "string" || !isInteger(candidate.picture))
+                return fail(`ODO controlling field '${controllingField}' must be an integer`);
+            if (candidate.clauses.some(c => c.kind === "occurs") ||
+                (ancestors.get(candidate) ?? []).some(parent =>
+                    parent.clauses.some(c => c.kind === "occurs")))
+                return fail(`ODO controlling field '${controllingField}' cannot be a table element`);
+            if (isVariablyLocated(candidate))
+                return fail(`ODO controlling field '${controllingField}' cannot be variably located`);
+            return value([...lineage.slice(0, i + 1).map(nameOf), nameOf(candidate)]);
+        }
+        const insideSubject = (entry: Source): boolean =>
+            entry.kind === "group" && entry.children.some(child =>
+                isSource(child) && (
+                    (child.name.kind === "named" &&
+                        child.name.name.toUpperCase() === controllingField.toUpperCase()) ||
+                    insideSubject(child)
+                ));
+        if (insideSubject(subject))
+            return fail(`ODO controlling field '${controllingField}' cannot occupy storage inside its own table`);
+        return fail(`ODO controlling field '${controllingField}' was not found in an enclosing scope`);
     };
 };
 
@@ -343,7 +381,7 @@ export const dependentOccursStrategy = (
             ? value(body)
             : mapErrorsOr(afterOccurrence(node.source, body), tail => add(body, tail));
         return flatMapErrorsOr(stride, expression => checkedSize(node.source, {
-            kind: "depending-on", path, expression
+            kind: "depending-on", path, expression, min: occurrence.min, max: occurrence.max
         }));
     }
 });
@@ -444,6 +482,10 @@ export const overlayStrategy = (services: {
         if (!run) return fail(`REDEFINES target '${targetName}' has no active overlay region`);
         const target = run.sources.get(targetName.toUpperCase());
         if (!target) return fail(`REDEFINES target '${targetName}' is not a preceding member of the current overlay region`);
+        if (declaresDependentOccurs(node.source))
+            return fail(`REDEFINES subject '${nameOf(node.source)}' cannot declare OCCURS DEPENDING ON`);
+        if (declaresDependentOccurs(target))
+            return fail(`REDEFINES target '${targetName}' cannot declare OCCURS DEPENDING ON`);
         const start = frame.position;
         return flatMapErrorsOr(services.before(node.source, services.add(frame.absoluteOrigin, start)), required => {
             const decision = required === 0

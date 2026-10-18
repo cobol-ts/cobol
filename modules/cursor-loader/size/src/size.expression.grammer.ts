@@ -65,6 +65,9 @@ export interface DependingOnSizeExpression {
     readonly kind: "depending-on";
     readonly path: DependsOnPath;
     readonly expression: StorageSizeExpression;
+    /** Declared count bounds, when available from a copybook. */
+    readonly min?: number;
+    readonly max?: number;
 }
 
 /**

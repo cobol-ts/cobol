@@ -536,7 +536,7 @@ describe("compileCobolLayout", () => {
             expect(table.size).toEqual({
                 kind: "depending-on",
                 path: ["RECORD", "ITEM-COUNT"],
-                expression: 8
+                expression: 8, min: 0, max: 9
             });
             expect(table.leftOffset).toBe(8);
             expect(table.rightOffset).toBe(0);
