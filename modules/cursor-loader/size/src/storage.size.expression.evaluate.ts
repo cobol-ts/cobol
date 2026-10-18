@@ -7,37 +7,50 @@ import type {
 export type ResolvedPath = readonly (string | number)[];
 export type ResolvePath = (path: ResolvedPath) => unknown;
 
+/** Resolve an ODO count using the currently bound outer occurrence indices. */
+export function resolveDependingOnCount(
+    path: DependsOnPath,
+    resolve: ResolvePath,
+    enclosingIndices: readonly number[] = []
+): number {
+    const concrete: (string | number)[] = path.map(part => {
+        if (typeof part === "string") {
+            return part;
+        }
+        // Numbers in symbolic paths denote relative lambda depth.
+        if (!Number.isInteger(part)
+            || part < 0
+            || part >= enclosingIndices.length) {
+            throw new Error(`Unbound OCCURS variable at relative depth ${part}`);
+        }
+        return enclosingIndices[enclosingIndices.length - 1 - part];
+    });
+
+    const count = resolve(concrete);
+    if (typeof count !== "number"
+        || !Number.isSafeInteger(count)
+        || count < 0) {
+        throw new Error(
+            `Invalid OCCURS DEPENDING ON count ${String(count)} at ${JSON.stringify(concrete)}`,
+        );
+    }
+    return count;
+}
+
 /** Evaluate a storage-size expression in bits. Each call owns its bindings. */
 export function evaluateStorageSize(
     expression: StorageSizeExpression,
     resolve: ResolvePath,
+    enclosingIndices: readonly number[] = [],
 ): number {
-    const variables: number[] = [];
-
-    function resolveCount(path: DependsOnPath): number {
-        const concrete: (string | number)[] = path.map(part => {
-            if (typeof part === "string") {
-                return part;
-            }
-            // Numbers in symbolic paths denote relative lambda depth.
-            if (!Number.isInteger(part)
-                || part < 0
-                || part >= variables.length) {
-                throw new Error(`Unbound OCCURS variable at relative depth ${part}`);
-            }
-            return variables[variables.length - 1 - part];
-        });
-
-        const count = resolve(concrete);
-        if (typeof count !== "number"
-            || !Number.isSafeInteger(count)
-            || count < 0) {
-            throw new Error(
-                `Invalid OCCURS DEPENDING ON count ${String(count)} at ${JSON.stringify(concrete)}`,
-            );
+    // Outermost occurrence first, matching the indices in resolved paths.
+    // Copy so nested lambdas never mutate a caller-owned context.
+    for (const index of enclosingIndices) {
+        if (!Number.isSafeInteger(index) || index < 0) {
+            throw new Error(`Invalid enclosing occurrence index ${String(index)}`);
         }
-        return count;
     }
+    const variables: number[] = [...enclosingIndices];
 
     function evaluate(node: StorageSizeExpression): number {
         if (typeof node === "number") {
@@ -72,7 +85,7 @@ export function evaluateStorageSize(
             }
 
             case "depending-on": {
-                const count = resolveCount(node.path);
+                const count = resolveDependingOnCount(node.path, resolve, variables);
                 const depth = variables.length;
                 let total = 0;
                 variables.push(0);

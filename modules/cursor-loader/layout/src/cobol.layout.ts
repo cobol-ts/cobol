@@ -1,5 +1,5 @@
 import type {CopybookAst, CopybookEntry, GroupEntry, ElementaryEntry} from "@cobol-ts/copybook";
-import {type StorageSizeExpression, canonicaliseStorageSize} from "@cobol-ts/size";
+import {type StorageSizeExpression, type DependsOnPath, canonicaliseStorageSize} from "@cobol-ts/size";
 import {type ErrorsOr, errors, value, mapErrorsOr, flatMapErrorsOr} from "@cobol-ts/errors";
 import {chainOfResponsibility, type PartialFunction} from "@cobol-ts/partial_functions";
 import {transformTree, foldTreeLeft, foldTreeRight, type Tree} from "@cobol-ts/trees";
@@ -37,6 +37,16 @@ type Context = Readonly<{
     inheritedSynchronized: boolean;
 }>;
 
+// An undecorated 1 means no OCCURS clause. An explicit OCCURS 1 is a
+// fixed binder, and must not be reduced to the undecorated case when a
+// descendant refers to its occurrence index.
+export type OccurrenceCount = number | Readonly<{kind: "fixed"; count: number}> | Readonly<{
+    kind: "dependent";
+    min: number;
+    max: number;
+    path: DependsOnPath;
+}>;
+
 // An alignment-intent node has no size until the left fold knows its symbolic
 // position. This is not a placeholder for a numerical position.
 type PendingGeometry = {
@@ -47,12 +57,12 @@ type PendingGeometry = {
 export type PendingElementary = PendingGeometry & {
     kind: "elementary";
     source: ElementaryEntry;
-    count: number;
+    count: OccurrenceCount;
 };
 export type PendingGroup = PendingGeometry & {
     kind: "group";
     source: GroupEntry;
-    count: number;
+    count: OccurrenceCount;
     children: PendingEntry[];
 };
 export type PendingPadding = PendingGeometry & {
@@ -94,7 +104,8 @@ type Combine = (...terms: StorageSizeExpression[]) => StorageSizeExpression;
 type Diagnostic = (source: Source, context: Context, message: string) => ErrorsOr<never>;
 type ContextOf = (source: Source) => Context;
 type CheckedSize = (source: Source, size: StorageSizeExpression, message?: string) => ErrorsOr<StorageSizeExpression>;
-type CountOf = (source: Source) => ErrorsOr<number>;
+type CountOf = (source: Source) => ErrorsOr<OccurrenceCount>;
+type ResolveCountPath = (source: Source, controllingField: string) => ErrorsOr<DependsOnPath>;
 type PrimitiveSize = (source: ElementaryEntry) => ErrorsOr<StorageSizeExpression>;
 type Before = (source: Source, offset: StorageSizeExpression) => ErrorsOr<StorageSizeExpression>;
 type AfterOccurrence = (source: Source, size: StorageSizeExpression) => ErrorsOr<StorageSizeExpression>;
@@ -210,16 +221,80 @@ const afterPadding = (
 ): AfterOccurrence => (source, size) =>
     flatMapErrorsOr(policy.afterOccurrence(source, size, policyContext(source)), tail => checkedSize(source, tail));
 
-const countingOccurrences = (diagnostic: Diagnostic, contextOf: ContextOf): CountOf => source => {
+/**
+ * Resolve a controller within the table's containing group.
+ * A repeated ancestor introduces one occurrence-index binding, numbered
+ * from the innermost repeated ancestor (0). The evaluator already uses
+ * this convention for numeric components of DependsOnPath.
+ *
+ * No traversal changes are required: the enclosing OCCURS expression binds
+ * its index while evaluating the group's one-occurrence body.
+ */
+const resolvingScopedController = (
+    ast: CopybookAst,
+    contextOf: ContextOf,
+    diagnostic: Diagnostic
+): ResolveCountPath => {
+    const ancestors = new WeakMap<Source, readonly GroupEntry[]>();
+    const index = (entries: readonly CopybookEntry[], parents: readonly GroupEntry[]): void => {
+        for (const entry of entries) {
+            if (!isSource(entry)) continue;
+            ancestors.set(entry, parents);
+            if (entry.kind === "group") index(entry.children, [...parents, entry]);
+        }
+    };
+    index(ast.entries, []);
+
+    return (source, controllingField) => {
+        const lineage = ancestors.get(source);
+        const fail = (message: string) => diagnostic(source, contextOf(source), message);
+        const owner = lineage?.at(-1);
+        if (!lineage || !owner) return fail(`ODO controlling field '${controllingField}' has no containing group`);
+
+        const matches = owner.children.filter(entry =>
+            isSource(entry) && entry.name.kind === "named" &&
+            entry.name.name.toUpperCase() === controllingField.toUpperCase());
+        if (!matches.length)
+            return fail(`ODO controlling field '${controllingField}' was not found in the containing group`);
+        if (matches.length > 1)
+            return fail(`ODO controlling field '${controllingField}' is ambiguous`);
+
+        const controller = matches[0];
+        if (controller.kind !== "elementary" || controller === source)
+            return fail(`ODO controlling field '${controllingField}' must be a distinct elementary field`);
+
+        const repeating = lineage.filter(parent =>
+            parent.clauses.some(clause => clause.kind === "occurs"));
+        const path: (string | number)[] = [];
+        for (const parent of lineage) {
+            path.push(nameOf(parent));
+            const ordinal = repeating.indexOf(parent);
+            if (ordinal >= 0) path.push(repeating.length - 1 - ordinal);
+        }
+        path.push(nameOf(controller));
+        return value(path);
+    };
+};
+
+const countingOccurrences = (
+    diagnostic: Diagnostic,
+    contextOf: ContextOf,
+    resolveCountPath: ResolveCountPath
+): CountOf => source => {
     const clauses = source.clauses.filter(c => c.kind === "occurs");
     if (!clauses.length) return value(1);
     if (clauses.length > 1) return diagnostic(source, contextOf(source), "Multiple OCCURS clauses");
     const clause = clauses[0];
-    if (!("count" in clause))
-        return diagnostic(source, contextOf(source), "occurs depending on layout is not implemented yet");
-    return Number.isSafeInteger(clause.count) && clause.count >= 1
-        ? value(clause.count)
-        : diagnostic(source, contextOf(source), "Invalid fixed OCCURS count");
+    if ("count" in clause)
+        return Number.isSafeInteger(clause.count) && clause.count >= 1
+            ? value({kind: "fixed" as const, count: clause.count})
+            : diagnostic(source, contextOf(source), "Invalid fixed OCCURS count");
+    if (!Number.isSafeInteger(clause.min) || !Number.isSafeInteger(clause.max) ||
+        clause.min < 0 || clause.max < clause.min)
+        return diagnostic(source, contextOf(source), "Invalid ODO bounds");
+    return mapErrorsOr(resolveCountPath(source, clause.dependingOn), path => ({
+        kind: "dependent" as const, min: clause.min, max: clause.max, path
+    }));
 };
 
 // ---- Independently constructible, composable partial functions ----
@@ -235,15 +310,41 @@ export const fixedOccursStrategy = (
     add: Combine,
     checkedSize: CheckedSize
 ): PartialFunction<Repetition, ErrorsOr<StorageSizeExpression>> => ({
-    isDefinedAt: ({node}) => node.count > 1,
+    isDefinedAt: ({node}) => typeof node.count === "number"
+        ? node.count > 1 : node.count.kind === "fixed",
     apply: ({node, body}) => {
-        // A group owns its trailing padding intent; an elementary cannot.
+        // A declared OCCURS 1 still binds index 0 for a nested controller.
+        const occurrence = node.count;
+        if (typeof occurrence !== "number" && occurrence.kind !== "fixed")
+            throw new Error("Fixed repetition strategy mismatch");
+        const count = typeof occurrence === "number" ? occurrence : occurrence.count;
         const stride = node.kind === "group"
             ? value(body)
             : mapErrorsOr(afterOccurrence(node.source, body), tail => add(body, tail));
         return flatMapErrorsOr(stride, occurrence => checkedSize(node.source,
-            {kind: "occurs", count: node.count, expression: occurrence},
+            {kind: "occurs", count, expression: occurrence},
             "Fixed OCCURS extent exceeds safe integer range"));
+    }
+});
+
+/** ODO is an additional repetition strategy, not a special tree traversal. */
+export const dependentOccursStrategy = (
+    afterOccurrence: AfterOccurrence,
+    add: Combine,
+    checkedSize: CheckedSize
+): PartialFunction<Repetition, ErrorsOr<StorageSizeExpression>> => ({
+    isDefinedAt: ({node}) => typeof node.count !== "number" && node.count.kind === "dependent",
+    apply: ({node, body}) => {
+        const occurrence = node.count;
+        if (typeof occurrence === "number" || occurrence.kind !== "dependent")
+            throw new Error("Dependent repetition strategy mismatch");
+        const path = occurrence.path;
+        const stride = node.kind === "group" || occurrence.max <= 1
+            ? value(body)
+            : mapErrorsOr(afterOccurrence(node.source, body), tail => add(body, tail));
+        return flatMapErrorsOr(stride, expression => checkedSize(node.source, {
+            kind: "depending-on", path, expression
+        }));
     }
 });
 
@@ -254,7 +355,8 @@ function paddingIntents(children: readonly PendingEntry[], group: PendingGroup):
             result.push({kind: "padding", role: "before", source: child.source});
         result.push(child);
     }
-    if (group.count > 1)
+    if (typeof group.count === "number" ? group.count > 1 :
+        group.count.kind === "fixed" ? group.count.count > 1 : group.count.max > 1)
         result.push({kind: "padding", role: "after-occurrence", source: group.source});
     return result;
 }
@@ -482,7 +584,7 @@ const assigningRight = (add: Combine, maximum: Combine, canonicalise: Canonicali
             delete (node as {role?: PendingPadding["role"]}).role;
             delete (node as {source?: Source}).source;
         } else {
-            delete (node as {count?: number}).count;
+            delete (node as {count?: OccurrenceCount}).count;
         }
         return acc;
     };
@@ -506,7 +608,7 @@ export function compileCobolLayout(
     const policyContext = policyContextFor(copybook, contextOf);
     const before = beforePadding(policy, policyContext, checkedSize);
     const afterOccurrence = afterPadding(policy, policyContext, checkedSize);
-    const countOf = countingOccurrences(diagnostic, contextOf);
+    const countOf = countingOccurrences(diagnostic, contextOf, resolvingScopedController(ast, contextOf, diagnostic));
     const primitiveSize = sizingPrimitive(options.primitiveSizer ?? defaultCobolPrimitiveSizer,
         checkedSize, contextOf, copybook);
 
@@ -516,6 +618,7 @@ export function compileCobolLayout(
     );
     const repeat = chainOfResponsibility<Repetition, ErrorsOr<StorageSizeExpression>>(
         ({node}) => {throw new Error(`Missing repetition strategy for ${node.count}`);},
+        dependentOccursStrategy(afterOccurrence, add, checkedSize),
         fixedOccursStrategy(afterOccurrence, add, checkedSize), singleOccurrenceStrategy(checkedSize)
     );
     const closeRun = closingRuns(add, maximum);
