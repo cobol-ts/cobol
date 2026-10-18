@@ -83,6 +83,18 @@ export function canonicaliseStorageSize(
             };
         }
 
+        case "difference": {
+            const left = canonicaliseStorageSize(expression.left);
+            const right = canonicaliseStorageSize(expression.right);
+            if (left === right || JSON.stringify(left) === JSON.stringify(right)) return 0;
+            if (right === 0) return left;
+            if (typeof left === "number" && typeof right === "number") {
+                if (right > left) throw new Error("Negative storage-size difference");
+                return left - right;
+            }
+            return {kind: "difference", left, right};
+        }
+
         case "align": {
             const size = canonicaliseStorageSize(expression.size);
             const boundary = expression.boundary;

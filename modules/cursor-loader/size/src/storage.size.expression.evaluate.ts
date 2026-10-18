@@ -87,6 +87,13 @@ export function evaluateStorageSize(
                 return total;
             }
 
+            case "difference": {
+                const left = evaluate(node.left);
+                const right = evaluate(node.right);
+                if (right > left) throw new Error("Negative storage-size difference");
+                return left - right;
+            }
+
             case "align": {
                 const size = evaluate(node.size);
                 const boundary = node.boundary;

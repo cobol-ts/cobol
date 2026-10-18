@@ -12,7 +12,8 @@ export type StorageSizeExpression =
     | OccursSizeExpression
     | MaxSizeExpression
     | DependingOnSizeExpression
-    | AlignSizeExpression;
+    | AlignSizeExpression
+    | DifferenceSizeExpression;
 
 /**
  * A symbolic count-field path:
@@ -86,4 +87,11 @@ export interface AlignSizeExpression {
     readonly kind: "align";
     readonly size: StorageSizeExpression;
     readonly boundary: number;
+}
+
+/** Nonnegative distance between two storage extents (left >= right). */
+export interface DifferenceSizeExpression {
+    readonly kind: "difference";
+    readonly left: StorageSizeExpression;
+    readonly right: StorageSizeExpression;
 }
