@@ -1,4 +1,5 @@
-import type { StorageSizeExpression } from "./size.expression.grammer";
+
+import type {StorageSizeExpression} from "./size.expression.grammer";
 
 /**
  * Simplify a symbolic storage-size expression without consulting a record.
@@ -35,7 +36,7 @@ export function canonicaliseStorageSize(
             if (constant !== 0) terms.push(constant);
             if (terms.length === 0) return 0;
             if (terms.length === 1) return terms[0];
-            return { kind: "sum", terms };
+            return {kind: "sum", terms};
         }
 
         case "max": {
@@ -57,7 +58,7 @@ export function canonicaliseStorageSize(
             if (terms.length === 0) return constant;
             if (constant !== 0) terms.push(constant);
             if (terms.length === 1) return terms[0];
-            return { kind: "max", terms };
+            return {kind: "max", terms};
         }
 
         case "occurs": {
@@ -68,7 +69,7 @@ export function canonicaliseStorageSize(
             }
             // The body may use this occurrence's index. Never rewrite
             // OCCURS(1, body) to body without rebasing relative depths.
-            return { kind: "occurs", count: expression.count, expression: child };
+            return {kind: "occurs", count: expression.count, expression: child};
         }
 
         case "depending-on": {
@@ -80,6 +81,17 @@ export function canonicaliseStorageSize(
                 path: expression.path,
                 expression: child,
             };
+        }
+
+        case "align": {
+            const size = canonicaliseStorageSize(expression.size);
+            const boundary = expression.boundary;
+
+            if (typeof size === "number") {
+                return (boundary - size % boundary) % boundary;
+            }
+
+            return {kind: "align", size, boundary};
         }
     }
 }

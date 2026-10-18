@@ -567,3 +567,246 @@ describe("canonicalise MANY-RECORDS: different count configurations", () => {
         expect(canonicaliseStorageSize(canonical)).toEqual(canonical);
     });
 });
+
+/*
+ * 01 ALIGNED-RECORD.
+ *    05 PREFIX PIC X.
+ *    05 AMOUNT PIC S9(9) COMP SYNC.
+ *
+ * AMOUNT needs a four-byte boundary. PREFIX occupies one byte,
+ * so the compiler introduces three bytes of padding.
+ */
+describe("canonicalise ALIGNED-RECORD: fixed alignment", () => {
+    test.each([
+        [0, 0],
+        [8, 24],
+        [16, 16],
+        [24, 8],
+        [32, 0],
+        [40, 24],
+        [64, 0],
+    ])("aligns offset %i to 32 bits with %i bits of padding", (size, expected) => {
+        const expression = {
+            kind: "align", size, boundary: 32
+        } as const satisfies StorageSizeExpression;
+
+        expect(canonicaliseStorageSize(expression)).toBe(expected);
+        expect(evaluateStorageSize(expression, noLookup)).toBe(expected);
+    });
+
+    test("canonicalises the alignment input before calculating padding", () => {
+        const expression = {
+            kind: "align",
+            size: {kind: "sum", terms: [8, {kind: "sum", terms: [8, 8]}]},
+            boundary: 32
+        } as const satisfies StorageSizeExpression;
+
+        expect(canonicaliseStorageSize(expression)).toBe(8);
+    });
+
+    test("supports halfword and doubleword boundaries", () => {
+        expect(canonicaliseStorageSize({
+            kind: "align", size: 8, boundary: 16
+        })).toBe(8);
+
+        expect(canonicaliseStorageSize({
+            kind: "align", size: 8, boundary: 64
+        })).toBe(56);
+    });
+});
+
+/*
+ * 01 VARIABLE-RECORD.
+ *    05 ITEM-COUNT PIC 9.
+ *    05 ITEMS OCCURS 0 TO 9 TIMES DEPENDING ON ITEM-COUNT.
+ *       10 CODE PIC X(3).
+ *    05 AMOUNT PIC S9(9) COMP SYNC.
+ *
+ * AMOUNT's position is 8 + 24 * ITEM-COUNT bits.
+ * Its alignment padding depends on the actual count.
+ */
+describe("canonicalise VARIABLE-RECORD: alignment after ODO", () => {
+    const expression = {
+        kind: "align",
+        size: {
+            kind: "sum",
+            terms: [
+                8,
+                {
+                    kind: "depending-on",
+                    path: ["VARIABLE-RECORD", "ITEM-COUNT"],
+                    expression: {kind: "sum", terms: [8, 16]}
+                }
+            ]
+        },
+        boundary: 32
+    } as const satisfies StorageSizeExpression;
+
+    test("simplifies the occurrence size but retains symbolic alignment", () => {
+        expect(canonicaliseStorageSize(expression)).toEqual({
+            kind: "align",
+            size: {
+                kind: "sum",
+                terms: [{
+                    kind: "depending-on",
+                    path: ["VARIABLE-RECORD", "ITEM-COUNT"],
+                    expression: 24
+                }, 8]
+            },
+            boundary: 32
+        });
+    });
+
+    test.each([
+        [0, 24],
+        [1, 0],
+        [2, 8],
+        [3, 16],
+        [4, 24],
+        [5, 0],
+    ])("calculates padding for ITEM-COUNT %i", (count, expected) => {
+        const lookup = (path: ResolvedPath): unknown => {
+            expect(path).toEqual(["VARIABLE-RECORD", "ITEM-COUNT"]);
+            return count;
+        };
+
+        expect(evaluateStorageSize(expression, lookup)).toBe(expected);
+        expect(evaluateStorageSize(canonicaliseStorageSize(expression), lookup))
+            .toBe(expected);
+    });
+
+    test("is idempotent and does not mutate the original expression", () => {
+        const original = JSON.stringify(expression);
+        const canonical = canonicaliseStorageSize(expression);
+
+        expect(canonicaliseStorageSize(canonical)).toEqual(canonical);
+        expect(JSON.stringify(expression)).toBe(original);
+    });
+});
+
+/*
+ * 01 GROUP-RECORD.
+ *    05 GROUPS OCCURS 3 TIMES.
+ *       10 ITEM-COUNT PIC 9.
+ *       10 ITEMS OCCURS 0 TO 9 TIMES DEPENDING ON ITEM-COUNT.
+ *          15 CODE PIC X(3).
+ *       10 AMOUNT PIC S9(9) COMP SYNC.
+ *
+ * Each GROUPS occurrence can have a different ITEM-COUNT and
+ * therefore a different amount of padding before AMOUNT.
+ *
+ * The fixed OCCURS binding must survive canonicalisation.
+ */
+describe("canonicalise GROUP-RECORD: alignment inside fixed OCCURS", () => {
+    const expression = {
+        kind: "occurs",
+        count: 3,
+        expression: {
+            kind: "align",
+            size: {
+                kind: "sum",
+                terms: [
+                    8,
+                    {
+                        kind: "depending-on",
+                        path: ["GROUP-RECORD", "GROUPS", 0, "ITEM-COUNT"],
+                        expression: 24
+                    }
+                ]
+            },
+            boundary: 32
+        }
+    } as const satisfies StorageSizeExpression;
+
+    test("preserves the OCCURS binding around symbolic alignment", () => {
+        const canonical = canonicaliseStorageSize(expression);
+
+        expect(canonical).toMatchObject({
+            kind: "occurs",
+            count: 3,
+            expression: {
+                kind: "align",
+                boundary: 32
+            }
+        });
+    });
+
+    test("evaluates a different padding amount for each occurrence", () => {
+        const counts = [0, 1, 2];
+        const seen: ResolvedPath[] = [];
+
+        const lookup = (path: ResolvedPath): unknown => {
+            seen.push([...path]);
+            return counts[path[2] as number];
+        };
+
+        const canonical = canonicaliseStorageSize(expression);
+
+        // COUNT 0 -> 24 bits, COUNT 1 -> 0 bits, COUNT 2 -> 8 bits.
+        expect(evaluateStorageSize(expression, lookup)).toBe(32);
+        expect(evaluateStorageSize(canonical, lookup)).toBe(32);
+
+        expect(seen).toEqual([
+            ...[0, 1, 2].map(i => ["GROUP-RECORD", "GROUPS", i, "ITEM-COUNT"]),
+            ...[0, 1, 2].map(i => ["GROUP-RECORD", "GROUPS", i, "ITEM-COUNT"])
+        ]);
+    });
+});
+
+/*
+ * 01 NESTED-ALIGNMENT.
+ *    05 PREFIX PIC X.
+ *    05 AMOUNT PIC S9(9) COMP SYNC.
+ *
+ * Aligning the position after adding the first padding amount
+ * must require no further padding at the same boundary.
+ */
+describe("canonicalise NESTED-ALIGNMENT: nested alignment expressions", () => {
+    test("folds nested alignment when its inputs are constant", () => {
+        const expression = {
+            kind: "align",
+            size: {
+                kind: "sum",
+                terms: [
+                    8,
+                    {kind: "align", size: 8, boundary: 32}
+                ]
+            },
+            boundary: 32
+        } as const satisfies StorageSizeExpression;
+
+        expect(canonicaliseStorageSize(expression)).toBe(0);
+        expect(evaluateStorageSize(expression, noLookup)).toBe(0);
+    });
+
+    test("retains symbolic nested alignment without losing information", () => {
+        const variable = {
+            kind: "depending-on",
+            path: ["NESTED-ALIGNMENT", "COUNT"],
+            expression: 24
+        } as const satisfies StorageSizeExpression;
+
+        const expression = {
+            kind: "align",
+            size: {
+                kind: "sum",
+                terms: [
+                    variable,
+                    {kind: "align", size: variable, boundary: 32}
+                ]
+            },
+            boundary: 32
+        } as const satisfies StorageSizeExpression;
+
+        const canonical = canonicaliseStorageSize(expression);
+
+        expect(canonicaliseStorageSize(canonical)).toEqual(canonical);
+
+        for (const count of [0, 1, 2, 3, 4]) {
+            const lookup = () => count;
+            expect(evaluateStorageSize(canonical, lookup)).toBe(0);
+            expect(evaluateStorageSize(canonical, lookup))
+                .toBe(evaluateStorageSize(expression, lookup));
+        }
+    });
+});

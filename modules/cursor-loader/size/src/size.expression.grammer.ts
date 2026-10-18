@@ -1,3 +1,4 @@
+
 /**
  * Symbolic COBOL storage sizes, measured in bits.
  *
@@ -10,7 +11,8 @@ export type StorageSizeExpression =
     | SumSizeExpression
     | OccursSizeExpression
     | MaxSizeExpression
-    | DependingOnSizeExpression;
+    | DependingOnSizeExpression
+    | AlignSizeExpression;
 
 /**
  * A symbolic count-field path:
@@ -62,4 +64,26 @@ export interface DependingOnSizeExpression {
     readonly kind: "depending-on";
     readonly path: DependsOnPath;
     readonly expression: StorageSizeExpression;
+}
+
+/**
+ * Additional storage required to align a position or extent to a boundary.
+ *
+ * Both size and boundary are measured in bits. The boundary must be a
+ * positive integer.
+ *
+ * Evaluates to:
+ *
+ *     (boundary - (size % boundary)) % boundary
+ *
+ * The result is zero when size is already aligned.
+ *
+ * When size is symbolic, alignment is evaluated using its resolved value.
+ * This allows padding after variable-length OCCURS DEPENDING ON tables
+ * to depend on the actual occurrence count.
+ */
+export interface AlignSizeExpression {
+    readonly kind: "align";
+    readonly size: StorageSizeExpression;
+    readonly boundary: number;
 }

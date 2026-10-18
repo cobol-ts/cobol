@@ -693,6 +693,22 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@cobol-ts/layout@workspace:modules/cursor-loader/layout":
+  version: 0.0.0-use.local
+  resolution: "@cobol-ts/layout@workspace:modules/cursor-loader/layout"
+  dependencies:
+    "@cobol-ts/copybook": "npm:0.0.1"
+    "@cobol-ts/errors": "npm:0.0.1"
+    "@cobol-ts/size": "npm:0.0.1"
+    "@testing-library/jest-dom": "npm:^6.1.4"
+    "@types/jest": "npm:^29.0.0"
+    "@types/node": "npm:^14.0.0"
+    jest: "npm:^29.0.0"
+    ts-jest: "npm:^29.0.0"
+    typescript: "npm:^5.2.2"
+  languageName: unknown
+  linkType: soft
+
 "@cobol-ts/partial_functions@workspace:modules/utils/partial_functions":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/partial_functions@workspace:modules/utils/partial_functions"
@@ -749,7 +765,7 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@cobol-ts/size@workspace:modules/cursor-loader/size":
+"@cobol-ts/size@npm:0.0.1, @cobol-ts/size@workspace:modules/cursor-loader/size":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/size@workspace:modules/cursor-loader/size"
   dependencies:

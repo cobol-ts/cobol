@@ -762,4 +762,235 @@ describe("occurs: STORE-RECORD (mixed fixed and dependent nesting)", () => {
             ["STORE-RECORD", "AISLES", 1, "SHELVES", 1, "PRODUCT-COUNT"],
         ]);
     });
+
+    /*
+     * 01 ALIGNED-RECORD.
+     *    05 PREFIX PIC X.
+     *    05 AMOUNT PIC S9(9) COMP SYNC.
+     *
+     * AMOUNT requires a four-byte boundary.
+     * ALIGN returns the padding length, not the aligned position.
+     */
+    describe("align expressions: fixed offsets", () => {
+        test.each([
+            [0, 32, 0],
+            [8, 32, 24],
+            [16, 32, 16],
+            [24, 32, 8],
+            [32, 32, 0],
+            [40, 32, 24],
+            [8, 16, 8],
+            [16, 16, 0],
+            [8, 64, 56],
+            [64, 64, 0],
+        ])("align(%i, %i) evaluates to %i bits", (size, boundary, expected) => {
+            const expression = {
+                kind: "align", size, boundary
+            } as const satisfies StorageSizeExpression;
+
+            expect(evaluateStorageSize(expression, resolve)).toBe(expected);
+            expect(resolve).not.toHaveBeenCalled();
+        });
+
+        test("evaluates a nested sum before calculating alignment", () => {
+            const expression = {
+                kind: "align",
+                size: {kind: "sum", terms: [8, 16]},
+                boundary: 32
+            } as const satisfies StorageSizeExpression;
+
+            expect(evaluateStorageSize(expression, resolve)).toBe(8);
+            expect(resolve).not.toHaveBeenCalled();
+        });
+    });
+
+    /*
+     * 01 VARIABLE-RECORD.
+     *    05 ITEM-COUNT PIC 9.
+     *    05 ITEMS OCCURS 0 TO 9 TIMES DEPENDING ON ITEM-COUNT.
+     *       10 CODE PIC X(3).
+     *    05 AMOUNT PIC S9(9) COMP SYNC.
+     *
+     * The position before AMOUNT is 8 + ITEM-COUNT * 24 bits.
+     * Padding is calculated using the actual occurrence count.
+     */
+    describe("align expressions: after ODO", () => {
+        const expression = {
+            kind: "align",
+            size: {
+                kind: "sum",
+                terms: [
+                    8,
+                    {
+                        kind: "depending-on",
+                        path: ["VARIABLE-RECORD", "ITEM-COUNT"],
+                        expression: 24
+                    }
+                ]
+            },
+            boundary: 32
+        } as const satisfies StorageSizeExpression;
+
+        test.each([
+            [0, 24],
+            [1, 0],
+            [2, 8],
+            [3, 16],
+            [4, 24],
+            [5, 0],
+        ])("ITEM-COUNT = %i requires %i bits of padding", (count, expected) => {
+            const lookup = jest.fn((path: ResolvedPath): unknown => {
+                expect(path).toEqual(["VARIABLE-RECORD", "ITEM-COUNT"]);
+                return count;
+            });
+
+            expect(evaluateStorageSize(expression, lookup)).toBe(expected);
+            expect(lookup).toHaveBeenCalledTimes(1);
+        });
+
+        test("uses alignment as an ordinary component of the record size", () => {
+            const completeRecord = {
+                kind: "sum",
+                terms: [
+                    8,
+                    {
+                        kind: "depending-on",
+                        path: ["VARIABLE-RECORD", "ITEM-COUNT"],
+                        expression: 24
+                    },
+                    expression,
+                    32
+                ]
+            } as const satisfies StorageSizeExpression;
+
+            test.each([]); // Not required; use the assertions below.
+
+            for (const [count, expected] of [
+                [0, 64],
+                [1, 64],
+                [2, 96],
+                [3, 128],
+                [4, 160],
+            ]) {
+                const lookup = () => count;
+                expect(evaluateStorageSize(completeRecord, lookup)).toBe(expected);
+            }
+        });
+    });
+
+    /*
+     * 01 GROUP-RECORD.
+     *    05 GROUPS OCCURS 3 TIMES.
+     *       10 ITEM-COUNT PIC 9.
+     *       10 ITEMS OCCURS 0 TO 9 TIMES DEPENDING ON ITEM-COUNT.
+     *          15 CODE PIC X(3).
+     *       10 AMOUNT PIC S9(9) COMP SYNC.
+     *
+     * Each GROUPS occurrence can have a different amount of padding.
+     * Alignment must use the currently bound GROUPS index.
+     */
+    describe("align expressions: inside fixed OCCURS", () => {
+        const expression = {
+            kind: "occurs",
+            count: 3,
+            expression: {
+                kind: "align",
+                size: {
+                    kind: "sum",
+                    terms: [
+                        8,
+                        {
+                            kind: "depending-on",
+                            path: ["GROUP-RECORD", "GROUPS", 0, "ITEM-COUNT"],
+                            expression: 24
+                        }
+                    ]
+                },
+                boundary: 32
+            }
+        } as const satisfies StorageSizeExpression;
+
+        test("evaluates alignment independently for each occurrence", () => {
+            const counts = [0, 1, 2];
+            const seen: ResolvedPath[] = [];
+
+            const lookup = jest.fn((path: ResolvedPath): unknown => {
+                seen.push([...path]);
+                return counts[path[2] as number];
+            });
+
+            expect(evaluateStorageSize(expression, lookup)).toBe(32);
+            expect(seen).toEqual([
+                ["GROUP-RECORD", "GROUPS", 0, "ITEM-COUNT"],
+                ["GROUP-RECORD", "GROUPS", 1, "ITEM-COUNT"],
+                ["GROUP-RECORD", "GROUPS", 2, "ITEM-COUNT"]
+            ]);
+        });
+
+        test("does not read an unvisited occurrence", () => {
+            const empty = {
+                ...expression,
+                count: 0
+            } as const satisfies StorageSizeExpression;
+
+            const lookup = jest.fn(() => {
+                throw new Error("No occurrence should be evaluated");
+            });
+
+            expect(evaluateStorageSize(empty, lookup)).toBe(0);
+            expect(lookup).not.toHaveBeenCalled();
+        });
+    });
+
+    /*
+     * 01 NESTED-ALIGNMENT.
+     *    05 PREFIX PIC X.
+     *    05 AMOUNT PIC S9(9) COMP SYNC.
+     *
+     * Once an offset has been padded to a boundary, another
+     * alignment operation at the same boundary requires zero padding.
+     */
+    describe("align expressions: nested alignment", () => {
+        test("returns zero after applying the first alignment", () => {
+            const expression = {
+                kind: "align",
+                size: {
+                    kind: "sum",
+                    terms: [
+                        8,
+                        {kind: "align", size: 8, boundary: 32}
+                    ]
+                },
+                boundary: 32
+            } as const satisfies StorageSizeExpression;
+
+            expect(evaluateStorageSize(expression, resolve)).toBe(0);
+            expect(resolve).not.toHaveBeenCalled();
+        });
+
+        test("works when the original offset is symbolic", () => {
+            const variable = {
+                kind: "depending-on",
+                path: ["NESTED-ALIGNMENT", "COUNT"],
+                expression: 24
+            } as const satisfies StorageSizeExpression;
+
+            const expression = {
+                kind: "align",
+                size: {
+                    kind: "sum",
+                    terms: [
+                        variable,
+                        {kind: "align", size: variable, boundary: 32}
+                    ]
+                },
+                boundary: 32
+            } as const satisfies StorageSizeExpression;
+
+            for (const count of [0, 1, 2, 3, 4]) {
+                expect(evaluateStorageSize(expression, () => count)).toBe(0);
+            }
+        });
+    });
+
 });

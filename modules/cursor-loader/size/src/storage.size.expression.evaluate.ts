@@ -1,3 +1,4 @@
+
 import type {
     DependsOnPath,
     StorageSizeExpression,
@@ -46,6 +47,7 @@ export function evaluateStorageSize(
         switch (node.kind) {
             case "sum":
                 return node.terms.reduce<number>((total, term) => total + evaluate(term), 0);
+
             case "occurs": {
                 const depth = variables.length;
                 let total = 0;
@@ -60,6 +62,7 @@ export function evaluateStorageSize(
                 }
                 return total;
             }
+
             case "max": {
                 let result = 0;
                 for (const term of node.terms) {
@@ -67,6 +70,7 @@ export function evaluateStorageSize(
                 }
                 return result;
             }
+
             case "depending-on": {
                 const count = resolveCount(node.path);
                 const depth = variables.length;
@@ -81,6 +85,12 @@ export function evaluateStorageSize(
                     variables.length = depth;
                 }
                 return total;
+            }
+
+            case "align": {
+                const size = evaluate(node.size);
+                const boundary = node.boundary;
+                return (boundary - size % boundary) % boundary;
             }
         }
     }
