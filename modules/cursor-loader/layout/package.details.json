@@ -5,7 +5,8 @@
   "links": [
     "@cobol-ts/copybook",
     "@cobol-ts/errors",
-    "@cobol-ts/size"
+    "@cobol-ts/size",
+    "@cobol-ts/trees"
   ],
   "packageJson": {
     "files": [

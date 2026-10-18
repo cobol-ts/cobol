@@ -77,8 +77,6 @@ function binaryAlignment(
         );
 
     if (digits <= 4) return value(16);
-    if (digits <= 9) return value(32);
-    if (digits <= 4) return value(16);
     if (digits <= 18) return value(32);
 
     return diagnostic(

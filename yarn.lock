@@ -700,6 +700,7 @@ __metadata:
     "@cobol-ts/copybook": "npm:0.0.1"
     "@cobol-ts/errors": "npm:0.0.1"
     "@cobol-ts/size": "npm:0.0.1"
+    "@cobol-ts/trees": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
     "@types/jest": "npm:^29.0.0"
     "@types/node": "npm:^14.0.0"
@@ -823,6 +824,19 @@ __metadata:
 "@cobol-ts/time@workspace:modules/utils/time":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/time@workspace:modules/utils/time"
+  dependencies:
+    "@testing-library/jest-dom": "npm:^6.1.4"
+    "@types/jest": "npm:^29.0.0"
+    "@types/node": "npm:^14.0.0"
+    jest: "npm:^29.0.0"
+    ts-jest: "npm:^29.0.0"
+    typescript: "npm:^5.2.2"
+  languageName: unknown
+  linkType: soft
+
+"@cobol-ts/trees@npm:0.0.1, @cobol-ts/trees@workspace:modules/utils/trees":
+  version: 0.0.0-use.local
+  resolution: "@cobol-ts/trees@workspace:modules/utils/trees"
   dependencies:
     "@testing-library/jest-dom": "npm:^6.1.4"
     "@types/jest": "npm:^29.0.0"

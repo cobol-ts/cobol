@@ -1,13 +1,6 @@
-
 import {errorsOrThrow, valueOrThrow} from "@cobol-ts/errors";
-import {
-    ibmCobolAlignment,
-    type CobolAlignmentResolver
-} from "./cobol.alignment";
-import {
-    type CobolPrimitiveDescription,
-    type CobolPrimitiveSizeContext
-} from "./cobol.primitive.size";
+import {type CobolAlignmentResolver, ibmCobolAlignment} from "./cobol.alignment";
+import {type CobolPrimitiveDescription, type CobolPrimitiveSizeContext} from "./cobol.primitive.size";
 
 describe("IBM COBOL alignment", () => {
     const context: CobolPrimitiveSizeContext = {
@@ -169,6 +162,21 @@ describe("IBM COBOL alignment", () => {
         // 05 FIELD PIC S9(5) COMPUTATIONAL-5 SYNC.
         test("COMPUTATIONAL-5 synonym", () => {
             expect(boundary("S9(5)", "COMPUTATIONAL-5")).toBe(32);
+        });
+
+        // 05 FIELD PIC S9(9) COMP SYNC.
+        test("nine digits", () => {
+            expect(boundary("S9(9)", "COMP")).toBe(32);
+        });
+
+// 05 FIELD PIC S9(10) COMP SYNC.
+        test("ten digits: doubleword storage retains fullword alignment", () => {
+            expect(boundary("S9(10)", "COMP")).toBe(32);
+        });
+
+// 05 FIELD PIC S9(18) COMP SYNC.
+        test("eighteen digits", () => {
+            expect(boundary("S9(18)", "COMP")).toBe(32);
         });
     });
 

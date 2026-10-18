@@ -1,0 +1,37 @@
+{
+  "extensionsToTreatAsEsm": [
+    ".ts",
+    ".tsx"
+  ],
+
+  "transform": {
+    "^.+\\.(ts|tsx)$": [
+      "ts-jest",
+      {
+        "useESM": true,
+        "tsconfig": {
+          "isolatedModules": true
+        }
+      }
+    ]
+  },
+
+  "testRegex": "(/__tests__/.*|\\.(test|spec))\\.(ts|tsx)$",
+
+  "moduleFileExtensions": [
+    "ts",
+    "tsx",
+    "js"
+  ],
+
+  "testPathIgnorePatterns": [
+    "<rootDir>/dist/"
+  ],
+
+  "coveragePathIgnorePatterns": [
+    "<rootDir>/dist/",
+    "cursor\\.loader\\.fixture\\.ts$"
+  ],
+
+  "testTimeout": 30000
+}
