@@ -1,40 +1,43 @@
 # COBOL Layout Compilation
 
-Compile a COBOL copybook AST into **symbolic, bit-addressed physical storage geometry** for a byte-backed record reader. The layout can be shared across records; the values of `OCCURS DEPENDING ON` (ODO) controllers are supplied only when an expression or selected field location is evaluated.
+Compile a parsed COBOL copybook into **symbolic, bit-addressed physical storage geometry** for a byte-backed record reader. Compiled layouts can be reused across records; `OCCURS DEPENDING ON` (ODO) counts are supplied when a storage expression or selected field location is evaluated.
 
-The implementation targets a **tested subset of IBM Enterprise COBOL for z/OS 6.4 storage conventions**, with injectable sizing, padding and overlay-alignment policies. It is a *layout compiler*, not a COBOL source compiler, eager deserializer or primitive decoder.
+The implementation is IBM Enterprise COBOL for z/OS-oriented, with explicit options and injectable policies for storage conventions that depend on the originating compiler or source program. It is a **layout compiler**, not a COBOL source compiler, eager deserializer or byte-value decoder. The practical goal is to lay out **legal copybooks from working applications** correctly, rather than to provide exhaustive rejection diagnostics for invalid copybooks.
 
-For the detailed design, decisions, examples and open issues, see [COBOL Layout Compilation](https://docs.google.com/document/d/1dALb84lfj2HpKNBerqIXkXV4qYUxv7m3MXW3CSXRHRA/edit?usp=drivesdk).
+For detailed architectural reasoning, see [COBOL Layout Compilation](https://docs.google.com/document/d/1dALb84lfj2HpKNBerqIXkXV4qYUxv7m3MXW3CSXRHRA/edit?usp=drivesdk). For evidence, test files, original-source fixtures and how to run them, see **[README.tests.md](README.tests.md)**.
 
 ## What it provides
 
-- Fixed elementary and group storage sizes, including nested groups and inherited `USAGE`/`SYNCHRONIZED` context.
-- Fixed `OCCURS`, with one compiled occurrence body rather than expanded copies.
-- Simple and nested ODO, including ODO inside ODO with **fixed-location IBM-compatible controllers**, and zero active occurrences where declared.
-- Symbolic `SYNCHRONIZED` padding, including ownership across nested group boundaries and repeated-group trailing padding.
-- `REDEFINES` runs, shared starting positions, maximum overlay extent, unequal alternatives and symbolic right-hand gaps.
-- Parent-relative **left and right offsets** for every compiled physical entry, with all arithmetic in bits.
-- An indexed `locateCobolEntry` operation that evaluates selected occurrence prefixes and returns a concrete bit offset and selected extent using a caller-provided count resolver.
-- `ErrorsOr` diagnostics for invalid copybook storage, invalid ODO controllers, out-of-bounds counts and unsupported placement.
+- Elementary and group physical extents, inherited `USAGE`/`SYNCHRONIZED` context and storage-free declarations that contribute no bytes.
+- A dedicated PICTURE parser and classifier, with repetitions retained symbolically rather than expanded into individual characters.
+- IBM-oriented primitive-size strategies for DISPLAY, binary, packed decimal, floating, national, DBCS and UTF-8 storage, including edited pictures and relevant sign conventions.
+- Configured currency picture signs, `NSYMBOL` behaviour, and exact fixed `PIC U BYTE-LENGTH` sizing. Runtime-managed `DYNAMIC LENGTH` is recognised but cannot be represented as fixed inline file-record storage.
+- Fixed `OCCURS` and nested ODO with one compiled occurrence body; zero active occurrences where declared and compatible fixed-location controllers.
+- Symbolic `SYNCHRONIZED` padding, including nesting, alignment gaps and repeated-occurrence trailing padding.
+- `REDEFINES` runs with shared starts and maximum overlay extent, including unequal alternatives and symbolic right-hand gaps.
+- Parent-relative **left and right offsets**, expressed in bits, for compiled elementary, group and generated-padding nodes.
+- `locateCobolEntry` for selected physical fields and indexed occurrences, using a caller-provided ODO count resolver.
+- `ErrorsOr` diagnostics where a storage convention or location cannot be determined safely.
 
-The compiler preserves the AST's physical hierarchy, ignores storage-free declarations when counting bytes, and does not interpret unrequested primitive values.
+Compilation **does not decode or choose an interpretation of `REDEFINES` data**. Source bytes and application business decisions remain outside the layout compiler.
 
-## Key files and dependencies
+## Key modules and dependencies
 
-| File or package | Role |
+| File or package | Responsibility |
 | --- | --- |
-| `cobol.layout.ts` | `compileCobolLayout`, public compiled entry types, composable strategies and geometry folds |
-| `cobol.layout.location.ts` | `locateCobolEntry`, indexed physical field selection |
-| `cobol.primitive.size.ts` | Primitive `PIC`/`USAGE` storage-size policy |
-| `cobol.padding.ts` | Alignment boundary, before-placement and after-occurrence padding policy |
-| `cobol.overlay.alignment.ts` | Policy for alignment requirements within overlaid storage |
-| `@cobol-ts/copybook` | Parsed `CopybookAst` and declaration types |
-| `@cobol-ts/size` | Canonical symbolic expressions, count resolution and evaluation |
-| `@cobol-ts/trees` | Generic `transformTree`, `foldTreeLeft`, `foldTreeRight` |
-| `@cobol-ts/partial_functions` | `PartialFunction` and `chainOfResponsibility` |
-| `@cobol-ts/errors` | `ErrorsOr` and associated combinators |
+| `src/cobol.picture.ts` | PICTURE token parsing, category classification, currency-picture conventions |
+| `src/cobol.primitive.size.ts` | `CobolPrimitiveSizer`, IBM configuration and storage-size strategies |
+| `src/cobol.layout.ts` | `compileCobolLayout`, compiled geometry, transformations and directional folds |
+| `src/cobol.layout.location.ts` | `locateCobolEntry` and indexed physical selection |
+| `src/cobol.padding.ts` | Alignment/padding policy and occurrence-tail padding |
+| `src/cobol.overlay.alignment.ts` | Overlay alignment policy |
+| `@cobol-ts/copybook` | Parsed `CopybookAst`, entries and relevant storage clauses |
+| `@cobol-ts/size` | Canonical symbolic expressions, count binding and evaluation |
+| `@cobol-ts/trees` | `transformTree`, `foldTreeLeft`, `foldTreeRight` |
+| `@cobol-ts/partial_functions` | Strategy composition via `PartialFunction` and `chainOfResponsibility` |
+| `@cobol-ts/errors` | `ErrorsOr` and error combinators |
 
-These are source-module names, not a proposed new package layout. Keep any existing repository barrel exports consistent; if you expose the locator publicly, export `cobol.layout.location.ts` from the appropriate entrypoint.
+The source AST is retained by reference in compiled nodes and is treated as **immutable after compilation**. Do not mutate storage declarations while their compiled layout is in use.
 
 ## Public API
 
@@ -56,11 +59,25 @@ locateCobolEntry(
 }>;
 ```
 
-`CobolLayoutOptions` can override `primitiveSizer`, `padding`, `overlayAlignment` and `canonicalise`. Defaults use the existing primitive-size resolver, IBM-oriented padding/overlay policies and `canonicaliseStorageSize`.
+`CobolLayoutOptions` supports `primitiveSizer`, `primitiveSizing`, `padding`, `overlayAlignment` and `canonicalise`. `primitiveSizing` configures the IBM-oriented default sizer; `primitiveSizer` allows a completely supplied sizing policy. The other options control placement and symbolic expression canonicalisation.
 
-The public compiled tree has three node kinds: `elementary`, `group`, and generated `padding`. Each has `size`, `leftOffset` and `rightOffset` of type `StorageSizeExpression` (bits). Group children describe **one occurrence** even when the group's public `size` covers multiple occurrences. Offsets are **relative to the immediate containing group**; record-root offsets are zero.
+For example, currency definitions from the calling program's `SPECIAL-NAMES` clauses or its build configuration can be passed explicitly:
 
-### Example: locate a field inside nested ODO
+```ts
+const roots = compileCobolLayout(ast, 'INVOICE.cpy', {
+  primitiveSizing: {
+    defaultCurrency: {symbol: '$', value: '$'},
+    currencySigns: [{symbol: 'f', value: 'CHF'}],
+    nSymbol: 'national'
+  }
+});
+```
+
+These options describe the source compiler's conventions; the layout compiler does not infer them from a bare copybook. `PIC U BYTE-LENGTH n` has exactly `n` bytes of inline storage. `DYNAMIC LENGTH`, where recognised, is runtime-managed rather than an inline allocation and is not supported in file-record layouts.
+
+Each compiled node has `size`, `leftOffset` and `rightOffset` as `StorageSizeExpression` values **in bits**. A record root has zero parent-relative offsets. For children of a repeated group, offsets and the right-hand suffix are relative to **one occurrence body**, not the entire repeated table; the repeated group's own public `size` covers its active or fixed occurrences.
+
+### Example: indexed lookup inside nested ODO
 
 ```cobol
 01 RECORD.
@@ -75,7 +92,7 @@ The public compiled tree has three node kinds: `elementary`, `group`, and genera
    05 FINAL PIC X.
 ```
 
-With `OUTER-COUNT = 2` and `INNER-COUNT = 3`, the record is 136 bits. If `compiledRoots` is the successfully compiled layout and `resolveCount` provides controller values for the record:
+For `OUTER-COUNT = 2` and `INNER-COUNT = 3`, the physical record length is 136 bits. With a resolver that supplies those counts:
 
 ```ts
 import {valueOrThrow} from '@cobol-ts/errors';
@@ -91,44 +108,42 @@ const location = valueOrThrow(locateCobolEntry(
 // location.sizeBits === 16
 ```
 
-Occurrence indices are **zero-based** and follow each repeated declaration name. For a selected occurrence, the locator adds the extents of preceding occurrences individually: an enclosing repeated body's size may vary with nested counts, so `index * selectedBodySize` is not generally correct. The `resolveCount` callback is supplied by the caller; this module does **not** read or decode ODO counters from a byte buffer.
+Occurrence indices are zero-based and follow the repeated declaration name. The locator sums the physical extents of **preceding occurrences individually**: a nested ODO can make those extents depend on occurrence-specific counts. The supplied resolver returns controller values; this package does not retrieve them from record bytes.
 
-## How compilation works
+## Compilation architecture
 
-The implementation follows one direct transformation and two directional folds:
+The compiler performs a structural transformation and directional geometry folds; it does not materialise a record object graph.
 
-1. **Compose strategies.** The compiler indexes source context and constructs declaration, repetition and placement dispatch chains from independently testable `PartialFunction` factories. Each factory captures only its required services; an unmatched strategy throws because it indicates missing implementation, while copybook errors use `ErrorsOr`.
-2. **Transform the AST.** `transformTree` constructs actual mutable pending nodes and symbolic padding *requirements*. It does not return deferred plans, fabricate physical origins or expand occurrences.
-3. **Fold from the left.** `foldTreeLeft` applies pending alignment requirements to the current symbolic left-origin position, places sequential and overlaid runs, sets `leftOffset` and completes group sizes on group exit. Padding nodes are inserted only where the gap is nonzero.
-4. **Fold from the right.** `foldTreeRight` independently computes `rightOffset` from suffixes and overlay extents, using symbolic differences for unequal alternatives. Compilation-only intent fields are removed before returning the public tree.
+1. **Context and strategies:** index source declarations and inherited storage clauses, resolve supported ODO controllers, and assemble declaration, repetition and placement strategies from composable partial functions.
+2. **Structural transformation:** `transformTree` produces mutable compilation-only nodes and padding requirements. Fixed and dependent tables retain one occurrence body.
+3. **Left fold:** `foldTreeLeft` places sequential and overlapping runs, evaluates alignment requirements against symbolic left positions, and completes group extents.
+4. **Right fold:** `foldTreeRight` derives independent suffix offsets and gaps for unequal overlay alternatives. Compilation-only metadata is omitted from the returned tree.
 
-The symbolic algebra (`@cobol-ts/size`) supports constants, `sum`, `max`, `occurs`, `depending-on`, `align` and `difference`. It evaluates variable expressions only when given record-dependent counts and, where necessary, enclosing occurrence indices. Runtime bounds are checked using the declared ODO minimum and maximum stored on dependent expressions.
+`@cobol-ts/size` supplies the underlying algebra: numbers, sums, maxima, fixed occurrences, dependent occurrences, alignment and differences. A symbolic padding requirement can therefore be retained until its position is known without an additional layout phase or fabricated absolute origin.
 
-### Why symbolic padding?
+## Scope and boundaries
 
-A pending padding node means **“align the following storage to this boundary”**, not **“insert N bits now.”** Its eventual size may depend on earlier ODO extents. The left fold can express that gap using the symbolic left-origin position without needing a concrete record, an extra realization phase or a synthetic origin variable.
+The implementation enforces selected IBM-oriented storage restrictions where necessary to avoid ambiguous or impossible locations, but **rejecting invalid declarations is not our main acceptance objective**. Supporting real, legal copybooks and correctly locating their physical fields takes priority.
 
-## IBM-oriented validation
+The following remain distinct from compiling geometry:
 
-The implemented controller resolver searches enclosing declaration scopes and enforces a conservative, tested IBM 6.4-oriented subset. ODO controlling items must be suitable fixed-location integer elementary fields outside their controlled table; table-element controllers, ambiguous names and controllers following earlier variable-length storage are rejected. The current explicit `REDEFINES` placement strategy also rejects either participant **directly declaring ODO**.
+- **Byte-backed controller retrieval:** count values currently come from a callback, not from reading the selected physical record.
+- **Byte decoding and projection integration:** stable layout metadata has not yet been wired end-to-end into the application's borrowed projection lifecycle.
+- **Right-anchor selection:** right offsets are available, but the locator does not automatically choose record-end anchors or schedule dependent controller reads.
+- **Business-level overlays:** deciding which `REDEFINES` interpretation applies, and avoiding reads from inactive interpretations, remains a caller responsibility.
+- **Broader compiler compatibility:** a green corpus is evidence for the tested declarations and options, not exhaustive IBM conformance. File framing, dialect choices and compiler-option-sensitive layout must be checked against their original source environment.
+- **Performance:** avoid speculative caches; any prefix/boundary cache should be record-lease-scoped and justified by profiling.
 
-This is **not** full Enterprise COBOL semantic validation. In particular, the broader IBM rule forbidding any `OCCURS` on the redefined target, including fixed `OCCURS`, still requires complete enforcement. Full qualified-name resolution, implicit record-level redefinitions and option-dependent storage rules are outside the demonstrated subset. The implementation does not silently fall back to permissive historical-copybook interpretation.
+## Tests
 
-## Tests and confidence
+The suite combines internal geometry regression cases with published COBOL copybooks, independently documented record lengths, fixed field-offset oracles, source-byte position checks, and cross-feature stress cases for ODO, alignment and overlays. See **[README.tests.md](README.tests.md)** for the test map, provenance, execution commands and evidence limitations.
 
-The TDD suite covers fixed geometry, nested and repeated synchronization, generated-padding ownership, `REDEFINES` chains and unequal extents, symbolic offsets, simple and nested ODO, bounds and IBM controller legality, independent strategy composition, concrete bit locations and multi-feature interactions. Two initially failing IBM legality tests were fixed in the overlay strategy without adding a compiler phase.
+Run from the `layout/` package:
 
-The latest reported rebuilt local-harness run was **151 passing tests**, including the 19-case integration campaign and the two previously failing `REDEFINES`/ODO tests. The test suite has also been reported passing after integration in the user's repository. These results do **not** establish certification against IBM-generated reference bytes, every COBOL construct or performance characteristics.
+```sh
+npm test -- --runInBand
+```
 
-Run the repository's normal TypeScript type-check and test commands after modifying the compiler, the size algebra, its evaluator, or the locator. Do not rely solely on the geometry evaluator agreeing with the compiler: where possible, assert independently calculated physical bit positions and known record bytes.
+The design criterion is **physical correctness**, not just agreement between our compiler and its own evaluator. Expected field positions must be kept independent of production layout output.
 
-## Current limitations and next work
-
-- **Real record integration:** wire a byte-backed controller resolver and primitive decoder into `compileProjectionPath` and the existing flyweight projection framework. An indexed locator returning bit coordinates is not itself a byte decoder.
-- **Anchor selection:** `rightOffset` is compiled, but general record-end/framing-aware location planning and dependency scheduling are not implemented by the current left-origin locator.
-- **IBM conformance:** complete legality checks, and verify active versus reserved-capacity, `SYNCHRONIZED` and ODO conventions against representative IBM-generated records and compiler options.
-- **Overlay interpretation:** `max` over symbolic alternative extents must not force decoding invalid counts from inactive alternatives in a production reader. Chosen physical allocation/interpretation rules need explicit evidence.
-- **Projection path contract:** the locator accepts `(string | number)[]`, while existing generic application projection paths use `string[]`; indexed path binding is an integration decision.
-- **Performance:** a selected occurrence may require evaluating many preceding variable-sized occurrences. Add record-lease-scoped prefix or boundary caching only if measurements justify it; never put mutable per-record data into shared compiled metadata.
-
-**Design rule:** new COBOL constructs should normally be implemented as focused validation or composable strategies plus tests, not another tree representation, deferred-plan layer or compiler pass.
+**Maintenance rule:** prefer a focused strategy or storage-policy change, motivated by a failing legal-copybook or geometry test, over a new compiler phase or parallel layout representation.
