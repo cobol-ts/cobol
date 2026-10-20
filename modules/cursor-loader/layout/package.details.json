@@ -1,10 +1,11 @@
 {
-  "template": "typescript",
+  "template": "node",
   "name": "@cobol-ts/layout",
   "description": "Compiles COBOL copybook ASTs into immutable physical storage layouts, including canonical size expressions, field offsets, and dependency resolution.",
   "links": [
     "@cobol-ts/copybook",
     "@cobol-ts/errors",
+    "@cobol-ts/partial_functions",
     "@cobol-ts/size",
     "@cobol-ts/trees"
   ],

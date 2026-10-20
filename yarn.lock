@@ -699,6 +699,7 @@ __metadata:
   dependencies:
     "@cobol-ts/copybook": "npm:0.0.1"
     "@cobol-ts/errors": "npm:0.0.1"
+    "@cobol-ts/partial_functions": "npm:0.0.1"
     "@cobol-ts/size": "npm:0.0.1"
     "@cobol-ts/trees": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
@@ -710,7 +711,7 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@cobol-ts/partial_functions@workspace:modules/utils/partial_functions":
+"@cobol-ts/partial_functions@npm:0.0.1, @cobol-ts/partial_functions@workspace:modules/utils/partial_functions":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/partial_functions@workspace:modules/utils/partial_functions"
   dependencies:
