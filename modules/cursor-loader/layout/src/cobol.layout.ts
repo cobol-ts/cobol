@@ -3,7 +3,7 @@ import {type StorageSizeExpression, type DependsOnPath, canonicaliseStorageSize}
 import {type ErrorsOr, errors, value, mapErrorsOr, flatMapErrorsOr} from "@cobol-ts/errors";
 import {chainOfResponsibility, type PartialFunction} from "@cobol-ts/partial_functions";
 import {transformTree, foldTreeLeft, foldTreeRight, type Tree} from "@cobol-ts/trees";
-import {type CobolPrimitiveSizer, type CobolPrimitiveDescription, defaultCobolPrimitiveSizer} from "./cobol.primitive.size";
+import {type CobolPrimitiveSizer, type CobolPrimitiveDescription, type IbmCobolPrimitiveSizingOptions, ibmCobolPrimitiveSizer} from "./cobol.primitive.size";
 import {type CobolPaddingPolicy, type CobolPaddingContext, ibmCobolPadding} from "./cobol.padding";
 import {type CobolOverlayAlignmentPolicy, ibmOverlayAlignment} from "./cobol.overlay.alignment";
 
@@ -25,6 +25,7 @@ export type CompiledCobolEntry = CompiledCobolElementary | CompiledCobolGroup | 
 
 export type CobolLayoutOptions = Readonly<{
     primitiveSizer?: CobolPrimitiveSizer;
+    primitiveSizing?: IbmCobolPrimitiveSizingOptions;
     padding?: CobolPaddingPolicy;
     overlayAlignment?: CobolOverlayAlignmentPolicy;
     canonicalise?: (size: StorageSizeExpression) => StorageSizeExpression;
@@ -190,7 +191,9 @@ const sizingPrimitive = (
     const description: CobolPrimitiveDescription = {
         picture: source.picture,
         usage: context.inheritedUsage,
-        sign: source.clauses.find(c => c.kind === "sign")
+        sign: source.clauses.find(c => c.kind === "sign"),
+        byteLength: source.clauses.find(c => c.kind === "byte-length")?.bytes,
+        dynamicLength: source.clauses.find(c => c.kind === "dynamic-length")
     };
     return flatMapErrorsOr(
         primitiveSizer(description, {copybook, line: source.line, path: context.path}),
@@ -651,7 +654,7 @@ export function compileCobolLayout(
     const before = beforePadding(policy, policyContext, checkedSize);
     const afterOccurrence = afterPadding(policy, policyContext, checkedSize);
     const countOf = countingOccurrences(diagnostic, contextOf, resolvingScopedController(ast, contextOf, diagnostic));
-    const primitiveSize = sizingPrimitive(options.primitiveSizer ?? defaultCobolPrimitiveSizer,
+    const primitiveSize = sizingPrimitive(options.primitiveSizer ?? ibmCobolPrimitiveSizer(options.primitiveSizing),
         checkedSize, contextOf, copybook);
 
     const build = chainOfResponsibility<Build, ErrorsOr<readonly PendingEntry[]>>(

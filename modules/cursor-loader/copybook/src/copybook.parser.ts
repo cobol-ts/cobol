@@ -24,6 +24,8 @@ import {
     BlankWhenZeroClause,
     SynchronizedClause,
     RedefinesClause,
+    ByteLengthClause,
+    DynamicLengthClause,
     ConditionEntry,
     ConditionValue,
 } from "./copybook.ast";
@@ -805,6 +807,37 @@ const parsePicture: ClauseParser = (
 
 
 /*
+ * PIC U BYTE-LENGTH n and DYNAMIC LENGTH [LIMIT n].
+ * These are preserved explicitly; the storage sizer determines the
+ * representation rather than treating a LIMIT as allocated storage.
+ */
+const parseByteLength: ClauseParser = (tokens, index, sourceLines) => {
+    let next = index + 1;
+    if (upper(tokens[next]?.text) === "IS") next++;
+    const count = Number(tokens[next]?.text);
+    if (!Number.isSafeInteger(count) || count < 1 || count > 999999999)
+        return {kind: "error", error: diagnostic(sourceLines, tokens[index].line,
+            "BYTE-LENGTH requires a positive integer no greater than 999999999"), next: next + 1};
+    return {kind: "clause", clause: {kind: "byte-length", bytes: count} as ByteLengthClause, next: next + 1};
+};
+
+const parseDynamicLength: ClauseParser = (tokens, index, sourceLines) => {
+    let next = index + 1;
+    if (upper(tokens[next]?.text) === "LENGTH") next++;
+    let limit: number | undefined;
+    if (upper(tokens[next]?.text) === "LIMIT") {
+        next++;
+        if (upper(tokens[next]?.text) === "IS") next++;
+        limit = Number(tokens[next]?.text);
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 999999999)
+            return {kind: "error", error: diagnostic(sourceLines, tokens[index].line,
+                "DYNAMIC LENGTH LIMIT requires a positive integer no greater than 999999999"), next: next + 1};
+        next++;
+    }
+    return {kind: "clause", clause: {kind: "dynamic-length", limit} as DynamicLengthClause, next};
+};
+
+/*
  * REDEFINES
  */
 
@@ -1505,6 +1538,9 @@ const directUsageTokens = [
     "COMPUTATIONAL-4",
     "COMPUTATIONAL-5",
     "PACKED-DECIMAL",
+    "NATIONAL",
+    "DISPLAY-1",
+    "UTF-8",
     "INDEX",
     "POINTER",
     "FUNCTION-POINTER",
@@ -1542,6 +1578,8 @@ const clauseParsers: Record<
 > = {
     PIC: parsePicture,
     PICTURE: parsePicture,
+    "BYTE-LENGTH": parseByteLength,
+    DYNAMIC: parseDynamicLength,
 
     REDEFINES: parseRedefines,
 

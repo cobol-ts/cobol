@@ -83,7 +83,9 @@ export type CopybookClause =
     | ValueClause
     | JustifiedClause
     | BlankWhenZeroClause
-    | SynchronizedClause;
+    | SynchronizedClause
+    | ByteLengthClause
+    | DynamicLengthClause;
 
 export type RedefinesClause = {
     kind: "redefines";
@@ -141,3 +143,9 @@ export type SynchronizedClause = {
     kind: "synchronized";
     position?: "left" | "right";
 };
+
+/** PIC U BYTE-LENGTH n: fixed n-byte UTF-8 representation. */
+export type ByteLengthClause = {kind: "byte-length"; bytes: number};
+
+/** Runtime-managed storage, not an inline FD record field. */
+export type DynamicLengthClause = {kind: "dynamic-length"; limit?: number};

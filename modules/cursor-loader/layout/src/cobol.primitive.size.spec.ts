@@ -2,6 +2,7 @@
 import {valueOrThrow, errorsOrThrow} from "@cobol-ts/errors";
 import {
     defaultCobolPrimitiveSizer,
+    ibmCobolPrimitiveSizer,
     type CobolPrimitiveDescription,
     type CobolPrimitiveSizeContext
 } from "./cobol.primitive.size";
@@ -80,6 +81,100 @@ describe("primitive size", () => {
 
         // 05 FIELD PIC ZZZ9.99.
         test("numeric editing", () => expect(bits("ZZZ9.99")).toBe(56));
+    });
+
+    describe("DISPLAY numeric-edited", () => {
+        // AWS REC-OUTFILE: 03 OUTFILE-TEXT PIC -9(18).
+        test("fixed minus sign adds one storage position", () =>
+            expect(bits("-9(18)")).toBe(19 * 8));
+
+        // 05 FIELD PIC +9(5).
+        test("fixed plus sign adds one storage position", () =>
+            expect(bits("+9(5)")).toBe(6 * 8));
+
+        // 05 FIELD PIC 9(5)CR.
+        test("CR occupies two trailing storage positions", () =>
+            expect(bits("9(5)CR")).toBe(7 * 8));
+
+        // 05 FIELD PIC 9(5)DB.
+        test("DB occupies two trailing storage positions", () =>
+            expect(bits("9(5)DB")).toBe(7 * 8));
+
+        // 05 FIELD PIC ZZ,ZZ9.99.
+        test("zero suppression and inserted comma each occupy positions", () =>
+            expect(bits("ZZ,ZZ9.99")).toBe(9 * 8));
+
+        // 05 FIELD PIC ***9.99.
+        test("asterisk replacement occupies one position per symbol", () =>
+            expect(bits("***9.99")).toBe(7 * 8));
+    });
+
+    describe("DISPLAY numeric-edited width combinations", () => {
+        // Independent position counts based on IBM Enterprise COBOL 6.4 PICTURE rules.
+        // Insertion and suppression symbols occupy storage; only S, V and P are implied.
+        const cases: readonly (readonly [string, number])[] = [
+            ["$9(3).99", 7],      // fixed currency insertion
+            ["$$$9.99", 7],       // floating currency insertion
+            ["-(3)9.99", 7],      // floating minus-sign insertion
+            ["+(3)9.99", 7],      // floating plus-sign insertion
+            ["9(3)B9(2)", 6],     // inserted blank
+            ["9(2)/9(2)", 5],     // inserted slash
+            ["9(3)0(2)9", 6],    // two inserted zeros
+            ["Z(4)9.99", 8],     // repeated zero-suppression symbols
+            ["*(3)9.99", 7],     // repeated asterisk-replacement symbols
+            ["9(4).99CR", 9],    // decimal separator plus two-character sign
+        ];
+
+        for (const [picture, bytes] of cases) {
+            test(`PIC ${picture} occupies ${bytes} bytes`, () =>
+                expect(bits(picture)).toBe(bytes * 8));
+        }
+    });
+
+    describe("other legal IBM PICTURE storage forms", () => {
+        // These are legal Enterprise COBOL 6.4 storage declarations.
+        // Their expected widths do not depend on our parser or sizer.
+        // They expose coverage gaps in the current implementation rather
+        // than asking the primitive sizer to validate arbitrary copybooks.
+        const cases: readonly (readonly [string, string | undefined, number])[] = [
+            ["X9(2)", undefined, 3],             // mixed alphanumeric
+            ["XXBX/XXX", undefined, 8],          // IBM's alphanumeric-edited example
+            ["X(2)0X(2)", undefined, 5],          // alphanumeric zero insertion
+            ["G(3)", "DISPLAY-1", 6],            // DBCS: 3 * 2-byte characters
+            ["0NN", "NATIONAL", 6],              // IBM's national-edited example
+            ["9(3)", "NATIONAL", 6],             // national numeric DISPLAY equivalent
+            ["-$999.99", "NATIONAL", 16],       // national numeric-edited
+            ["-9V9(9)E-99", "DISPLAY", 15],      // IBM external floating-point example
+        ];
+
+        for (const [picture, usage, bytes] of cases) {
+            test(`PIC ${picture} USAGE ${usage ?? "DISPLAY"} occupies ${bytes} bytes`, () =>
+                expect(bits(picture, usage)).toBe(bytes * 8));
+        }
+    });
+
+    describe("additional IBM storage categories", () => {
+        test("national signed decimal uses a two-byte separate sign", () =>
+            expect(bits("S9(3)", "NATIONAL", true)).toBe(64));
+
+        test("external floating-point supports national storage", () =>
+            expect(bits("-9V9(9)E-99", "NATIONAL")).toBe(240));
+
+        test("N implies NATIONAL under the IBM 6.4 default NSYMBOL option", () =>
+            expect(bits("N(3)")).toBe(48));
+
+        test("DISPLAY-1 treats G and B as two-byte DBCS positions", () =>
+            expect(bits("G(2)BG", "DISPLAY-1")).toBe(64));
+
+        test("fixed character-length UTF-8 reserves four bytes per U", () => {
+            expect(bits("U(10)")).toBe(320);
+            expect(bits("U(10)", "UTF-8")).toBe(320);
+        });
+
+        test("binary and packed storage still reject edited pictures", () => {
+            expect(failures("-9(18)", "COMP-3")[0]).toContain("unedited numeric");
+            expect(failures("XXBX/XXX", "COMP")[0]).toContain("unedited numeric");
+        });
     });
 
     describe("packed decimal", () => {
@@ -244,5 +339,51 @@ describe("primitive size", () => {
                 "Copybook ORDERS.cpy, line 42, ORDER.ITEMS.CODE: Unsupported USAGE 'UNKNOWN'"
             );
         });
+    });
+});
+
+describe("IBM Enterprise COBOL configured storage conventions", () => {
+    const context: CobolPrimitiveSizeContext = {
+        copybook: "CURRENCY.cpy", line: 5, path: ["RECORD", "AMOUNT"]
+    };
+    test("the configured CURRENCY SIGN value increases edited storage width", () => {
+        const sizer = ibmCobolPrimitiveSizer({currencySigns: [{symbol: "$", value: "EUR"}]});
+        expect(valueOrThrow(sizer({picture: "$9(3).99"}, context))).toBe(72);
+        expect(valueOrThrow(sizer({picture: "$$$9.99"}, context))).toBe(72);
+        expect(valueOrThrow(defaultCobolPrimitiveSizer({picture: "$$$9.99"}, context))).toBe(56);
+    });
+    test("CURRENCY option supplies an alternate default symbol", () => {
+        const sizer = ibmCobolPrimitiveSizer({defaultCurrency: {symbol: "@", value: "@"}});
+        expect(valueOrThrow(sizer({picture: "@9(3)"}, context))).toBe(32);
+        expect(errorsOrThrow(sizer({picture: "$9(3)"}, context)).length).toBeGreaterThan(0);
+    });
+    test("distinct case-sensitive currency symbols can have distinct values", () => {
+        const sizer = ibmCobolPrimitiveSizer({currencySigns: [
+            {symbol: "f", value: "CHF"}, {symbol: "F", value: "US"}
+        ]});
+        expect(valueOrThrow(sizer({picture: "f9(3)"}, context))).toBe(48);
+        expect(valueOrThrow(sizer({picture: "F9(3)"}, context))).toBe(40);
+    });
+    test("fixed byte-length UTF-8 reserves exact bytes rather than four bytes per U", () => {
+        expect(valueOrThrow(defaultCobolPrimitiveSizer({picture: "U", byteLength: 17}, context))).toBe(136);
+        expect(valueOrThrow(defaultCobolPrimitiveSizer({picture: "U(17)"}, context))).toBe(544);
+    });
+    test("BYTE-LENGTH requires a single U and UTF-8 USAGE", () => {
+        for (const description of [
+            {picture: "U(2)", byteLength: 4},
+            {picture: "X", byteLength: 4},
+            {picture: "U", usage: "DISPLAY", byteLength: 4},
+            {picture: "U", byteLength: 0},
+        ]) expect(errorsOrThrow(defaultCobolPrimitiveSizer(description, context)).length).toBeGreaterThan(0);
+    });
+    test("DYNAMIC LENGTH does not invent fixed storage from LIMIT", () => {
+        expect(errorsOrThrow(defaultCobolPrimitiveSizer({picture: "U", dynamicLength: {limit: 128}}, context)).join(' '))
+            .toContain("no inline file-record size");
+        expect(errorsOrThrow(defaultCobolPrimitiveSizer({picture: "X", dynamicLength: {}}, context)).join(' '))
+            .toContain("no inline file-record size");
+    });
+    test("NSYMBOL(DBCS) is supported as a source configuration", () => {
+        const sizer = ibmCobolPrimitiveSizer({nSymbol: "dbcs"});
+        expect(valueOrThrow(sizer({picture: "N(4)"}, context))).toBe(64);
     });
 });
