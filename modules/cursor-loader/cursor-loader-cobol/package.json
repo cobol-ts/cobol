@@ -19,7 +19,7 @@
   "dependencies": {
     "@cobol-ts/cursor-loader-types": "0.0.1",
     "@cobol-ts/layout": "0.0.1",
-    "@cobol-ts/trees": "0.0.1"
+    "@cobol-ts/errors": "0.0.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.1.4",
@@ -27,7 +27,9 @@
     "@types/node": "^14.0.0",
     "jest": "^29.0.0",
     "ts-jest": "^29.0.0",
-    "typescript": "^5.2.2"
+    "typescript": "^5.2.2",
+    "@cobol-ts/copybook": "0.0.1",
+    "@cobol-ts/cursor-projection": "0.0.1"
   },
   "eslintConfig": {
     "extends": [
@@ -52,7 +54,11 @@
     "build/"
   ],
   "keywords": [
-    "indexing"
+    "cobol",
+    "byte-backed",
+    "cursor",
+    "projection",
+    "debug"
   ],
   "license": "MIT",
   "repository": "git@github.com:intellimaintain/intellimaintain.git",

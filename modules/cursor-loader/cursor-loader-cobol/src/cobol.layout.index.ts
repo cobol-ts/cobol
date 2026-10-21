@@ -1,56 +1,68 @@
-import {type CompiledCobolEntry, type CompiledCobolElementary, type CompiledCobolGroup} from "@cobol-ts/layout";
-import {foldTreeLeft, type Tree} from "@cobol-ts/trees";
+import {
+    type CompiledCobolEntry,
+    type CompiledCobolElementary,
+    type CompiledCobolGroup
+} from "@cobol-ts/layout";
+import {
+    type ErrorsOr,
+    errors,
+    value,
+    mapErrorsOr,
+    flattenArrayOfErrorsOr
+} from "@cobol-ts/errors";
 
-/** A name lookup points back to the original compiled storage node; no geometry is copied. */
+/** Index entries reference the original compiled nodes; geometry is not copied. */
 export type NamedCobolEntry = Readonly<{
     node: CompiledCobolElementary | CompiledCobolGroup;
-    children: ReadonlyMap<string, NamedCobolEntry>;
+    children: CobolNameIndex;
 }>;
 
+/** The keys retain their original copybook spelling. */
 export type CobolNameIndex = ReadonlyMap<string, NamedCobolEntry>;
 
-const tree: Tree<CompiledCobolElementary | Extract<CompiledCobolEntry, {kind: "padding"}>, CompiledCobolGroup> = {
-    isLeaf: node => node.kind !== "group",
-    children: group => group.children
-};
+const sameCobolName = (left: string, right: string): boolean =>
+    left.toUpperCase() === right.toUpperCase();
 
-type Frame = {
-    readonly roots: Map<string, NamedCobolEntry>;
-    readonly scopes: Map<string, NamedCobolEntry>[];
-};
+/** Find a name regardless of the casing used by the caller. */
+export function findCobolName(index: CobolNameIndex, name: string): NamedCobolEntry | undefined {
+    for (const [declared, entry] of index) {
+        if (sameCobolName(declared, name)) return entry;
+    }
+    return undefined;
+}
 
 /**
- * One setup-time traversal for case-insensitive hierarchical COBOL names.
- * Generated padding and unnamed FILLER are never projected. A FILLER group
- * is an inaccessible subtree rather than accidentally flattening its names
- * into the containing group. REDEFINES alternatives are retained separately.
- * Ambiguous duplicate names within one scope are rejected explicitly.
- *
- * The returned ReadonlyMap is source-scoped metadata, not a record-specific
- * value or a materialised view of the record.
+ * Build one map per declarative scope, preserving source-node references.
+ * Padding and unnamed FILLER (including a FILLER group's descendants) are
+ * inaccessible. Duplicate-name diagnostics and independent subtree failures
+ * are combined by the shared ErrorsOr aggregation utility.
  */
-export function createCobolNameIndex(roots: readonly CompiledCobolEntry[]): CobolNameIndex {
-    const root = new Map<string, NamedCobolEntry>();
-    const frame: Frame = {roots: root, scopes: [root]};
+export function createCobolNameIndex(entries: readonly CompiledCobolEntry[]): ErrorsOr<CobolNameIndex> {
+    const named = entries.flatMap(node =>
+        node.kind !== "padding" && node.source.name.kind === "named"
+            ? [{name: node.source.name.name, node}]
+            : []
+    );
 
-    foldTreeLeft(roots, tree, frame, (state, node) => {
-        if (node.kind === "padding") return state;
+    const indexed = named.map(({name, node}) =>
+        mapErrorsOr(
+            node.kind === "group"
+                ? createCobolNameIndex(node.children)
+                : value(new Map<string, NamedCobolEntry>()),
+            children => [name, {node, children}] as const
+        )
+    );
 
-        const children = new Map<string, NamedCobolEntry>();
-        if (node.source.name.kind === "named") {
-            const name = node.source.name.name.toUpperCase();
-            const siblings = state.scopes[state.scopes.length - 1];
-            if (siblings.has(name)) {
-                throw new Error(`Ambiguous COBOL name '${name}' in compiled layout scope`);
-            }
-            siblings.set(name, {node, children});
-        }
-        if (node.kind === "group") state.scopes.push(children);
-        return state;
-    }, state => {
-        state.scopes.pop();
-        return state;
-    });
+    const duplicates = named.flatMap(({name}, i) =>
+        named.slice(i + 1)
+            .filter(other => sameCobolName(name, other.name))
+            .map(other => errors(
+                `Ambiguous COBOL names '${name}' and '${other.name}' in compiled layout scope`
+            ))
+    );
 
-    return root;
+    return mapErrorsOr(
+        flattenArrayOfErrorsOr([...indexed, ...duplicates]),
+        pairs => new Map(pairs)
+    );
 }

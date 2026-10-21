@@ -5,7 +5,10 @@
   "links": [
     "@cobol-ts/cursor-loader-types",
     "@cobol-ts/layout",
-    "@cobol-ts/trees"
+    "@cobol-ts/errors",
+    "@cobol-ts/copybook",
+    "@cobol-ts/size",
+    "@cobol-ts/cursor-projection"
   ],
   "packageJson": {
     "files": [
