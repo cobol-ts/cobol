@@ -5,6 +5,7 @@
   "links": [
     "@cobol-ts/cursor-file",
     "@cobol-ts/cursor-record",
+    "@cobol-ts/cursor-loader-cobol",
     "@cobol-ts/cursor-loader-csv",
     "@cobol-ts/cursor-loader-json",
     "@cobol-ts/cursor-loader-types",

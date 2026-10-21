@@ -1,0 +1,26 @@
+{
+  "template": "node",
+  "name": "@cobol-ts/cursor-loader-cobol",
+  "description": "Byte-backed COBOL cursor integration: compiled-layout name indexing and diagnostic byte-range projections",
+  "links": [
+    "@cobol-ts/cursor-loader-types",
+    "@cobol-ts/layout",
+    "@cobol-ts/trees"
+  ],
+  "packageJson": {
+    "files": [
+      "build/"
+    ],
+    "dependencies": {},
+    "devDependencies": {},
+    "scripts": {
+      "start": "react-scripts start"
+    }
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true,
+    "react": false
+  }
+}

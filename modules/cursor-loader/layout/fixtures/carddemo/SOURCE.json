@@ -1,0 +1,15 @@
+{
+  "repo": "aws-samples/aws-mainframe-modernization-carddemo",
+  "revision": "59cc6c2fd7ebd7ef7925cad552a01a4b8b6e4d5e",
+  "names": [
+    "CSUSR01Y.cpy",
+    "CVACT01Y.cpy",
+    "CVACT02Y.cpy",
+    "CVCUS01Y.cpy",
+    "CVACT03Y.cpy",
+    "CVTRA06Y.cpy",
+    "CVTRA05Y.cpy",
+    "CVTRA02Y.cpy"
+  ],
+  "source": "https://github.com/aws-samples/aws-mainframe-modernization-carddemo/tree/59cc6c2fd7ebd7ef7925cad552a01a4b8b6e4d5e/app/cpy"
+}

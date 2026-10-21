@@ -505,6 +505,22 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@cobol-ts/cursor-loader-cobol@npm:0.0.1, @cobol-ts/cursor-loader-cobol@workspace:modules/cursor-loader/cursor-loader-cobol":
+  version: 0.0.0-use.local
+  resolution: "@cobol-ts/cursor-loader-cobol@workspace:modules/cursor-loader/cursor-loader-cobol"
+  dependencies:
+    "@cobol-ts/cursor-loader-types": "npm:0.0.1"
+    "@cobol-ts/layout": "npm:0.0.1"
+    "@cobol-ts/trees": "npm:0.0.1"
+    "@testing-library/jest-dom": "npm:^6.1.4"
+    "@types/jest": "npm:^29.0.0"
+    "@types/node": "npm:^14.0.0"
+    jest: "npm:^29.0.0"
+    ts-jest: "npm:^29.0.0"
+    typescript: "npm:^5.2.2"
+  languageName: unknown
+  linkType: soft
+
 "@cobol-ts/cursor-loader-csv@npm:0.0.1, @cobol-ts/cursor-loader-csv@workspace:modules/cursor-loader/cursor-loader-csv":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-loader-csv@workspace:modules/cursor-loader/cursor-loader-csv"
@@ -541,6 +557,7 @@ __metadata:
   resolution: "@cobol-ts/cursor-loader-test@workspace:modules/cursor-loader/cursor-loader-test"
   dependencies:
     "@cobol-ts/cursor-file": "npm:0.0.1"
+    "@cobol-ts/cursor-loader-cobol": "npm:0.0.1"
     "@cobol-ts/cursor-loader-csv": "npm:0.0.1"
     "@cobol-ts/cursor-loader-json": "npm:0.0.1"
     "@cobol-ts/cursor-loader-types": "npm:0.0.1"
@@ -693,7 +710,7 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@cobol-ts/layout@workspace:modules/cursor-loader/layout":
+"@cobol-ts/layout@npm:0.0.1, @cobol-ts/layout@workspace:modules/cursor-loader/layout":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/layout@workspace:modules/cursor-loader/layout"
   dependencies:
