@@ -24,14 +24,23 @@ import {
 // only follows its children; it is NOT a second physical locator or projection
 // compiler. When we introduce a public full-path resolver, these cases should
 // be pointed at that function unchanged.
-function lookup(index: CobolNameIndex, path: readonly string[]): NamedCobolEntry | undefined {
+function lookup(
+    index: CobolNameIndex,
+    path: readonly (string | number)[]
+): NamedCobolEntry | undefined {
     let scope = index;
     let found: NamedCobolEntry | undefined;
+
     for (const component of path) {
+        if (typeof component !== "string")
+            return undefined;
+
         found = findCobolName(scope, component);
         if (!found) return undefined;
+
         scope = found.children;
     }
+
     return found;
 }
 

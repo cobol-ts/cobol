@@ -18,7 +18,8 @@ import {
     type Customer,
     createTestFile,
     createTestInfrastructure,
-    customerFileDefinition
+    customerFileDefinition,
+    testParserRegistry
 } from "./cursor.file.fixture";
 
 
@@ -51,6 +52,19 @@ function projectedValue<T>(
 
 
 describe("createFileCursor",() => {
+    test("fixture compiles named paths and rejects unsupported numeric selectors",() => {
+        const compile =
+            testParserRegistry.test.parser.compileProjectionPath;
+
+        expect(
+            compile(undefined,undefined,["name"])
+        ).toEqual(["name"]);
+
+        expect(
+            () => compile(undefined,undefined,["name",0])
+        ).toThrow("Unknown test projection path: name.0");
+    });
+
     test("selects the parser through the registry and returns a projected value",async () => {
         const cursor =
             createFileCursor(

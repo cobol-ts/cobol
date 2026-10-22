@@ -1,351 +1,131 @@
-# @cobol-ts/cursor-projection
+# `@cobol-ts/cursor-projection`
 
-Declarative, lazy and reusable application projections for the byte-backed cursor framework.
+Compile-once, lazy, reusable **typed projections** over parser-owned representations. A projection gives application code a familiar interface without requiring a fresh tree of decoded values for each record.
 
-A projection describes the application-facing fields required from a parser representation. At runtime it exposes those fields through an ordinary application interface without constructing a new materialised application object for every source record.
+## Why this package exists
 
-## Why projections exist
+The architecture deliberately separates three responsibilities:
 
-The architecture separates:
+1. **Physical input and lifetime** (`cursor-record`, `cursor-file`): borrow bytes, delimit records, manage leases and pools.
+2. **Format-specific interpretation** (CSV, JSONL, COBOL): compile logical paths and read or select values in the representation.
+3. **Application projection** (this package): declare desired members, compile them once, expose scalar methods, nested objects and projected arrays.
 
-```text
-physical source
-    ↓
-parser representation
-    ↓
-projection
-    ↓
-application interface
-```
+For byte-backed formats this is more than an optimisation. A COBOL copybook and the bytes do not always identify one unambiguous *business* object. `REDEFINES` may require business context—possibly outside the record—to select an interpretation. This package does not attempt to make that decision.
 
-The parser understands its source format. The application should not need to.
-
-For example:
+## Application-facing model
 
 ```ts
-interface Customer {
+import type {ProjectedArray} from "@cobol-ts/arrays";
+import {defineProjection, createProjection} from "@cobol-ts/cursor-projection";
+
+interface Item {
+    sku(): string;
+    quantity(): number;
+}
+interface Order {
     id(): number;
+    readonly items: ProjectedArray<Item>;
+}
+interface Address {
+    town(): string;
+}
+interface Customer {
     name(): string;
-    postcode(): string;
-    balance(): number;
+    readonly address: Address;
+    readonly orders: ProjectedArray<Order>;
 }
+
+const customerDefinition = defineProjection<Customer>({
+    name: {type: "string"},
+    address: {type: "object", fields: {
+        town: {type: "string"}
+    }},
+    orders: {type: "array", element: {
+        id: {type: "integer"},
+        items: {type: "array", element: {
+            sku: {type: "string"},
+            quantity: {type: "integer"}
+        }}
+    }}
+});
+
+// Given a live, bound Customer projection:
+customer.orders[0].items[1].sku();
+customer.orders.map(order => order.id());
+customer.address.town();
 ```
 
-The same application interface can be backed by JSON, CSV or a future COBOL parser without the application knowing how those values are physically represented.
+Scalar members are functions returning `string` or `number`. Nested objects and arrays are **readonly properties**. Supported scalar types are `integer`, `float`, `character` and `string`. Arrays may contain further projected objects and arrays, including multiple sibling arrays within one parent.
 
-## Defining a projection
+`defineProjection<T>()` type-checks the definition against the application's interface and canonicalises missing paths, so `name: {type:"string"}` becomes a member with the logical path `["name"]`. Child paths are **relative to the containing projection**. A path can contain `string` names and `number` literal selectors; whether those selectors are valid depends on the parser.
 
-Use `defineProjection()`:
+## Compile once, then bind many records
 
 ```ts
-const customerProjection =
-    defineProjection<Customer>({
-        id: {
-            type: "integer"
-        },
-
-        name: {
-            type: "string"
-        },
-
-        postcode: {
-            type: "string",
-            path: [
-                "address",
-                "postcode"
-            ]
-        },
-
-        balance: {
-            type: "float"
-        }
-    });
-```
-
-Supported scalar kinds are:
-
-```text
-integer
-float
-character
-string
-```
-
-The application interface is authoritative. TypeScript checks that every accessor is present and that the configured scalar kind is compatible with its return type.
-
-## Canonical paths
-
-Every projection field has an already-tokenised logical path.
-
-If `path` is omitted:
-
-```ts
-id: {
-    type: "integer"
-}
-```
-
-`defineProjection()` canonicalises it once to:
-
-```ts
-id: {
-    type: "integer",
-    path: ["id"]
-}
-```
-
-The canonical authoring path remains a `readonly string[]`.
-
-## Paths are parser-specific at runtime
-
-The projection package does not assign physical meaning to a path. The parser does.
-
-Examples:
-
-```text
-JSON
-    ["address", "postcode"]
-    → same string path used for property traversal
-
-CSV
-    ["postcode"]
-    → numeric column index compiled from the prepared header
-
-COBOL
-    ["CUSTOMER", "ADDRESS", "POSTCODE"]
-    → parser-specific compiled layout information
-```
-
-## Creating the runtime projection
-
-`createProjection()` is source-scoped. It combines:
-
-- parser projection support;
-- opened-source parser details;
-- optional preparation-record context;
-- the canonical projection definition.
-
-Its current shape is:
-
-```ts
-const factory =
-    createProjection(
-        parser,
-        details,
-        preparationContext,
-        projectionDefinition
-    );
-```
-
-For JSON, both `details` and `preparationContext` are `undefined`.
-
-For CSV, `details` contains the prepared header map and `preparationContext` identifies the header record for setup diagnostics.
-
-## Path compilation happens once
-
-When the factory is created, each canonical string path is compiled exactly once through:
-
-```ts
-parser.compileProjectionPath(
-    details,
-    preparationContext,
-    field.path
-)
-```
-
-The resulting parser-specific path is captured by the accessor.
-
-CSV therefore performs header-name lookup during source setup rather than on every row access.
-
-The preparation context is discarded after compilation; runtime accessors do not retain it.
-
-## Accessor functions are shared
-
-`createProjection()` also creates one immutable accessor function for each projected field.
-
-Those accessor functions are shared by every reusable projection object produced by the resulting factory.
-
-`factory.create()` constructs a projection object containing:
-
-- two mutable internal binding slots;
-- references to the already-created shared accessor functions.
-
-It does not recreate the accessor closures.
-
-## Binding
-
-A reusable projection is bound to:
-
-```text
-current parser representation
-+
-current physical record
-```
-
-through:
-
-```ts
-factory.bind(
-    projection,
-    representation,
-    physicalRecord
+const factory = createProjection(
+    parser,               // format's ProjectionSupport and debug renderer
+    preparedDetails,      // one opened source
+    preparationContext,   // often undefined
+    customerDefinition
 );
+
+const customer = factory.create(); // one reusable, initially unbound view
+factory.bind(customer, representation, physicalRecord);
+// Use customer while its owning record lease is live.
+factory.clear(customer);           // remove borrowed bindings
 ```
 
-`clear()` removes both lease-specific references:
+Compilation recursively visits all scalar, object and array members. Each logical path goes through the parser's `compileProjectionPath(details, context, path, parent?)` **once at factory creation**, including relative child paths. The compiled schema keeps numeric COBOL field geometry, numeric CSV column indexes or JSON property-path tokens. It is independent of the current row.
 
-```ts
-factory.clear(projection);
-```
+The factory installs reusable scalar accessor functions and getters on view objects. Calling a scalar accessor passes the selected representation, source details and compiled path to the parser. A projected array getter asks the parser for an **indexed source**: `length()` and `element(index)`. It never requires a materialised array of underlying record values.
 
-The object can then be reused for another source record.
+## Array selection and reusable child views
 
-## Lazy access
-
-Projection fields are methods rather than copied values:
-
-```ts
-customer.balance()
-```
-
-The accessor invokes the parser using the opened-source details and compiled runtime path:
-
-```ts
-parser.float(
-    representation,
-    details,
-    compiledPath
-)
-```
-
-The generic projection layer does not decode CSV or COBOL bytes itself.
-
-For the current CSV parser, a projection accessor ultimately decodes only the requested field range from the byte-backed record. The full CSV row is scanned structurally, but unrelated field strings are not materialised.
-
-For JSON, `JSON.parse()` has already created the complete representation, so projection laziness is primarily about application API, reuse and error/lifetime semantics rather than avoiding JSON object creation.
-
-## Late materialisation
-
-Late materialisation is especially important for formats where the physical bytes are more authoritative than any one eager object representation.
-
-For CSV, the current parser stores reusable field start/end byte offsets and interprets only requested values.
-
-For a future COBOL parser, the same mechanism can also preserve multiple possible interpretations of the same bytes until application context selects the required view.
-
-The intended path is:
+The array interface and proxy live in `@cobol-ts/arrays`; record-aware projection construction lives here. At runtime:
 
 ```text
-recognize physical record
-    ↓
-retain reusable structural information
-    ↓
-application requests a value
-    ↓
-interpret only that value
+customer.orders
+  └─ source: length(), element(index)
+       ├─ [0] → cached Order projection, bound to selected representation
+       │         └─ items → its own cached ProjectedArray<Item>
+       └─ [1] → independent cached Order projection
 ```
 
-rather than eagerly constructing a complete application object graph.
+A projected array has **two different quantities**:
 
-## Borrowed lifetime
+- **Active length**: how many elements the current representation exposes (native JSON array length or a COBOL OCCURS count).
+- **Retained element slots**: projection objects created on earlier accesses and kept for reuse. Slots are allocated lazily; accessing index 9 need not construct indexes 0–8.
 
-A projection is borrowed.
+The active length determines bounds and iteration. Retained slots outside that length are inaccessible but are not discarded. The same rule applies independently to each nested array. This high-water reuse avoids repeatedly rebuilding the projection hierarchy.
 
-Its validity is tied to the `FileCursorResult` which owns the corresponding physical record.
+**Where state lives:** root array runtimes are stored in `record.recordState.projectionViews`, keyed by the **compiled array-member object**. Different members (`orders`, `addresses`, etc.) therefore cannot collide. Nested arrays are retained by their respective child projection instances. No new physical-record class or independent child-object pool is required. The physical-record pool is source/file-scoped; its generic record state persists while holders are reused.
 
-After the result is closed, the projection reference is invalid and must not be used again.
+A name such as `root.orders` accompanies array runtimes for debugging; the name is not their cache key. The normal cursor integration binds one root projection to its leased physical-record holder.
 
-Immediately after clearing, an attempted access reports:
+## Borrowed lifetime and pooling
 
-```text
-Projection is not bound to a record
-```
+`FileCursorResult` owns a live physical record and a reusable root projection. Closing the result clears projection bindings, including accessed children, before releasing the physical record and its byte-buffer leases. **Keep neither root nor child views beyond that close.** Pooled JavaScript objects may later refer to different rows; a retained reference is not a permanently safe snapshot.
 
-but callers must not treat that as a permanent stale-reference guard. The same pooled JavaScript object may later be rebound to a different record.
+Two simultaneously live file results have distinct physical record holders and retain independent projected children. Selecting `orders[0]` more than once during a lease returns the same projected child object. Reuse on a subsequent lease avoids recompilation and, for previously accessed indexes, avoids recreating child objects.
 
-The framework deliberately avoids a generation check on every accessor call.
+## Format-specific behaviour
 
-## Why retain the physical record?
+| Parser | Scalar access | Object and array selection |
+| --- | --- | --- |
+| JSONL | Traversal of already parsed JSON | Native object selection and `ProjectedArraySource` over a JSON array |
+| COBOL, fixed layout | Numeric field coordinates over original bytes | Selected group plus occurrence displacement; no copied COBOL array |
+| CSV | Compiled column number and lazy byte-range decoding | Intentionally flat: no nested object/array capability |
 
-The parser representation is responsible for retrieving values. The projection retains a narrow physical-record capability for:
+Legacy runtime-indexed **scalar** methods also remain supported where the parser implements them; they are not equivalent to first-class projected arrays.
 
-- keeping borrowed source bytes alive;
-- source and record-number provenance;
-- parser-specific physical debug rendering when lazy access fails.
+## Errors and diagnostics
 
-The projection does not bypass the parser and interpret parser-specific `recordState` itself.
+Parse-time `Errors` and lazy projection exceptions are different. A malformed physical record may be handled by a cursor row-error policy. Once a representation exists, a failed projected member access throws with the current `source`, one-based `recordNumber`, member path and the parser's physical-record rendering. Source-dependent path failures, such as a missing CSV column, occur earlier at factory construction.
 
-## Projection errors
+Diagnostics from deeply nested accessors currently identify the compiled member's *relative* field path rather than always reporting a fully qualified `orders[1].items[2]` chain. Do not depend on full nested occurrence paths in error strings yet.
 
-Parser errors and projection errors are intentionally different.
+## Tests and boundaries
 
-A recoverable parser error means the physical record could not be represented successfully under the parser's row-error policy.
+Relevant tests are in `src/projection.definition.spec.ts`, `src/create.projection.spec.ts`, `src/nested.projection.type-tests.ts` and `src/indexed.projection.type-tests.ts`; parser packages also exercise this factory through real file cursors. Run the package's normal Jest script and TypeScript compilation separately.
 
-A projection error means a representation exists but a requested logical field cannot satisfy its declared projection.
-
-Runtime projection errors are enriched by the generic layer using the **currently bound data record**:
-
-```text
-source: record N: projection logical.path: parser-specific reason
-physical record rendering
-```
-
-For example, JSON can report:
-
-```text
-customers.jsonl: record 2: projection age: JSON value is string "forty two"; expected an integer.
-{"id":1002,"age":"forty two"}
-```
-
-Source-dependent path compilation failures happen earlier, during `createProjection()`. Parsers such as CSV can use the optional preparation context to report errors such as a missing projected header column with the header's source and record number.
-
-Diagnostic strings are created only on failure paths.
-
-## Performance intent
-
-The projection layer reuses:
-
-```text
-projection objects
-shared accessor functions
-opened-source details
-compiled projection paths
-canonical field definitions
-```
-
-Normal row-to-row work is primarily:
-
-```text
-bind references
-invoke requested accessors
-clear references
-```
-
-No projection-path compilation or accessor-function allocation is required per row.
-
-## Recursive projections and borrowed arrays
-
-Projection definitions can have `object` and `array` members in addition to
-scalar accessors. Nested paths are relative to their enclosing projection.
-The factory compiles these paths once and creates reusable views lazily.
-For parsers with projected arrays (currently JSONL), configure a per-holder
-`ProjectionRecordState` (a `projectionViews` map). Root array views and their
-indexed child projections are retained in that state; each view maintains a
-current active length separately from high-water cached element slots.
-
-All views borrow the owning file-result lease. `clear()` recursively removes
-representation and physical-record bindings, while preserving objects for reuse.
-CSV scalar projections and existing COBOL scalar/fixed-OCCURS projections do
-not require the new optional parser object/array capabilities.
-
-### Indexed sources and relative nested paths
-
-A parser's optional `array` capability provides `ProjectedArraySource<R>`:
-`length()` is the active count and `element(index)` selects a representation.
-This avoids requiring array materialisation by byte-backed formats. `bind()`
-keys a projected array's current source to its owning record and parent
-representation, preserving child identities for repeated getter access.
-
-`compileProjectionPath()` also accepts an optional previously compiled parent
-path. Flat formats may ignore it. COBOL uses it to compile relative child
-field names to numeric physical coordinates once during source setup; no
-name-index navigation occurs when an element is accessed.
+The generic factory intentionally does not parse COBOL, infer business semantics, copy record payloads or resolve ODO controllers. COBOL's current fixed-layout adapter supplies `length` and selected displacement; variable OCCURS/ODO is not integrated yet.

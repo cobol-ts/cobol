@@ -136,8 +136,17 @@ const testParser: TestParser = {
         _details,
         _context,
         path
-    ) {
-        return path;
+    ): readonly string[] {
+        if (
+            path.length !== 1
+            || path[0] !== "name"
+        ) {
+            throw new Error(
+                `Unknown test projection path: ${path.join(".")}`
+            );
+        }
+
+        return ["name"];
     },
 
     integer() {

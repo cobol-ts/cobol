@@ -5,6 +5,7 @@ import {
     composeTypedOr,
     mustBeArrayOf,
     mustBeNumber,
+    mustBeNumberIfPresent,
     mustBeObjectWithFields,
     mustBeString,
     mustBeStringIfPresent,
@@ -28,6 +29,8 @@ import {
     SynchronizedClause,
     UsageClause,
     ValueClause,
+    ByteLengthClause,
+    DynamicLengthClause,
 } from "./copybook.ast";
 
 
@@ -215,7 +218,7 @@ const copybookClauseValidator:
                 }),
 
             occurs:
-                (ctx, _options) => clause => {
+                (ctx, _options) => (clause: OccursClause) => {
                     if (
                         typeof clause !== "object" ||
                         clause === null
@@ -357,16 +360,33 @@ const copybookClauseValidator:
                         ["left", "right"],
                     ),
                 }),
+
+            "byte-length":
+                mustBeObjectWithFields<ByteLengthClause>({
+                    kind: mustBeValue("byte-length"),
+                    bytes: mustBeNumber,
+                }),
+
+            "dynamic-length":
+                mustBeObjectWithFields<DynamicLengthClause>({
+                    kind: mustBeValue("dynamic-length"),
+                    limit: mustBeNumberIfPresent,
+                }),
         },
     );
 
 
 /*
  * Semantic helpers
+ *
+ * Level 66 RENAMES and level 78 constants have no clauses.
+ * These validators only apply to record-storing entries.
  */
 
+type ClausedEntry = GroupEntry | ElementaryEntry;
+
 const validateDuplicateClauses:
-    Validator<CopybookEntry, CopybookSource> =
+    Validator<ClausedEntry, CopybookSource> =
     (ctx, options) => entry => {
         if (!Array.isArray(entry.clauses))
             return [];
@@ -381,6 +401,8 @@ const validateDuplicateClauses:
             "justified",
             "blank-when-zero",
             "synchronized",
+            "byte-length",
+            "dynamic-length",
         ];
 
         return singletonKinds.flatMap(
@@ -406,7 +428,7 @@ const validateDuplicateClauses:
 
 
 const validateOccursCounts:
-    Validator<CopybookEntry, CopybookSource> =
+    Validator<ClausedEntry, CopybookSource> =
     (ctx, options) => entry => {
         if (!Array.isArray(entry.clauses))
             return [];
@@ -488,7 +510,7 @@ const validateOccursCounts:
 
 
 const validateOccursSemantics:
-    Validator<CopybookEntry, CopybookSource> =
+    Validator<ClausedEntry, CopybookSource> =
     (ctx, options) => entry => {
         if (!Array.isArray(entry.clauses))
             return [];
@@ -1039,7 +1061,10 @@ const validateEntrySemantics:
             )(entry),
         );
 
-        if (Array.isArray(entry.clauses)) {
+        if (
+            (entry.kind === "group" || entry.kind === "elementary") &&
+            Array.isArray(entry.clauses)
+        ) {
             result.push(
                 ...validateDuplicateClauses(
                     ctx,

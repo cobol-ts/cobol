@@ -114,6 +114,42 @@ describe("level 66 and 78 validation", () => {
     });
 });
 
+describe("storage-specific clause validation", () => {
+    test("accepts BYTE-LENGTH and DYNAMIC LENGTH clauses from the current AST", () => {
+        expect(validate(astWith(
+            elementary({clauses: [{kind: "byte-length", bytes: 12}]}),
+            elementary({clauses: [{kind: "dynamic-length", limit: 80}]}),
+            elementary({clauses: [{kind: "dynamic-length"}]}),
+        ))).toEqual([]);
+    });
+
+    test("validates the shape of the new storage clauses", () => {
+        expect(validate(astWith(elementary({
+            clauses: [
+                {kind: "byte-length", bytes: "bad"},
+                {kind: "dynamic-length", limit: "bad"},
+            ] as any,
+        })))).toEqual([
+            "copybook.entries[0].clauses[0].bytes must be a number at source line 1",
+            "copybook.entries[0].clauses[1].limit must be a number at source line 1",
+        ]);
+    });
+
+    test("rejects repeated storage clauses independently", () => {
+        expect(validate(astWith(elementary({
+            clauses: [
+                {kind: "byte-length", bytes: 4},
+                {kind: "byte-length", bytes: 8},
+                {kind: "dynamic-length"},
+                {kind: "dynamic-length", limit: 20},
+            ],
+        })))).toEqual([
+            "copybook.entries[0].clauses contains 2 byte-length clauses; at most one is allowed at source line 1",
+            "copybook.entries[0].clauses contains 2 dynamic-length clauses; at most one is allowed at source line 1",
+        ]);
+    });
+});
+
 describe("validateCopybook", () => {
 
     describe("valid copybooks", () => {

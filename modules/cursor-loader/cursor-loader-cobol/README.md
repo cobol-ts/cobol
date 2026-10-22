@@ -1,213 +1,179 @@
-# @cobol-ts/cursor-loader-cobol
+# `@cobol-ts/cursor-loader-cobol`
 
-The COBOL-specific integration point for the byte-backed cursor/projection framework.
-It lives alongside `cursor-loader-csv` and `cursor-loader-json` and consumes the existing
-compiled storage layout rather than recalculating COBOL geometry.
+Fixed-record **byte-backed COBOL parsing and projections**. This adapter connects compiled copybook storage geometry to the generic `@cobol-ts/cursor-projection` framework. It deliberately keeps the original physical record bytes as the authoritative data instead of constructing a decoded COBOL object graph.
 
-## Implemented first projection stage
+## Why byte-backed COBOL matters
 
-This package now contains a **fixed-length COBOL parser** and a byte-backed
-**debug projection** that uses the shared `@cobol-ts/cursor-projection` factory.
-Normal source preparation builds the name index once; creating the projection
-factory calls `compileProjectionPath` once per projected accessor. Individual
-records do not walk the name index or recompile COBOL paths.
+A copybook and the bytes do **not** always determine a unique business object. `REDEFINES` alternatives may require application knowledge to select the correct meaning; that knowledge may depend on another field, another record, another file or an external system. It is unsafe to demand that a generic parser choose one definitive object representation without such context.
 
-The initial accessors deliberately do not decode COBOL values:
+The compiler answers physical questions—where fields start, how large they are, what repeats or overlaps. The application selects appropriate projections and business meaning. A REDEFINES group is an **alternative view of the same bytes**, not another copy of them.
 
-- `string()`/`character()` return `from/to/hex-bytes`, with record-relative
-  byte offsets and an exclusive end.
-- `integer()`/`float()` return a diagnostic number encoding the unsigned 16-bit
-  start and end offsets. This is a **debug range**, not the numeric COBOL value.
+## Current scope
 
-### First-class projected arrays: fixed OCCURS
+**Implemented:** fixed-length/fixed-blocked (FB) records with statically known record length; scalar field coordinate access; named groups; generated padding; fixed OCCURS; sibling OCCURS; nested fixed OCCURS; and REDEFINES inside repeated/nested groups, including unequal-sized overlay alternatives.
 
-Fixed-size repeated **groups** can now be exposed as a `ProjectedArray<T>`
-property, using the same application-facing array interface as JSONL. No COBOL
-array or record is materialised. The physical record's original byte buffers
-remain the only payload; each *accessed* child projection merely binds to the
-same physical record plus a selected occurrence displacement (in bits).
+**Not yet implemented in this adapter:** variable physical record framing, record-dependent ODO counts/offsets, and production decoding of every COBOL primitive representation. The current scalar accessors are byte-range diagnostics; see below. The general layout compiler has wider symbolic capabilities than this fixed-record projection adapter.
+
+## Setup: compile once for the opened source
+
+```text
+COBOL copybook
+  → parseCopybook()
+  → CopybookAst
+  → compileCobolLayout()
+  → CompiledCobolEntry[]
+  → createCobolFixedDetails()
+       ├─ name index, preserving original compiled-node references
+       ├─ source-scoped compiled layout
+       └─ recordLengthBytes
+  → createProjection(cobolParser, details, context, definition)
+       └─ numeric compiled member paths
+```
+
+`createCobolFixedDetails(layout)` requires exactly one top-level 01 record and evaluates its size statically. A variable ODO-dependent extent is rejected with an explicit fixed-record framing error. Structural name lookup is compiled from the layout, not repeated for every input record.
+
+`CobolProjectionPath` retains selected compiled nodes and numeric geometry in **bits**: `offsetBits`, `sizeBits`, remaining `runtimeDimensions` (`count`, `strideBits`), source-scoped `fullPath`, and the count of enclosing dimensions already selected. Paths may include literal numeric occurrence selectors. A scalar method may alternatively receive remaining indexes at call time; the first-class array API below is preferred for projected repeated groups.
+
+## Record reading: bytes remain the representation
+
+The physical cursor acquires pooled `Uint8Array` buffers. The fixed COBOL parser advances to `record.startByte + details.recordLengthBytes`, calls `readMore()` until enough bytes are available, and sets `record.endByte`. A truncated final record produces recoverable parser `Errors`.
+
+A logical record may span several physical buffers. The successful root `CobolRepresentation` is the **physical record itself**. No decoded group or occurrence is built when parsing completes.
+
+## Simple fixed OCCURS: an array of projections
+
+```cobol
+01 CUSTOMER.
+   05 CUSTOMER-ID PIC 9(4).
+   05 TELEPHONES OCCURS 2 TIMES.
+      10 PHONE-RAW PIC X(6).
+      10 PHONE-PARTS REDEFINES PHONE-RAW.
+         15 PHONE-KIND PIC X.
+         15 PHONE-NUMBER PIC X(5).
+   05 STATUS PIC X.
+```
+
+There are 17 bytes in the physical record: `4 + 2 × 6 + 1`. The two telephone occurrences are six bytes apart. The alternative PHONE-PARTS interpretation reuses the six bytes of PHONE-RAW.
 
 ```ts
 import type {ProjectedArray} from "@cobol-ts/arrays";
+import {defineProjection} from "@cobol-ts/cursor-projection";
 
-interface Phone { raw(): string }
+interface PhoneParts {
+    kind(): string;
+    number(): string;
+}
+interface Phone {
+    raw(): string;
+    readonly parts: PhoneParts;
+}
 interface Customer {
     readonly telephones: ProjectedArray<Phone>;
 }
 
 const definition = defineProjection<Customer>({
-    telephones: {
-        type: "array",
-        path: ["CUSTOMER", "TELEPHONES"],
-        element: {raw: {type: "string", path: ["PHONE-RAW"]}}
-    }
+    telephones: {type: "array", path: ["CUSTOMER", "TELEPHONES"], element: {
+        raw: {type: "string", path: ["PHONE-RAW"]},
+        parts: {type: "object", path: ["PHONE-PARTS"], fields: {
+            kind: {type: "character", path: ["PHONE-KIND"]},
+            number: {type: "string", path: ["PHONE-NUMBER"]}
+        }}
+    }}
 });
 
-customer.telephones.length;    // compiled OCCURS count (2)
-customer.telephones[1].raw(); // selected bytes in occurrence 1
+// On a bound record:
+customer.telephones.length;             // 2
+customer.telephones[1].raw();           // selects record bytes [10,16)
+customer.telephones[1].parts.number();  // selects [11,16)
 ```
 
-The `path` of an element's field is **relative to its enclosing group** at
-authoring time. The generic factory passes its enclosing compiled path to the
-COBOL compiler, which resolves full names and fixed offsets once. At runtime,
-selecting an occurrence adds only `index * strideBits` to the child view;
-scalar readers then use the precompiled absolute field coordinates. The
-original indexed-scalar accessor form (`phone(index)`) remains supported.
-An explicit REDEFINES group within a selected occurrence may be projected as a
-readonly nested object, selecting the same overlapping bytes.
-
-`createCobolRecordState()` now supplies the reusable `projectionViews` map,
-just like JSONL. It must be registered as `createRecordState` for the COBOL
-parser. The existing physical-record implementation and pooling do not change.
-The record state retains child projections in high-water slots, but exposes
-only the current logical OCCURS length. Record close clears borrowed bindings;
-retained child objects are reused on the next lease. As for all borrowed
-projections, application references are invalid once the result is closed.
-
-**Limits of this stage:** fixed OCCURS with one projected repeated-group level;
-there is no ODO count resolution, no variable-length record framing and no
-actual COBOL primitive decoding. Nested OCCURS *array projections* have not yet
-been designed or tested. Debug `string()` and `integer()` still return the
-existing byte-coordinate diagnostics rather than decoded values.
-
-### Logical paths and occurrences
-
-An application path is `readonly (string | number)[]`. String components name
-COBOL declarations; numeric components denote **fixed occurrence selectors**
-(zero-based), placed immediately after the corresponding `OCCURS` declaration.
-An `OCCURS` declaration without a following numeric selector instead consumes
-one accessor argument, in nesting/path order.
+`compileCobolMemberPath()` resolves each child path **relative to the enclosing group at setup time**, using the full declaration hierarchy. For fixed OCCURS it knows the static count and stride. At runtime `cobolParser.array()` supplies an indexed source whose element view carries only:
 
 ```ts
-interface Customer {
-    name(): string;
-    phone(index: number): string;
-    secondPhone(): string;
+type SelectedOccurrence = {
+    physical: ProjectionPhysicalRecord; // original physical record
+    displacementBits: number;           // selected occurrence displacement
+};
+```
+
+For this example, occurrence 1 adds `1 × 6 × 8 = 48` bits. The already-compiled raw field position is byte 4, so its selected byte range is `[4 + 6, 4 + 6 + 6) = [10,16)`. **No per-occurrence bytes or COBOL data object are materialised.** Group selections retain the view; scalar access combines its displacement with the compiled field coordinates.
+
+## Multiple fixed OCCURS and nested arrays
+
+Several sibling OCCURS groups are independent: `telephones` and `addresses` have distinct compiled member objects, counts, strides and reusable child slots. The physical-record state's `projectionViews` map uses **compiled member identity** as the key. A file-scoped physical-record pool already owns the relevant compiled source; there is no need for a separate file discriminator in every child slot.
+
+Nested OCCURS composes exactly like nested projected objects and arrays:
+
+```ts
+interface Item { sku(): string }
+interface Order { readonly items: ProjectedArray<Item> }
+interface Customer { readonly orders: ProjectedArray<Order> }
+
+customer.orders[1].items[2].sku();
+```
+
+The numeric location is the combination of **precompiled** base and field positions with the selected outer and inner occurrence displacements. For fixed extents, conceptually:
+
+```text
+fieldOffset = fieldBase + outerIndex × outerStride
+                       + innerIndex × innerStride
+```
+
+Each accessed outer element retains its own inner array view and child projections. Its logical `items.length` is distinct from the number of inner child objects previously created. Clearing a record invalidates bindings but does not discard these reusable high-water slots. An array can expose a smaller active length without exposing retained elements beyond it.
+
+## REDEFINES, including unequal-length overlays
+
+Consider nested `ORDERS OCCURS 2`, each containing `ITEMS OCCURS 3`. Inside each item:
+
+```cobol
+15 RAW PIC X(2).
+15 EXTENDED REDEFINES RAW.
+   20 KIND PIC X.
+   20 PAYLOAD PIC X(3).
+```
+
+The inner item's storage extent is **four bytes**, not two, because the longer overlay determines the physical extent. If each order ends with a one-byte TAIL, its stride is `3 × 4 + 1 = 13` bytes. Prefix and trailing fields must also stay correctly located.
+
+`src/cobol.nested.redefines.projection.spec.ts` tests both alternative views, the four-byte inner stride, the thirteen-byte outer stride, fields following the arrays, independent live cursor leases and reuse. Expected byte offsets are specified independently of the production layout compiler. Neither the parser nor the projection framework chooses the semantically correct overlay: that is application logic.
+
+## Pooled state and lifetime
+
+```ts
+import {cobolParser, createCobolRecordState} from "@cobol-ts/cursor-loader-cobol";
+
+// In the opened-file parser registry:
+cobol: {
+    parser: cobolParser,
+    parserConfig: () => preparedFixedDetails,
+    createRecordState: createCobolRecordState
 }
-
-const definition = defineProjection<Customer>({
-    name: {type: "string", path: ["CUSTOMER", "CUSTOMER-NAME"]},
-    phone: {type: "string", path: ["CUSTOMER", "TELEPHONES", "PHONE-RAW"]},
-    secondPhone: {type: "string", path: ["CUSTOMER", "TELEPHONES", 1, "PHONE-RAW"]}
-});
 ```
 
-`phone(1)` and `secondPhone()` select the same bytes, but `secondPhone`'s
-index is completely resolved during setup. No `"[]"` placeholders are needed.
-For nested OCCURS, `customer.item(outer, inner)` supplies indices in the order
-of repeated declarations along the path; a literal numeric component consumes
-its dimension at compilation, leaving only the other dimensions as arguments.
+`CobolRecordState` is `ProjectionRecordState`: `{projectionViews: new Map()}`. This map lives on **each pooled physical-record holder** and survives that holder's reuse. The existing physical record and `FileCursorResult` pools retain ownership; projected children do not need separate pools.
 
-A compiled path contains numeric `offsetBits`, `sizeBits`, and only the remaining
-runtime dimensions (`strideBits`, `count`). A field reference to the original
-layout node is retained for provenance. Thus compilation is stronger than
-converting field names into integer child ordinals: it derives **physical bit
-coordinates and strides**. Runtime access is constant-time for fixed OCCURS.
+`customer.orders[0]` can remain accessible alongside `customer.orders[1]` during the same record lease. Repeated selection of an already acquired index returns its child projection object. Closing the result clears all borrowed bindings; callers must not use root or child projections after close because pooled objects can be rebound to a later record.
 
-### Geometry, ownership and boundaries
+## Current byte-range scalar accessors
 
-`createCobolNameIndex` uses the original compiled layout, skipping padding and
-inaccessible FILLER subtrees, retaining both REDEFINES alternatives and
-aggregating duplicate-name errors using `ErrorsOr`. It does not expand OCCURS.
+The current byte-backed scalar operations report field locations rather than finished COBOL business values:
 
-The parser reads a fixed record with the existing pooled byte cursor and passes
-it through the generic borrowed-projection lifecycle. The diagnostic string
-encoder supports records beginning partway through a buffer and ranges crossing
-multiple buffers. The projection must not be retained after its result is closed.
+- `string` and `character`: `from/to/hex-bytes`, with record-relative zero-based byte offsets and exclusive end.
+- `integer` and `float`: a compact number encoding the start/end debug range, **not** the decoded numeric field value.
 
-Not yet implemented: variable-length framing, source-byte ODO count resolution,
-record-dependent symbolic field locations, general COBOL primitive decoding, or
-variable nested array projection support. The fixed-record setup rejects layouts whose
-record length cannot be determined without ODO values. The *declarations* are
-still findable in the name index: declaration lookup is distinct from runtime
-field location. `ProjectionSupport` was extended generically to forward numeric
-accessor arguments; CSV continues using one precompiled column integer and
-rejects numeric authoring paths. JSONL also supports first-class projected arrays through the shared generic factory.
+These are deliberate implementation-stage diagnostics. The projection geometry, fixed array selection, lifetime and original-byte behaviour are exercised independently of full primitive-value codecs. Primitive decoding is a separate remaining integration task.
 
-## Project integration
+## Tests and fixtures
 
-The package is included under `cursor-loader/cursor-loader-cobol/` with
-`package.json`, `package.details.json`, `index.ts`, `tsconfig.json`,
-`jest.config.json` and `babel.config.json`, matching sibling packages.
+- `src/customer.fixtures.ts` / `.spec.ts`: hand-specified byte sequences, parsed AST, compiled layout and five customer shapes (flat, nested, aligned, fixed OCCURS/REDEFINES, and future ODO material).
+- `src/customer.projections.spec.ts`: name index and compiled node identity.
+- `src/cobol.projection.spec.ts`: static/runtime numeric paths, debug field ranges, REDEFINES and cursor integration.
+- `src/cobol.fixed.array.projection.spec.ts`: first-class fixed array elements and borrowed values.
+- `src/cobol.multiple.nested.arrays.spec.ts`: independent sibling arrays; nested fixed arrays; per-level high-water reuse; simultaneous records.
+- `src/cobol.nested.redefines.projection.spec.ts`: nested arrays + unequal REDEFINES, offset and lifetime regression tests.
+- `src/cobol.layout.index.spec.ts`, `src/cobol.debug.range.spec.ts`: isolated index and range helpers.
 
-Run `npm test -- --runInBand` using the normal monorepo workspace environment.
+Tests use the **real** `parseCopybook → compileCobolLayout → createCobolFixedDetails → createProjection` path and independent byte/offset expectations, not a second test-only layout algorithm. Run the package Jest tests and the appropriate TypeScript build. The complete monorepo suite is a separate regression check.
 
-## Customer test fixtures (TDD progression)
+## Next milestones
 
-`src/customer.fixtures.ts` contains five self-contained `CustomerFixture`s. Each
-has a **copybook string**, two **explicit EBCDIC-037 byte sequences** (plus raw
-COMP bytes in the aligned case), the **parsed AST**, and the **compiled layout**:
-
-```ts
-const ast = valueOrThrow(parseCopybook(copybook));
-const layout = valueOrThrow(compileCobolLayout(ast, `${label}.cpy`));
-return {label, copybook, ast, layout, records};
-```
-
-The data bytes and expected end-exclusive field slices are handwritten hex
-oracles, **not** produced from `layout` or a production COBOL encoder. The
-fixture test checks that their lengths and named field positions agree with the
-real compiler/locator and that `createCobolNameIndex` returns references to the
-same compiled nodes.
-
-| Fixture | Two record lengths | Intent |
-| --- | --- | --- |
-| `customerSimple` | 15, 15 | Flat DISPLAY fields: first projection milestone |
-| `customerNested` | 21, 21 | Nested group and FILLER |
-| `customerAligned` | 9, 9 | A generated alignment byte before COMP |
-| `customerFixedOccurs` | 17, 17 | Fixed OCCURS and REDEFINES inside each element |
-| `customerOdoRedefines` | 14, 23 | Zero/three occurrences, plus REDEFINES within an ODO body |
-
-The ODO samples are **logical record payloads of active length**, not a complete
-VB file: there are no RDWs or other framing bytes. They are reserved for later
-variable-record work. The initial fixed-length parser can start with
-`customerSimple` and proceed one feature at a time. `itemCount` is provided as
-fixture metadata for evaluating ODO geometry until byte-backed controller
-resolution is implemented.
-
-Tests live in `src/customer.fixtures.spec.ts`. Test data should remain
-independent of the code under test; never populate expected offsets using the
-compiled layout or expected hex by decoding and re-encoding the records.
-
-## Application-facing customer projection contracts
-
-`src/customer.projections.ts` declares one TypeScript accessor interface for each
-customer schema (`SimpleCustomer`, `NestedCustomer`, `AlignedCustomer`,
-`FixedOccursCustomer`, and `OdoCustomer`) and a matching **typed**
-`defineProjection<T>()` mapping. Each `CustomerFixture` exposes its canonical
-`projection` alongside the copybook, parsed AST, compiled layout, and two
-literal records. For example:
-
-```ts
-export interface SimpleCustomer {
-    id(): number;
-    name(): string;
-    status(): string;
-}
-
-export const customerSimpleProjection = defineProjection<SimpleCustomer>({
-    id: {type: "integer", path: ["CUSTOMER", "CUSTOMER-ID"]},
-    name: {type: "string", path: ["CUSTOMER", "CUSTOMER-NAME"]},
-    status: {type: "character", path: ["CUSTOMER", "STATUS"]}
-});
-```
-
-The types reflect the **debug projection phase**: `number` is an encoded pair
-of byte offsets, and `string` is `from/to/hex-bytes`. No COBOL values are
-being decoded yet. The contracts are method-based because the real projection
-framework produces **borrowed lazy accessors**, not materialised objects.
-
-`src/customer.projections.spec.ts` tests **name resolution**, not field coordinates.
-A table of literal copybook paths covers every named declaration across the
-five customer schemas, including nested groups, SYNCHRONIZED padding neighbours,
-fixed OCCURS bodies, both REDEFINES interpretations and declarations after an
-ODO table. Each resolved name is compared by **object identity** with the
-original compiled entry selected independently by its copybook source line.
-The same test file checks every current typed application projection path,
-case-insensitive names, scope boundaries, inaccessible FILLER and absent paths.
-
-This deliberately does **not** reimplement the projection-path compiler in the
-tests. `CobolNameIndex` resolves a *declaration*, not a physical occurrence or
-its record-specific address. The compiled-path layer interprets each numeric component as a fixed selector
-and omitted selectors as runtime dimensions. Byte-oracle checks remain in `customer.fixtures.spec.ts` and the future
-byte-backed projection tests.
+ODO count resolution and record-dependent geometry, variable-record framing, real client copybooks and actual primitive codecs. These should not change the `ProjectedArray<T>` application interface; fixed nested OCCURS has already shown that array composition works using the existing projection machinery.
