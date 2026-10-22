@@ -17,6 +17,7 @@
     ]
   },
   "dependencies": {
+    "@cobol-ts/arrays": "0.0.1",
     "@cobol-ts/errors": "0.0.1",
     "@cobol-ts/ref_counted_pool": "0.0.1"
   },

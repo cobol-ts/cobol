@@ -4,16 +4,15 @@
   "description": "types for the cursor loader package",
   "links": [
     "@cobol-ts/errors",
-    "@cobol-ts/ref_counted_pool"
+    "@cobol-ts/ref_counted_pool",
+    "@cobol-ts/arrays"
   ],
   "packageJson": {
     "files": [
       "build/"
     ],
-    "dependencies": {
-    },
-    "devDependencies": {
-    },
+    "dependencies": {},
+    "devDependencies": {},
     "scripts": {
       "start": "react-scripts start"
     }

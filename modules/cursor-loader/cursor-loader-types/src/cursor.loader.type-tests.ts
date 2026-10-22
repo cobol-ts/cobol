@@ -1171,8 +1171,9 @@ const customerProjectionFactory:
             // @ts-expect-error projection capability cannot perform I/O
             physicalRecord.readMore();
 
-            // @ts-expect-error projection capability deliberately excludes parser recordState
-            physicalRecord.recordState;
+            // The generic state is visible only as unknown, not as parser internals.
+            const opaqueState: unknown = physicalRecord.recordState;
+            void opaqueState;
         },
 
     clear:

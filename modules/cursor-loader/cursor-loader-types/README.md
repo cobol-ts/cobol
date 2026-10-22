@@ -401,3 +401,16 @@ The central optimisation principle is:
 > Do not allocate, populate, copy or traverse a representation for a value the calculation never needs.
 
 JSONL cannot demonstrate the full benefit because `JSON.parse()` eagerly creates the complete JavaScript value. CSV already exploits the byte-backed model by recording field byte ranges and decoding only projected fields.
+
+## Recursive projection members
+
+`ProjectionDefinition<T>` supports scalar methods, readonly nested object
+properties (`type: "object"`) and readonly `ProjectedArray<Element>` properties
+(`type: "array"`). Nested definitions use paths relative to the containing
+selection; they compile once via parser-specific `compileProjectionPath()`.
+The structural capabilities `ProjectionSupport.object` and `.array` are optional
+so existing flat CSV and scalar COBOL adapters are unaffected.
+
+`ProjectionRecordState` defines `projectionViews`, retained on each pooled
+physical-record holder. `ProjectionPhysicalRecord.recordState` is exposed only as
+`unknown` to preserve the format-specific type boundary.

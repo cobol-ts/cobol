@@ -1,4 +1,4 @@
-import {jsonParser} from "@cobol-ts/cursor-loader-json";
+import {jsonParser, createJsonRecordState} from "@cobol-ts/cursor-loader-json";
 import {readFileSync} from "node:fs";
 import {resolve} from "node:path";
 
@@ -46,7 +46,7 @@ const parserRegistry = {
     json: {
         parser: jsonParser,
         parserConfig: () => undefined,
-        createRecordState: () => undefined
+        createRecordState: createJsonRecordState
     }
 };
 

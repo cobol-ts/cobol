@@ -2,6 +2,7 @@ import {
     type Parser,
     type ParserPhysicalRecordContent,
     type ParserResult,
+    type ProjectionRecordState,
     utf8RangeToString
 } from "@cobol-ts/cursor-loader-types";
 
@@ -30,11 +31,14 @@ export type JsonArray = JsonValue[];
 
 export type JsonProjectionPath = readonly string[];
 
+export type JsonRecordState = ProjectionRecordState;
+export const createJsonRecordState = ():JsonRecordState => ({projectionViews:new Map()});
+
 export type JsonParser = Parser<
     JsonValue,
     undefined,
     undefined,
-    undefined,
+    JsonRecordState,
     JsonProjectionPath
 >;
 
@@ -86,7 +90,7 @@ export const jsonParser = {
  * completed record.
  */
 async function parse(
-    record: ParserPhysicalRecordContent<undefined>,
+    record: ParserPhysicalRecordContent<unknown>,
     _details: undefined
 ): Promise<ParserResult<JsonValue>> {
     let scanByte = record.startByte;
@@ -160,7 +164,7 @@ async function parse(
  * produces a JsonValue.
  */
 function parseRecord(
-    record: ParserPhysicalRecordContent<undefined>
+    record: ParserPhysicalRecordContent<unknown>
 ): ParserResult<JsonValue> {
     const text = utf8RangeToString(
         record,

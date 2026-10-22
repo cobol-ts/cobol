@@ -6,15 +6,9 @@ import {
     type FileCursorResult
 } from "@cobol-ts/cursor-file";
 
-import {
-    type Errors,
-    isValue
-} from "@cobol-ts/errors";
+import {type Errors, isValue} from "@cobol-ts/errors";
 
-import {
-    type Customer,
-    type MinimalCustomer
-} from "./cursor.loader.fixture";
+import {type Customer, type MinimalCustomer} from "./cursor.loader.fixture";
 
 import {
     badJsonCustomerJsonlDefinition,

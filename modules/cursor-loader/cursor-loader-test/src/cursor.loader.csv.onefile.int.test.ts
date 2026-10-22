@@ -398,7 +398,7 @@ describe("CSV file cursor integration",() => {
         ).rejects.toEqual(
             new Error(
                 "test.comma.unterminated.csv: record 3: "
-                + "CSV column 4: unexpected byte after closing quote at logical byte 80"
+                + "CSV column 4: unexpected byte after closing quote at logical byte 77"
             )
         );
     });

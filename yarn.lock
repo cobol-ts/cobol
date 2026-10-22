@@ -388,7 +388,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@cobol-ts/arrays@workspace:modules/utils/arrays":
+"@cobol-ts/arrays@npm:0.0.1, @cobol-ts/arrays@workspace:modules/utils/arrays":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/arrays@workspace:modules/utils/arrays"
   dependencies:
@@ -509,9 +509,12 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-loader-cobol@workspace:modules/cursor-loader/cursor-loader-cobol"
   dependencies:
+    "@cobol-ts/copybook": "npm:0.0.1"
     "@cobol-ts/cursor-loader-types": "npm:0.0.1"
+    "@cobol-ts/cursor-projection": "npm:0.0.1"
+    "@cobol-ts/errors": "npm:0.0.1"
     "@cobol-ts/layout": "npm:0.0.1"
-    "@cobol-ts/trees": "npm:0.0.1"
+    "@cobol-ts/size": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
     "@types/jest": "npm:^29.0.0"
     "@types/node": "npm:^14.0.0"
@@ -540,6 +543,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-loader-json@workspace:modules/cursor-loader/cursor-loader-json"
   dependencies:
+    "@cobol-ts/cursor-file": "npm:0.0.1"
     "@cobol-ts/cursor-loader-types": "npm:0.0.1"
     "@cobol-ts/cursor-record": "npm:0.0.1"
     "@cobol-ts/errors": "npm:0.0.1"
@@ -577,6 +581,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-loader-types@workspace:modules/cursor-loader/cursor-loader-types"
   dependencies:
+    "@cobol-ts/arrays": "npm:0.0.1"
     "@cobol-ts/errors": "npm:0.0.1"
     "@cobol-ts/ref_counted_pool": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
@@ -592,6 +597,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-projection@workspace:modules/cursor-loader/projection"
   dependencies:
+    "@cobol-ts/arrays": "npm:0.0.1"
     "@cobol-ts/cursor-loader-types": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
     "@types/jest": "npm:^29.0.0"

@@ -412,142 +412,90 @@ export type RecordCursor<
 
 
 /*
- * Supported projected scalar kinds.
+ * A projection is recursive: scalar methods, nested projected objects and
+ * projected arrays of objects. The latter two are readonly properties.
+ * Member paths are relative to the enclosing projection.
  */
-export type ProjectionFieldType =
-    | "integer"
-    | "float"
-    | "character"
-    | "string";
+import type {ProjectedArray} from "@cobol-ts/arrays";
 
+export type ProjectionFieldType = "integer" | "float" | "character" | "string";
 
-/*
- * Authoring projection field.
- *
- * path is optional. When omitted, canonicalisation uses the field name as one
- * path component.
- */
-export interface ProjectionFieldAuthoring<
-    TType extends ProjectionFieldType =
-        ProjectionFieldType
-> {
-    readonly type:
-        TType;
-
-    readonly path?:
-        readonly string[];
+export interface ProjectionFieldAuthoring<TType extends ProjectionFieldType = ProjectionFieldType> {
+    readonly type: TType;
+    readonly path?: readonly (string | number)[];
 }
 
-
-/*
- * Authoring projection.
- */
-export type ProjectionAuthoring =
-    Readonly<
-        Record<
-            string,
-            ProjectionFieldAuthoring
-        >
-    >;
-
-
-/*
- * Canonical projection field.
- *
- * Runtime projection code never needs to handle a missing path.
- */
-export interface ProjectionField<
-    TType extends ProjectionFieldType =
-        ProjectionFieldType
-> {
-    readonly type:
-        TType;
-
-    readonly path:
-        readonly string[];
+export interface ProjectionField<TType extends ProjectionFieldType = ProjectionFieldType> {
+    readonly type: TType;
+    readonly path: readonly (string | number)[];
 }
 
+export type ProjectionArrayAuthoring<TElement> = Readonly<{
+    type: "array";
+    path?: readonly (string | number)[];
+    element: ProjectionDefinition<TElement>;
+}>;
 
-/*
- * Canonical version of an authoring projection.
- *
- * The author's exact field names and field types are preserved while every
- * path becomes explicit.
- */
-export type CanonicalProjection<
-    TProjection extends ProjectionAuthoring
-> = {
-    readonly [K in keyof TProjection]:
-    ProjectionField<
-        TProjection[K]["type"]
-    >;
+export type ProjectionObjectAuthoring<TObject> = Readonly<{
+    type: "object";
+    path?: readonly (string | number)[];
+    fields: ProjectionDefinition<TObject>;
+}>;
+
+export type ProjectionNodeAuthoring =
+    | ProjectionFieldAuthoring
+    | Readonly<{type: "array";path?: readonly (string | number)[];element: ProjectionAuthoring}>
+    | Readonly<{type: "object";path?: readonly (string | number)[];fields: ProjectionAuthoring}>;
+
+export type ProjectionAuthoring = Readonly<Record<string, ProjectionNodeAuthoring>>;
+
+export type CanonicalNode<T> =
+    T extends ProjectionFieldAuthoring<infer S> ? ProjectionField<S> :
+    T extends {readonly type: "array"; readonly element: infer E extends ProjectionAuthoring}
+        ? Readonly<{type:"array"; path:readonly (string | number)[];element:CanonicalProjection<E>}> :
+    T extends {readonly type: "object"; readonly fields: infer E extends ProjectionAuthoring}
+        ? Readonly<{type:"object"; path:readonly (string | number)[];fields:CanonicalProjection<E>}> :
+    never;
+
+export type CanonicalProjection<T extends ProjectionAuthoring> = {
+    readonly [K in keyof T]: CanonicalNode<T[K]>;
 };
 
+export type ProjectionFieldValue<TField extends ProjectionFieldAuthoring> =
+    TField["type"] extends "integer" | "float" ? number : string;
 
-/*
- * TypeScript value represented by one projection field.
- */
-export type ProjectionFieldValue<
-    TField extends ProjectionFieldAuthoring
-> =
-    TField["type"] extends | "integer"
-        | "float"
-        ? number
-        : TField["type"] extends | "character"
-            | "string"
-            ? string
-            : never;
-
-
-/*
- * Application-facing projected view.
- *
- * Projection fields become lazy accessors rather than materialised values.
- */
-export type ProjectionView<
-    TProjection extends ProjectionAuthoring
-> = {
+export type ProjectionView<TProjection extends ProjectionAuthoring> = {
     readonly [K in keyof TProjection]:
-    () => ProjectionFieldValue<
-        TProjection[K]
-    >;
+        TProjection[K] extends ProjectionFieldAuthoring
+            ? () => ProjectionFieldValue<TProjection[K]>
+            : TProjection[K] extends {type:"array";element:infer E extends ProjectionAuthoring}
+                ? ProjectedArray<ProjectionView<E>>
+                : TProjection[K] extends {type:"object";fields:infer E extends ProjectionAuthoring}
+                    ? ProjectionView<E> : never;
 };
 
+export type ProjectionFieldFor<TMember> =
+    TMember extends (...args: infer TArgs) => infer TResult
+        ? TArgs extends number[]
+            ? TResult extends number
+                ? ProjectionFieldAuthoring<"integer" | "float">
+                : TResult extends string
+                    ? ProjectionFieldAuthoring<"character" | "string"> : never
+            : never
+        : TMember extends ProjectedArray<infer TElement>
+            ? ProjectionArrayAuthoring<TElement>
+            : TMember extends object
+                ? ProjectionObjectAuthoring<TMember>
+                : never;
 
-/*
- * Projection field compatible with one application-facing accessor.
- *
- * The application interface is authoritative. A numeric accessor may be
- * backed by either an integer or float projection. A string accessor may be
- * backed by either a character or string projection.
- */
-export type ProjectionFieldFor<TAccessor> =
-    TAccessor extends () => number
-        ? ProjectionFieldAuthoring<
-            | "integer"
-            | "float"
-        >
-        : TAccessor extends () => string
-            ? ProjectionFieldAuthoring<
-                | "character"
-                | "string"
-            >
-            : never;
-
-
-/*
- * Authoring projection for one application-facing interface.
- *
- * Every member of TResult must be represented by one compatible projection
- * field.
- */
 export type ProjectionDefinition<TResult> = {
-    readonly [K in keyof TResult]:
-    ProjectionFieldFor<
-        TResult[K]
-    >;
+    readonly [K in keyof TResult]: ProjectionFieldFor<TResult[K]>;
 };
 
+/** Per-physical-holder reusable projection storage (not an additional pool). */
+export type ProjectionRecordState = Readonly<{
+    projectionViews: Map<object, unknown>;
+}>;
 
 /*
  * Physical-record capability retained by a lazy projection.
@@ -567,6 +515,8 @@ export interface ProjectionPhysicalRecord
     extends HasByteBuffers,
         PhysicalRecordRange,
         PhysicalRecordContext {
+    /** Generic holder state is opaque; only the projection layer inspects its capability. */
+    readonly recordState?: unknown;
 }
 
 
@@ -666,8 +616,9 @@ export interface ProjectionFactory<
 /**
  * Parser-specific support for the parser-independent projection layer.
  *
- * Projection definitions use readonly string[] paths as their portable authoring
- * form. compileProjectionPath() converts that canonical path once, when the
+ * Projection definitions use string/number paths as their portable authoring
+ * form. String components denote logical names; numeric components may bind
+ * literal occurrence selectors. compileProjectionPath() converts the path once, when the
  * source is opened, into the parser's efficient runtime TProjectionPath.
  *
  * Examples:
@@ -699,13 +650,17 @@ export interface ProjectionSupport<TRepresentation,TParserDetails,TProjectionPat
     compileProjectionPath(
         details: TParserDetails,
         context: PhysicalRecordContext | undefined,
-        path: readonly string[]
+        path: readonly (string | number)[]
     ): TProjectionPath;
 
-    integer(representation: TRepresentation,details: TParserDetails,path: TProjectionPath): number;
-    float(representation: TRepresentation,details: TParserDetails,path: TProjectionPath): number;
-    character(representation: TRepresentation,details: TParserDetails,path: TProjectionPath): string;
-    string(representation: TRepresentation,details: TParserDetails,path: TProjectionPath): string;
+    integer(representation: TRepresentation,details: TParserDetails,path: TProjectionPath,...occurrenceIndices: number[]): number;
+    float(representation: TRepresentation,details: TParserDetails,path: TProjectionPath,...occurrenceIndices: number[]): number;
+    character(representation: TRepresentation,details: TParserDetails,path: TProjectionPath,...occurrenceIndices: number[]): string;
+    string(representation: TRepresentation,details: TParserDetails,path: TProjectionPath,...occurrenceIndices: number[]): string;
+
+    /** Optional structural capabilities; flat CSV and COBOL scalar readers need not implement them. */
+    object?(representation: TRepresentation, details: TParserDetails, path: TProjectionPath): TRepresentation;
+    array?(representation: TRepresentation, details: TParserDetails, path: TProjectionPath): readonly TRepresentation[];
 }
 
 /*

@@ -1,59 +1,19 @@
-import {
-    type CanonicalProjection,
-    type ProjectionAuthoring,
-    type ProjectionField
-} from "@cobol-ts/cursor-loader-types";
-/**
- * Convert the ergonomic authoring form into the canonical runtime form.
- *
- * This is configuration-time work, not record-processing work.
- */
-export function canonicalProjection<
-    TProjection extends ProjectionAuthoring
->(
-    projection:
-    TProjection
-): CanonicalProjection<
-    TProjection
-> {
+import {type CanonicalProjection, type ProjectionAuthoring, type ProjectionNodeAuthoring} from "@cobol-ts/cursor-loader-types";
 
-    const canonical =
-        {} as {
-            -readonly [
-            K in keyof CanonicalProjection<
-                TProjection
-            >
-            ]:
-            CanonicalProjection<
-                TProjection
-            >[K];
-        };
-
-
-    for (
-        const name
-        in projection
-        ) {
-        const field =
-            projection[
-                name
-                ];
-
-
-        canonical[
-            name
-            ] = {
-            type:
-            field.type,
-
-            path:
-                field.path
-                ?? [
-                    name
-                ]
-        };
+/** Configuration-time, recursive canonicalisation; nested paths remain relative. */
+export function canonicalProjection<T extends ProjectionAuthoring>(
+    projection: T
+): CanonicalProjection<T> {
+    const result: Record<string, unknown> = {};
+    for (const [name, field] of Object.entries(projection)) {
+        const path = field.path ?? [name];
+        if (field.type === "array") {
+            result[name] = {type:"array",path,element:canonicalProjection(field.element)};
+        } else if (field.type === "object") {
+            result[name] = {type:"object",path,fields:canonicalProjection(field.fields)};
+        } else {
+            result[name] = {type:field.type,path};
+        }
     }
-
-
-    return canonical;
+    return result as CanonicalProjection<T>;
 }

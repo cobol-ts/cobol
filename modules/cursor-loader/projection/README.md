@@ -321,3 +321,18 @@ clear references
 ```
 
 No projection-path compilation or accessor-function allocation is required per row.
+
+## Recursive projections and borrowed arrays
+
+Projection definitions can have `object` and `array` members in addition to
+scalar accessors. Nested paths are relative to their enclosing projection.
+The factory compiles these paths once and creates reusable views lazily.
+For parsers with projected arrays (currently JSONL), configure a per-holder
+`ProjectionRecordState` (a `projectionViews` map). Root array views and their
+indexed child projections are retained in that state; each view maintains a
+current active length separately from high-water cached element slots.
+
+All views borrow the owning file-result lease. `clear()` recursively removes
+representation and physical-record bindings, while preserving objects for reuse.
+CSV scalar projections and existing COBOL scalar/fixed-OCCURS projections do
+not require the new optional parser object/array capabilities.
