@@ -1,4 +1,5 @@
 import type {JsonValue} from "./cursor.loader.json.parser";
+import type {ProjectedArraySource} from "@cobol-ts/arrays";
 import {
     type PhysicalRecordContext,
     type ProjectionSupport
@@ -33,10 +34,10 @@ export const jsonProjectionSupport = {
         }
         return found as JsonValue;
     },
-    array(representation: JsonValue, _details:undefined, path:readonly string[]): readonly JsonValue[] {
+    array(representation: JsonValue, _details:undefined, path:readonly string[]): ProjectedArraySource<JsonValue> {
         const found=jsonValue(representation,path,[],true);
         if (!Array.isArray(found)) throw projectionTypeError(found,"an array");
-        return found as JsonValue[];
+        return {length:()=>found.length, element:(index:number)=>found[index]};
     },
 
     integer(

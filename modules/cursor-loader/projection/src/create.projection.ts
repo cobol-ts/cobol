@@ -4,7 +4,7 @@ import {
     type ProjectionFactory, type ProjectionField, type ProjectionPhysicalRecord,
     type ProjectionSupport, type ProjectionAuthoring, type ProjectionRecordState
 } from "@cobol-ts/cursor-loader-types";
-import {createProjectedArray, type ProjectedArray} from "@cobol-ts/arrays";
+import {createProjectedArray, type ProjectedArray, type ProjectedArraySource} from "@cobol-ts/arrays";
 import {canonicalProjection} from "./projection.definition";
 
 const REPRESENTATION = Symbol("projectionRepresentation");
@@ -32,7 +32,7 @@ type ArrayRuntime<R> = {
     readonly name: string;
     readonly view: ProjectedArray<unknown>;
     readonly elements: BoundView<R>[];
-    bind(items: readonly R[], record: ProjectionPhysicalRecord): void;
+    bind(items: ProjectedArraySource<R>, record: ProjectionPhysicalRecord, owner: R): void;
     clear(): void;
 };
 
@@ -96,7 +96,7 @@ export function createProjection<T,R,D,P>(
                             runtime = makeArray(node);
                             cache.set(node,runtime);
                         }
-                        runtime.bind(selected,record);
+                        runtime.bind(selected,record,view[REPRESENTATION] as R);
                         return runtime.view;
                     } catch(e) {throw diagnostic(parser,record,node.original,e);}
                 }});
@@ -107,31 +107,32 @@ export function createProjection<T,R,D,P>(
 
     function makeArray(node:ArrayMember<R,D,P>):ArrayRuntime<R> {
         const elements:BoundView<R>[] = [];
-        let items:readonly R[] | undefined;
+        let items:ProjectedArraySource<R> | undefined;
+        let owner:R | undefined;
         let physical:ProjectionPhysicalRecord | undefined;
         const view = createProjectedArray({
-            length: () => items?.length ?? 0,
+            length: () => items?.length() ?? 0,
             element(index) {
                 if (!items || !physical) throw new Error("Projected array is not bound");
                 let child=elements[index];
                 if (!child) {child=createView(node.schema,false);elements[index]=child;}
-                if (child[PHYSICAL_RECORD] !== physical || child[REPRESENTATION] !== items[index]) {
+                if (child[PHYSICAL_RECORD] !== physical || child[REPRESENTATION] === undefined) {
                     clearView(child);
-                    bindView(child,items[index],physical);
+                    bindView(child,items.element(index),physical);
                 }
                 return child;
             }
         });
         return {
             name:node.label, view,elements,
-            bind(next,record) {
-                if (items === next && physical === record) return;
+            bind(next,record,nextOwner) {
+                if (physical === record && owner === nextOwner) return;
                 // The retained slots survive re-binding; their borrowed values do not.
                 for (const element of elements) if (element) clearView(element);
-                items=next;physical=record;
+                items=next;physical=record;owner=nextOwner;
             },
             clear() {
-                items=undefined;physical=undefined;
+                items=undefined;physical=undefined;owner=undefined;
                 for (const element of elements) if (element) clearView(element);
             }
         };
@@ -168,14 +169,14 @@ function requireRecord<R>(view:BoundView<R>):ProjectionPhysicalRecord {
     return view[PHYSICAL_RECORD];
 }
 function compileTree<R,D,P>(parser:Parser<R,D,P>, details:D, context:PhysicalRecordContext|undefined,
-                          definition:ProjectionAuthoring, parentName="root"):Compiled<R,D,P> {
+                          definition:ProjectionAuthoring, parentName="root", parentPath?:P):Compiled<R,D,P> {
     return Object.entries(definition).map(([name,node]):CompiledMember<R,D,P> => {
         const field = {type:node.type,path:node.path ?? [name]} as ProjectionField;
-        const path=parser.compileProjectionPath(details,context,field.path);
+        const path=parser.compileProjectionPath(details,context,field.path,parentPath);
         if (node.type === "array") return {kind:"array",name,label:`${parentName}.${name}`,path,original:field,
-            schema:compileTree(parser,details,context,node.element,`${parentName}.${name}`)};
+            schema:compileTree(parser,details,context,node.element,`${parentName}.${name}`,path)};
         if (node.type === "object") return {kind:"object",name,path,original:field,
-            schema:compileTree(parser,details,context,node.fields,`${parentName}.${name}`)};
+            schema:compileTree(parser,details,context,node.fields,`${parentName}.${name}`,path)};
         const kind=node.type;
         return {kind:"scalar",name,accessor:function(this:BoundView<R>,...indices:number[]) {
             const record=requireRecord(this);

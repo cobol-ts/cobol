@@ -262,3 +262,11 @@ containing `FileCursorResult` lease; close the result to release the lease.
 
 The older scalar runtime-indexed accessors remain compatible but are not the
 first-class array projection API.
+
+### Collection selection boundary
+
+The parser's `array()` capability returns a `ProjectedArraySource<JsonValue>`
+with `length()` and `element(index)`. Both operations delegate to the original
+`JSON.parse()` array. The generic projection factory uses the same indexed
+source abstraction for COBOL fixed OCCURS, where there is no native array to
+return. JSONL's application-facing `ProjectedArray<T>` behaviour is unchanged.

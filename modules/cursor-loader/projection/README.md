@@ -336,3 +336,16 @@ All views borrow the owning file-result lease. `clear()` recursively removes
 representation and physical-record bindings, while preserving objects for reuse.
 CSV scalar projections and existing COBOL scalar/fixed-OCCURS projections do
 not require the new optional parser object/array capabilities.
+
+### Indexed sources and relative nested paths
+
+A parser's optional `array` capability provides `ProjectedArraySource<R>`:
+`length()` is the active count and `element(index)` selects a representation.
+This avoids requiring array materialisation by byte-backed formats. `bind()`
+keys a projected array's current source to its owning record and parent
+representation, preserving child identities for repeated getter access.
+
+`compileProjectionPath()` also accepts an optional previously compiled parent
+path. Flat formats may ignore it. COBOL uses it to compile relative child
+field names to numeric physical coordinates once during source setup; no
+name-index navigation occurs when an element is accessed.

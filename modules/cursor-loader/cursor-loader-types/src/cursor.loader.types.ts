@@ -416,7 +416,7 @@ export type RecordCursor<
  * projected arrays of objects. The latter two are readonly properties.
  * Member paths are relative to the enclosing projection.
  */
-import type {ProjectedArray} from "@cobol-ts/arrays";
+import type {ProjectedArray, ProjectedArraySource} from "@cobol-ts/arrays";
 
 export type ProjectionFieldType = "integer" | "float" | "character" | "string";
 
@@ -650,7 +650,8 @@ export interface ProjectionSupport<TRepresentation,TParserDetails,TProjectionPat
     compileProjectionPath(
         details: TParserDetails,
         context: PhysicalRecordContext | undefined,
-        path: readonly (string | number)[]
+        path: readonly (string | number)[],
+        parent?: TProjectionPath
     ): TProjectionPath;
 
     integer(representation: TRepresentation,details: TParserDetails,path: TProjectionPath,...occurrenceIndices: number[]): number;
@@ -660,7 +661,7 @@ export interface ProjectionSupport<TRepresentation,TParserDetails,TProjectionPat
 
     /** Optional structural capabilities; flat CSV and COBOL scalar readers need not implement them. */
     object?(representation: TRepresentation, details: TParserDetails, path: TProjectionPath): TRepresentation;
-    array?(representation: TRepresentation, details: TParserDetails, path: TProjectionPath): readonly TRepresentation[];
+    array?(representation: TRepresentation, details: TParserDetails, path: TProjectionPath): ProjectedArraySource<TRepresentation>;
 }
 
 /*

@@ -1,14 +1,16 @@
 {
   "template": "node",
   "name": "@cobol-ts/cursor-loader-cobol",
-  "description": "Byte-backed COBOL cursor integration: compiled-layout name indexing and diagnostic byte-range projections",
+  "description": "Fixed-length COBOL byte-backed parser with compiled occurrence paths and debug projections",
   "links": [
     "@cobol-ts/cursor-loader-types",
     "@cobol-ts/layout",
     "@cobol-ts/errors",
     "@cobol-ts/copybook",
     "@cobol-ts/size",
-    "@cobol-ts/cursor-projection"
+    "@cobol-ts/cursor-projection",
+    "@cobol-ts/cursor-file",
+    "@cobol-ts/arrays"
   ],
   "packageJson": {
     "files": [
