@@ -13,18 +13,16 @@ export function resolveDependingOnCount(
     resolve: ResolvePath,
     enclosingIndices: readonly number[] = []
 ): number {
-    const concrete: (string | number)[] = path.map(part => {
-        if (typeof part === "string") {
-            return part;
-        }
-        // Numbers in symbolic paths denote relative lambda depth.
-        if (!Number.isInteger(part)
-            || part < 0
-            || part >= enclosingIndices.length) {
+    // Most IBM ODO controllers have a wholly literal path. Reuse its compiled
+    // identity instead of allocating a new array on every controller read.
+    let hasBinding=false;
+    for(const part of path) if(typeof part !== "string") {hasBinding=true;break;}
+    const concrete: readonly (string | number)[] = hasBinding ? path.map(part => {
+        if (typeof part === "string") return part;
+        if (!Number.isInteger(part) || part < 0 || part >= enclosingIndices.length)
             throw new Error(`Unbound OCCURS variable at relative depth ${part}`);
-        }
         return enclosingIndices[enclosingIndices.length - 1 - part];
-    });
+    }) : path;
 
     const count = resolve(concrete);
     if (typeof count !== "number"

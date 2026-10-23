@@ -26,7 +26,12 @@ export type CobolSymbolicView=Readonly<{
     enclosingIndices:readonly number[];
 }>;
 
-export type CobolGeometryDetails=Readonly<{layout:readonly import("@cobol-ts/layout").CompiledCobolEntry[]}>;
+export type CobolControllerLocation = Readonly<{offsetBits:number;sizeBits:number}>;
+export type CobolGeometryDetails=Readonly<{
+    layout:readonly import("@cobol-ts/layout").CompiledCobolEntry[];
+    /** Immutable controller geometry, memoised by compiled literal path identity. */
+    controllerLocations?:WeakMap<readonly (string|number)[],CobolControllerLocation>;
+}>;
 
 export function compileCobolSymbolicPath(
     names:CobolNameIndex, fullPath:readonly (string|number)[],
@@ -62,17 +67,21 @@ export const rootSymbolicView=(physical:ProjectionPhysicalRecord):CobolSymbolicV
 });
 
 /** Only the controller codec needed by the first ODO milestone: unsigned DISPLAY digits. */
-export function cobolCountResolver(details:CobolGeometryDetails,record:ProjectionPhysicalRecord):ResolvePath {
-    return path=>{
-        // Controllers for this first milestone have independently fixed locations.
-        const located=valueOrThrow(locateCobolEntry(details.layout,path,()=>{
-            throw new Error(`Nested or variably located ODO controller is not supported: ${path.join(".")}`);
-        }));
-        if(located.node.kind!=="elementary" || located.offsetBits%8!==0 || located.sizeBits%8!==0 || located.sizeBits===0) {
-            throw new Error(`Unsupported ODO controller storage at ${path.join(".")}`);
+export function resolveCobolCount(details:CobolGeometryDetails,record:ProjectionPhysicalRecord,path:readonly (string|number)[]):number {
+        // Controller *position* is immutable for this source. Its value is
+        // still read from the current physical record on every request.
+        let location=details.controllerLocations?.get(path);
+        if(!location){
+            const located=valueOrThrow(locateCobolEntry(details.layout,path,()=>{
+                throw new Error(`Nested or variably located ODO controller is not supported: ${path.join(".")}`);
+            }));
+            if(located.node.kind!=="elementary" || located.offsetBits%8!==0 || located.sizeBits%8!==0 || located.sizeBits===0)
+                throw new Error(`Unsupported ODO controller storage at ${path.join(".")}`);
+            location={offsetBits:located.offsetBits,sizeBits:located.sizeBits};
+            details.controllerLocations?.set(path,location);
         }
-        const start=record.startByte+located.offsetBits/8;
-        const end=start+located.sizeBits/8;
+        const start=record.startByte+location.offsetBits/8;
+        const end=start+location.sizeBits/8;
         if(end>record.endByte) throw new RangeError(`ODO controller ${path.join(".")} exceeds record boundary`);
         let result=0;
         for(let byte=start;byte<end;byte++){
@@ -88,7 +97,10 @@ export function cobolCountResolver(details:CobolGeometryDetails,record:Projectio
             if(!Number.isSafeInteger(result)) throw new Error(`ODO controller value overflows safe integer at ${path.join(".")}`);
         }
         return result;
-    };
+}
+
+export function cobolCountResolver(details:CobolGeometryDetails,record:ProjectionPhysicalRecord):ResolvePath {
+    return path=>resolveCobolCount(details,record,path);
 }
 
 function evalBits(expression:StorageSizeExpression,resolve:ResolvePath,enclosingIndices:readonly number[]):number {
@@ -116,86 +128,125 @@ export function activeCount(node:CobolNamedNode,resolve:ResolvePath,enclosingInd
     return count;
 }
 
-export function selectSymbolic(
+/** Scratch storage belongs to one pooled COBOL record. No intermediate view is
+ * needed to walk a compiled path; only selected children retain a view. */
+export type MutableSymbolicView = {
+    physical:ProjectionPhysicalRecord;
+    originBits:number;
+    endBits?:number;
+    enclosingIndices:number[];
+};
+
+/** Locate an occurrence without constructing a selected representation. */
+function setOccurrencePosition(
+    result:MutableSymbolicView,physical:ProjectionPhysicalRecord,tableOriginBits:number,
+    enclosingIndices:readonly number[],node:CobolNamedNode,index:number,resolve:ResolvePath,
+    validated=false
+):void {
+    if(!validated){
+        const count=activeCount(node,resolve,enclosingIndices);
+        if(!Number.isSafeInteger(index)||index<0||index>=count)
+            throw new RangeError(`OCCURS index ${index} outside 0..${count-1}`);
+    }
+    const body=repeatedBody(node);
+    if(typeof body==="number"){
+        result.originBits=tableOriginBits+index*body;
+        result.endBits=result.originBits+body;
+        return;
+    }
+    const state=physical.recordState as {odoPositions?:OdoPositionCache}|undefined;
+    if(!state?.odoPositions) throw new Error("COBOL ODO position cache missing from physical record state");
+    const cache=positionBranch(state.odoPositions,node,enclosingIndices);
+    // Crucially, on an established prefix *no callback or working index array*
+    // is constructed. Only extending the prefix needs the expression evaluator.
+    if(cache.starts.size>index+1) {
+        if(cache.starts.values[0]!==tableOriginBits)
+            throw new Error("ODO boundary cache used with a different table origin in the same record");
+    } else {
+        const indices=[...enclosingIndices,0];
+        const coordinate=indices.length-1;
+        occurrenceBoundary(cache,tableOriginBits,index+1,previous=>{
+            indices[coordinate]=previous;
+            return evalBits(body,resolve,indices);
+        });
+    }
+    result.originBits=cache.starts.values[index];
+    result.endBits=cache.starts.values[index+1];
+}
+
+/** Traverse compiled geometry using numeric working variables, not a chain
+ * of ephemeral CobolSymbolicView objects. The destination is caller-owned:
+ * persistent for a projected child, or reusable scratch for a scalar read. */
+export function selectSymbolicInto(
     parent:CobolSymbolicView,path:CobolSymbolicPath,resolve:ResolvePath,
-    occurrenceIndices:readonly number[]=[]
-):CobolSymbolicView {
-    let position=0;
+    occurrenceIndices:readonly number[],result:MutableSymbolicView
+):void {
+    if(result===parent) throw new Error("Cannot overwrite an enclosing COBOL selection");
+    let origin=parent.originBits;
+    let end=parent.endBits;
     let usedIndices=0;
-    let view=parent;
-    for(const step of path.relativeSteps){
+    const indices=result.enclosingIndices;
+    indices.length=0;
+    for(const index of parent.enclosingIndices) indices.push(index);
+    for(let position=0;position<path.relativeSteps.length;position++){
+        const step=path.relativeSteps[position];
         const node=step.node;
-        // The root 01 declaration identifies the already-framed record. Its
-        // symbolic size must not be evaluated simply to select a child.
-        if(position===0 && path.steps[0]===step) {
+        if(position===0 && path.steps[0]===step){
             if(node.leftOffset!==0) throw new Error("COBOL root must begin at record origin");
-            position++;continue;
+            continue;
         }
-        const size= node.size;
+        const size=node.size;
         let start:number;
-        if(typeof node.leftOffset==="number") {
-            start=view.originBits+node.leftOffset;
-        } else if(typeof node.rightOffset==="number" && view.endBits!==undefined) {
-            // Prefer right anchoring when the left needs an ODO count.
-            start=view.endBits-node.rightOffset-evalBits(size,resolve,view.enclosingIndices);
-        } else {
-            start=view.originBits+evalBits(node.leftOffset,resolve,view.enclosingIndices);
-        }
-        let bodySize: number|undefined=typeof size==="number"?size:undefined;
+        if(typeof node.leftOffset==="number") start=origin+node.leftOffset;
+        else if(typeof node.rightOffset==="number" && end!==undefined)
+            start=end-node.rightOffset-evalBits(size,resolve,indices);
+        else start=origin+evalBits(node.leftOffset,resolve,indices);
+
+        let bodySize:number|undefined=typeof size==="number"?size:undefined;
         const occurs=node.source.clauses.find(c=>c.kind==="occurs");
         const index=step.index ?? (occurs && usedIndices<occurrenceIndices.length
             ? occurrenceIndices[usedIndices++] : undefined);
         if(occurs?.kind==="occurs" && index===undefined && position<path.relativeSteps.length-1)
             throw new Error("Missing COBOL occurrence index before a child field");
-        if(occurs?.kind==="occurs" && index!==undefined) {
-            const count=activeCount(node,resolve,view.enclosingIndices);
-            if(!Number.isSafeInteger(index)||index<0||index>=count) throw new RangeError(`OCCURS index ${index} outside 0..${count-1}`);
-            const selected=singleDepthOccurrence({physical:view.physical,originBits:start,
-                enclosingIndices:view.enclosingIndices},node,index,resolve);
-            start=selected.originBits;
-            bodySize=selected.endBits===undefined?undefined:selected.endBits-start;
+        if(occurs?.kind==="occurs" && index!==undefined){
+            const count=activeCount(node,resolve,indices);
+            if(!Number.isSafeInteger(index)||index<0||index>=count)
+                throw new RangeError(`OCCURS index ${index} outside 0..${count-1}`);
+            setOccurrencePosition(result,parent.physical,start,indices,node,index,resolve,true);
+            start=result.originBits;
+            bodySize=result.endBits===undefined?undefined:result.endBits-start;
         }
-        // An independently known right suffix also supplies the *end* of a
-        // variable-sized group, even when its left start was selected first.
-        const rightEnd = typeof node.rightOffset==="number" && view.endBits!==undefined
-            ? view.endBits-node.rightOffset : undefined;
-        const end = occurs?.kind==="occurs" && index!==undefined
+        const rightEnd=typeof node.rightOffset==="number" && end!==undefined
+            ? end-node.rightOffset : undefined;
+        const nextEnd=occurs?.kind==="occurs" && index!==undefined
             ? (bodySize===undefined?undefined:start+bodySize)
             : (rightEnd ?? (bodySize===undefined?undefined:start+bodySize));
-        view={physical:parent.physical,originBits:start,endBits:end,
-            enclosingIndices:index===undefined?view.enclosingIndices:[...view.enclosingIndices,index]};
-        position++;
+        origin=start;
+        end=nextEnd;
+        if(index!==undefined) indices.push(index);
     }
     if(usedIndices!==occurrenceIndices.length)
         throw new Error(`Expected ${usedIndices} COBOL occurrence indexes, got ${occurrenceIndices.length}`);
-    return view;
+    result.physical=parent.physical;
+    result.originBits=origin;
+    result.endBits=end;
 }
 
+export function selectSymbolic(
+    parent:CobolSymbolicView,path:CobolSymbolicPath,resolve:ResolvePath,
+    occurrenceIndices:readonly number[]=[]
+):CobolSymbolicView {
+    const selected:MutableSymbolicView={physical:parent.physical,originBits:0,enclosingIndices:[]};
+    selectSymbolicInto(parent,path,resolve,occurrenceIndices,selected);
+    return selected;
+}
+
+/** A selected projected-array child legitimately retains its own view.
+ * No temporary working views are needed to locate its occurrence. */
 export function singleDepthOccurrence(
     view:CobolSymbolicView,node:CobolNamedNode,index:number,resolve:ResolvePath
 ):CobolSymbolicView {
-    const count=activeCount(node,resolve,view.enclosingIndices);
-    if(!Number.isSafeInteger(index)||index<0||index>=count) throw new RangeError(`OCCURS index ${index} outside 0..${count-1}`);
-    const body=repeatedBody(node);
-    let originBits:number, endBits:number;
-    if(typeof body==="number") {
-        originBits=view.originBits+index*body;
-        endBits=originBits+body;
-    } else {
-        // Array contents live with the physical record, not with projected elements.
-        const state=view.physical.recordState as {odoPositions?:OdoPositionCache}|undefined;
-        if(!state?.odoPositions) throw new Error("COBOL ODO position cache missing from physical record state");
-        const cache=positionBranch(state.odoPositions,node,view.enclosingIndices);
-        // Reuse one indexed context while walking missing preceding extents,
-        // rather than allocating a new index array per preceding occurrence.
-        const indices=[...view.enclosingIndices,0];
-        const coordinate=indices.length-1;
-        endBits=occurrenceBoundary(cache,view.originBits,index+1,previous=>{
-            indices[coordinate]=previous;
-            return evalBits(body,resolve,indices);
-        });
-        originBits=cache.starts.values[index];
-    }
-    return {physical:view.physical,originBits,endBits,
-        enclosingIndices:[...view.enclosingIndices,index]};
+    const selected:MutableSymbolicView={physical:view.physical,originBits:0,enclosingIndices:[...view.enclosingIndices,index]};
+    setOccurrencePosition(selected,view.physical,view.originBits,view.enclosingIndices,node,index,resolve);
+    return selected;
 }

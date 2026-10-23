@@ -32,6 +32,7 @@ type ArrayRuntime<R> = {
     readonly name: string;
     readonly view: ProjectedArray<unknown>;
     readonly elements: BoundView<R>[];
+    isBoundTo(record: ProjectionPhysicalRecord, owner: R): boolean;
     bind(items: ProjectedArraySource<R>, record: ProjectionPhysicalRecord, owner: R): void;
     clear(): void;
 };
@@ -74,13 +75,13 @@ export function createProjection<T,R,D,P>(
                     const record = requireRecord(view);
                     try {
                         if (!parser.object) throw new Error("Parser does not support nested object projections");
-                        const selected = parser.object(view[REPRESENTATION] as R,details,node.path);
                         let child = view[OBJECTS].get(node);
-                        if (!child) { child = createView(node.schema,false);view[OBJECTS].set(node,child); }
-                        if (child[PHYSICAL_RECORD] !== record || child[REPRESENTATION] !== selected) {
-                            clearView(child);
-                            bindView(child,selected,record);
-                        }
+                        // A child remains valid until its parent is cleared; reselecting
+                        // can create a fresh representation of the *same* occurrence.
+                        if (child?.[PHYSICAL_RECORD] === record) return child;
+                        const selected = parser.object(view[REPRESENTATION] as R,details,node.path);
+                        if (!child) {child = createView(node.schema,false);view[OBJECTS].set(node,child);}
+                        bindView(child,selected,record);
                         return child;
                     } catch (e) {throw diagnostic(parser,record,node.original,e);}
                 }});
@@ -89,14 +90,14 @@ export function createProjection<T,R,D,P>(
                     const record = requireRecord(view);
                     try {
                         if (!parser.array) throw new Error("Parser does not support projected arrays");
-                        const selected = parser.array(view[REPRESENTATION] as R,details,node.path);
                         const cache = view[ROOT] ? rootArrayCache(record) : view[ARRAYS];
                         let runtime = cache.get(node) as ArrayRuntime<R> | undefined;
-                        if (!runtime) {
-                            runtime = makeArray(node);
-                            cache.set(node,runtime);
+                        const owner = view[REPRESENTATION] as R;
+                        if (!runtime?.isBoundTo(record,owner)) {
+                            const selected = parser.array(view[REPRESENTATION] as R,details,node.path);
+                            if (!runtime) {runtime=makeArray(node);cache.set(node,runtime);}
+                            runtime.bind(selected,record,owner);
                         }
-                        runtime.bind(selected,record,view[REPRESENTATION] as R);
                         return runtime.view;
                     } catch(e) {throw diagnostic(parser,record,node.original,e);}
                 }});
@@ -131,6 +132,7 @@ export function createProjection<T,R,D,P>(
         });
         return {
             name:node.label, view,elements,
+            isBoundTo(record,nextOwner) {return physical===record && owner===nextOwner && items!==undefined;},
             bind(next,record,nextOwner) {
                 if (physical === record && owner === nextOwner) return;
                 // The retained slots survive re-binding; their borrowed values do not.

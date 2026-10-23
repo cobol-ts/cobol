@@ -111,7 +111,8 @@ export function compileCobolProjectionPath(
 /** Resolve just the remaining runtime dimensions; there is no name lookup. */
 export function locateCompiledCobolPath(
     path: CobolFixedProjectionPath,
-    occurrenceIndices: readonly number[] = []
+    occurrenceIndices: readonly number[] = [],
+    into?: {offsetBits:number;sizeBits:number}
 ): Readonly<{offsetBits: number; sizeBits: number}> {
     if (occurrenceIndices.length !== path.runtimeDimensions.length) {
         throw new Error(`Expected ${path.runtimeDimensions.length} COBOL occurrence indexes, got ${occurrenceIndices.length}`);
@@ -125,6 +126,7 @@ export function locateCompiledCobolPath(
         }
         offsetBits += occurrenceIndex * strideBits;
     }
+    if(into){into.offsetBits=offsetBits;into.sizeBits=path.sizeBits;return into;}
     return {offsetBits, sizeBits: path.sizeBits};
 }
 

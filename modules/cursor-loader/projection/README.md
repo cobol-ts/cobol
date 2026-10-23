@@ -106,7 +106,7 @@ A name such as `root.orders` accompanies array runtimes for debugging; the name 
 
 `FileCursorResult` owns a live physical record and a reusable root projection. Closing the result clears projection bindings, including accessed children, before releasing the physical record and its byte-buffer leases. **Keep neither root nor child views beyond that close.** Pooled JavaScript objects may later refer to different rows; a retained reference is not a permanently safe snapshot.
 
-Two simultaneously live file results have distinct physical record holders and retain independent projected children. Selecting `orders[0]` more than once during a lease returns the same projected child object. Reuse on a subsequent lease avoids recompilation and, for previously accessed indexes, avoids recreating child objects.
+Two simultaneously live file results have distinct physical record holders and retain independent projected children. Selecting `orders[0]` more than once during a lease returns the same projected child object. **Repeated nested-object and array property getters reuse an already bound selection without calling the parser again.** This relies on the borrowed representation remaining structurally stable for the lease; clearing the parent invalidates child bindings before reuse. Reuse on a subsequent lease avoids recompilation and, for previously accessed indexes, avoids recreating child objects.
 
 ## Format-specific behaviour
 
@@ -128,4 +128,4 @@ Diagnostics from deeply nested accessors currently identify the compiled member'
 
 Relevant tests are in `src/projection.definition.spec.ts`, `src/create.projection.spec.ts`, `src/nested.projection.type-tests.ts` and `src/indexed.projection.type-tests.ts`; parser packages also exercise this factory through real file cursors. Run the package's normal Jest script and TypeScript compilation separately.
 
-The generic factory intentionally does not parse COBOL, infer business semantics, copy record payloads or resolve ODO controllers. COBOL's current fixed-layout adapter supplies `length` and selected displacement; variable OCCURS/ODO is not integrated yet.
+The generic factory intentionally does not parse COBOL, infer business semantics, copy record payloads or resolve ODO controllers. The COBOL adapter now supports nested ODO through parser-owned record-scoped position caches; those details do not affect the generic projection contract.

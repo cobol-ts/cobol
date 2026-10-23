@@ -35,7 +35,8 @@ export function cobolDebugRangeString(
 }
 
 /** Convert already-evaluated COBOL bit geometry to byte coordinates. */
-export function cobolDebugRangeFromBits(offsetBits: number, sizeBits: number): CobolDebugRange {
+export function cobolDebugRangeFromBits(offsetBits: number, sizeBits: number,
+                                        into?: {from:number;to:number}): CobolDebugRange {
     if (
         !Number.isSafeInteger(offsetBits) || offsetBits < 0 || offsetBits % 8 !== 0 ||
         !Number.isSafeInteger(sizeBits) || sizeBits < 0 || sizeBits % 8 !== 0 ||
@@ -43,7 +44,9 @@ export function cobolDebugRangeFromBits(offsetBits: number, sizeBits: number): C
     ) {
         throw new RangeError("COBOL debug geometry must be nonnegative, byte-aligned safe integers");
     }
-    return {from: offsetBits / 8, to: (offsetBits + sizeBits) / 8};
+    const from=offsetBits/8,to=(offsetBits+sizeBits)/8;
+    if(into){into.from=from;into.to=to;return into;}
+    return {from,to};
 }
 
 function validateRange(range: CobolDebugRange): void {
