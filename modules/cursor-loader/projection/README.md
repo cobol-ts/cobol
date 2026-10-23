@@ -114,19 +114,20 @@ Two simultaneously live file results have distinct physical record holders and r
 | --- | --- | --- |
 | JSONL | Traversal of already parsed JSON | Native object selection and `ProjectedArraySource` over a JSON array |
 | COBOL, fixed layout | Numeric field coordinates over original bytes | Selected group plus occurrence displacement; no copied COBOL array |
+| COBOL, ODO layout | Symbolically compiled original-byte locations | Lazy ODO boundary prefixes in record state; fixed-location controllers required |
 | CSV | Compiled column number and lazy byte-range decoding | Intentionally flat: no nested object/array capability |
 
 Legacy runtime-indexed **scalar** methods also remain supported where the parser implements them; they are not equivalent to first-class projected arrays.
 
 ## Errors and diagnostics
 
-Parse-time `Errors` and lazy projection exceptions are different. A malformed physical record may be handled by a cursor row-error policy. Once a representation exists, a failed projected member access throws with the current `source`, one-based `recordNumber`, member path and the parser's physical-record rendering. Source-dependent path failures, such as a missing CSV column, occur earlier at factory construction.
+Runtime getter failures, scalar access failures and deferred projected-array `length` / element failures are enriched with the currently bound source filename, record number, parser-specific reason and physical record rendering. The runtime also retains parent/member/index links for borrowed views, allowing an application-level path such as `orders[1].items[2].sku` to be constructed **only on the exceptional path**. This complements the compiled COBOL declaration/controller path in the underlying reason. An error raised before a selection is made cannot report unknown indices.
 
-Diagnostics from deeply nested accessors currently identify the compiled member's *relative* field path rather than always reporting a fully qualified `orders[1].items[2]` chain. Do not depend on full nested occurrence paths in error strings yet.
+Diagnostics should be exercised after record reuse: the error must refer to the currently bound source record, not the previous lease. Successful scalar reads do not build error-path strings.
 
 ## Tests and boundaries
 
-Relevant tests are in `src/projection.definition.spec.ts`, `src/create.projection.spec.ts`, `src/nested.projection.type-tests.ts` and `src/indexed.projection.type-tests.ts`; parser packages also exercise this factory through real file cursors. Run the package's normal Jest script and TypeScript compilation separately.
+Relevant tests are in `src/projection.definition.spec.ts`, `src/create.projection.spec.ts`, `src/nested.projection.type-tests.ts` and `src/create.projection.reuse.spec.ts`, `src/create.projection.array.diagnostics.spec.ts`; parser packages also exercise this factory through real file cursors. Run the package's normal Jest script and TypeScript compilation separately.
 
 The generic factory intentionally does not parse COBOL, infer business semantics, copy record payloads or resolve ODO controllers. The COBOL adapter now supports nested ODO through parser-owned record-scoped position caches; those details do not affect the generic projection contract.
 

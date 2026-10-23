@@ -134,7 +134,11 @@ String-only JSON paths are retained unchanged when compiled; literal numeric pat
 
 - `src/cursor.loader.json.parser.spec.ts`: physical JSONL framing, multi-buffer data and parse errors.
 - `src/json.projection.support.spec.ts`: scalar types, path traversal, literal and runtime indexes, errors.
-- `src/json.array.projection.spec.ts`: existing indexed scalar accessors and cursor integration.
+- `src/json.projected.array.spec.ts`: existing indexed scalar accessors and cursor integration.
 - `src/json.projected.array.spec.ts`: first-class arrays, nested objects, iteration, high-water reuse and simultaneous live rows through a real file cursor.
 
 The cross-package `@cobol-ts/cursor-loader-test` fixture registers `createJsonRecordState`. Run Jest and a TypeScript build as separate verification steps where the monorepo scripts require it.
+
+## Rebinding and indexed diagnostics
+
+Generic projected object and array views are retained and rebound rather than rematerialised as domain objects. A projected array uses sparse retained element slots plus an `ArrayWithSize` prefix of the child references bound during the current lease, so `clear()` does not scan its historical highest array index. Parser-native JSON values **are still newly allocated** by `JSON.parse()` for each record. Deep lazy failures can report a fully indexed application path assembled only on the error path; never retain a projected child beyond `FileCursorResult.close()`.

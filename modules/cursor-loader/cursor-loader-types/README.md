@@ -147,7 +147,7 @@ interface CsvRecordState {
 }
 ```
 
-The arrays are retained on the pooled physical-record holder and reused when that holder is leased again. Generic cursor machinery deliberately does not interpret or reset their contents.
+The arrays are retained on the pooled physical-record holder and reused when that holder is leased again. Generic cursor machinery deliberately does not interpret their contents. A parser registration can supply `cleanRecordState`, called by the physical-record pool on final release to invalidate lease-specific state while retaining capacity.
 
 The invariant is:
 
@@ -337,10 +337,11 @@ interface ProjectionPhysicalRecord {
     readonly lastValidByte: number;
     readonly source: string;
     readonly recordNumber: number;
+    readonly recordState?: unknown;
 }
 ```
 
-It does not receive `readMore()`, lifetime operations, parser record state or pool internals.
+It does not receive `readMore()`, lifetime operations or pool internals. Its optional `recordState` is deliberately typed as `unknown`: the generic interface does not interpret parser state, but a parser-specific adapter or the generic projection cache may narrow this opaque capability for reuse.
 
 The runtime object may still be the same physical-record object. The narrower interface is a type-level capability boundary rather than another wrapper allocation.
 
@@ -362,9 +363,11 @@ Runtime projection failures are enriched with:
 
 - source;
 - one-based record number;
-- original logical projection path;
-- parser-specific reason;
+- compiled projection declaration path and (when available) the full indexed application access path;
+- parser-specific reason, including the offending controller when relevant;
 - parser-specific rendering of the current physical record.
+
+The application index chain is assembled on the error path, not per successful scalar read.
 
 Setup-time path-compilation failures instead use the optional preparation context supplied to `compileProjectionPath()`.
 
@@ -376,6 +379,7 @@ Setup-time path-compilation failures instead use the optional preparation contex
 parser
 parserConfig(definition)
 createRecordState()
+cleanRecordState?(state)
 ```
 
 Each registration defines how a file definition supplies parser configuration and how pooled per-record state is created.
@@ -414,3 +418,9 @@ so existing flat CSV and scalar COBOL adapters are unaffected.
 `ProjectionRecordState` defines `projectionViews`, retained on each pooled
 physical-record holder. `ProjectionPhysicalRecord.recordState` is exposed only as
 `unknown` to preserve the format-specific type boundary.
+
+## Rebindable parser selections
+
+`ProjectionSupport.object(parent, details, path, reusable?)` and `.array(parent, details, path, reusable?)` may receive an existing selection or array provider retained by the generic projection framework. `ProjectedArraySource.element(index, reusable?)` similarly accepts a previously used element selection. Implementations may ignore the optional reuse parameter, but COBOL updates existing selection objects and occurrence-index arrays rather than making per-lease replacements. Borrowed selections are independent while live, and must be cleared before their physical holder is recycled.
+
+`ParserRegistryEntry.cleanRecordState` is optional for formats with no lease-specific cached geometry, but **required** for correct pooled COBOL ODO positioning when using `createCobolRecordState`.

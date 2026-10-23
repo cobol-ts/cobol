@@ -322,9 +322,12 @@ The layout compiler provides **geometry and indexed location**, not a fully inte
 - choose a right-hand anchor or establish record framing (FB, VB/RDW, etc.);
 - manage physical-record leases or application-facing projections.
 
-The intended next consumer is `cursor-loader-cobol`. For **fixed** layouts, a setup-time traversal of the compiled tree can create a nested name index referencing these very same compiled entries (excluding padding from name lookup). A selected projection path can then compile to fixed geometry, while the existing physical-record machinery supplies the bytes. Initial debug projections can expose offsets and hexadecimal slices before real COBOL primitive decoding is introduced.
+The implemented consumer is **`@cobol-ts/cursor-loader-cobol`**. It creates a name index of the same compiled nodes and then compiles either constant-geometry paths (fixed OCCURS) or symbolic paths (ODO). The runtime retains variable-body occurrence boundary prefixes in the pooled physical-record state. The independent `locateCobolEntry()` algorithm remains a useful test oracle for coordinates, but it is not the hot-path locator used for already-compiled projections.
 
-This name index is **not another layout compiler**. It does not recalculate padding, duplicate occurrence subtrees, or reinterpret overlay extents. For ODO, symbolic expressions and a record-aware count resolver remain necessary. The current indexed locator provides a useful correctness reference but searches sibling lists and evaluates occurrence prefixes at access time; any future caching or path compilation belongs in the projection layer and should be justified by measurements.
+The adapter currently tests three levels of nested ODO and two independent sibling ODO arrays, using **fixed-position, supported count fields**. The geometry expressions can model enclosing occurrence indices and variable body lengths, but the adapter's physical-byte controller resolver explicitly rejects controllers at variable positions. Consequently, passing nested geometry tests does **not** establish support for a separately stored count inside every preceding outer occurrence. Layout compilation also does not decide FB/VB/RDW framing: the parser needs a trusted frame length before byte-backed access.
+
+The adapter's scalar methods still return byte-range diagnostics instead of applying production primitive codecs, which remain separately implemented in `@cobol-ts/cobolcodec`.
+
 
 ## Source map
 

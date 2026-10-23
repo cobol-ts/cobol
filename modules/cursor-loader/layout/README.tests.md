@@ -149,3 +149,7 @@ An `ENOENT` from `fixtures/carddemo/` means the test data is absent; it is **not
 Our strongest evidence still lies in fixed-layout public records and hand-checked fields. In particular, externally produced IBM storage maps would materially improve confidence for `SYNCHRONIZED` within repeated bodies, nested ODO, variable storage preceding aligned fields, and overlays whose alternatives have distinct symbolic extents. Tests for those interactions already exist internally; what remains missing is **independent compiler-produced coordinate evidence**.
 
 Until client copybooks arrive, continue enriching the public corpus with verifiable record layouts. The objective is high confidence in **physical geometry** before investing in byte decoding—not a larger test count for its own sake.
+
+## Separate runtime acceptance boundary
+
+This package's location and extent fixtures are independent **layout-geometry** tests. End-to-end projected access through a borrowed byte-backed record is covered separately in `cursor-loader-cobol`, notably `cobol.odo.projection.spec.ts`, `cobol.multiple.nested.odo.spec.ts` and `cobol.odo.three.level.spec.ts`. Their nested fixtures use count fields at fixed physical locations. They do not prove occurrence-local count decoding, variable-record framing or production scalar codec integration. Keep that distinction explicit when claiming nested ODO support.

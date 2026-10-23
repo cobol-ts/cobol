@@ -1035,3 +1035,9 @@ records the declaration, while dynamic layout is handled later.
 `ASCENDING KEY`, `DESCENDING KEY` and `INDEXED BY` follow the same rule: their declarations are preserved in the AST without attempting to implement their runtime semantics.
 
 This keeps parsing independent from byte layout and makes the AST useful as the stable boundary between COBOL source and the rest of the system.
+
+## Boundaries with layout and byte-backed ODO (October 2026)
+
+The parser's job remains syntactic AST construction; parsing a nested `OCCURS DEPENDING ON` declaration does **not** establish that the byte-backed cursor can resolve every controller placement. The layout compiler currently applies an IBM-oriented, fixed-location-controller subset, while the projection adapter tests two sibling ODOs and three nested ODO levels only for controllers at fixed byte coordinates. Separately located counts inside each outer occurrence remain unsupported in the runtime byte controller locator. Variable physical record framing and scalar codec integration are separate responsibilities.
+
+The parser and validator are also distinct entrypoints: `index.ts` re-exports the AST and parser, while `validateCopybook` currently lives in `src/copybook.validate.ts` and is not re-exported from the package root. Keep import paths and validation claims consistent with the public package exports.

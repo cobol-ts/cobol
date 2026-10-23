@@ -240,3 +240,7 @@ decode only fields the application asks for
 ```
 
 This reduces per-row materialisation without duplicating a generic line-framing scan.
+
+## Projection lifetime and recent generic changes
+
+CSV still uses one structural scan per row and decodes selected column values lazily. The generic projection layer now avoids reselection of already-bound objects and arrays, and may pass optional retained selection/provider values when rebinding. CSV's scalar path does not require ODO caches or parser-specific cleanup. For a malformed lazy projection value, the generic exception formatter reports the current file and record, plus an indexed application path when relevant selection context exists; this path is built only for failures.

@@ -90,9 +90,10 @@ Each file type resolves to a registration containing:
 parser
 parserConfig(definition)
 createRecordState()
+cleanRecordState?(state)
 ```
 
-The registration is where a file-definition shape is connected to the parser's configuration and per-record state.
+The registration is where a file-definition shape is connected to the parser's configuration and per-record state. The optional `cleanRecordState` hook runs on the physical holder's **final** pool release, after result/projection clearing. It is essential for pooled COBOL ODO geometry: use `cleanCobolRecordState` with `createCobolRecordState`. Formats without record-dependent cached positions need not supply it.
 
 After runtime file-type lookup, generic cursor orchestration deliberately erases the concrete parser-family generics at that narrow registry boundary.
 
@@ -254,7 +255,7 @@ If `Parser.parse()` returns recoverable row `Errors`, no successful projection l
 
 If successful parser output cannot be bound into a result, the physical record is also closed before the exception propagates.
 
-Lazy projection accessor errors happen later while a successful result is open. They propagate as exceptions enriched by the projection layer with the currently bound source, record number, logical path and parser-specific physical rendering.
+Lazy projection accessor errors happen later while a successful result is open. They propagate as exceptions enriched by the projection layer with the currently bound source, record number, logical **indexed application** path (when selection context exists), COBOL declaration/controller path when applicable, and parser-specific physical rendering. Constructing the indexed path is deferred to the error path.
 
 ## Example
 

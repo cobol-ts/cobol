@@ -1,4 +1,4 @@
-# @cobol-ts/ref-counted-pool
+# @cobol-ts/ref_counted_pool
 
 A small reference-counted object pool for JavaScript and TypeScript.
 
@@ -70,7 +70,7 @@ returned to pool
 ## Installation
 
 ```bash
-npm install @cobol-ts/ref-counted-pool
+npm install @cobol-ts/ref_counted_pool
 ```
 
 ## API
@@ -105,7 +105,7 @@ export function createRefCountedPool<
 ```ts
 import {
     createRefCountedPool
-} from "@cobol-ts/ref-counted-pool";
+} from "@cobol-ts/ref_counted_pool";
 
 
 interface Buffer {
@@ -575,3 +575,7 @@ available for reuse
 ```
 
 The pool provides reference-counted reuse without requiring a global ownership registry and without preventing normal garbage collection of abandoned checked-out objects.
+
+## Physical-record cleaner integration
+
+`cursor-record` passes `cleanRecordState` through to this pool for the physical-record holder. It runs only when that holder's **final** reference is released, after the holder has released its byte-buffer references. Parsers decide which state is lease-specific; the pool never traverses COBOL cache structures itself. A cleaner must invalidate stale record-dependent positions while preserving reused allocation. The same callback may be omitted for state that needs no cleanup.

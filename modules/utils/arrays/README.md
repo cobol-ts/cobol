@@ -33,5 +33,4 @@ appendArrayWithSize(boundaries, 200); // overwrites the first slot
 ```
 
 Reset invalidates the prefix; it does not clear object references beyond it.
-Do not use this abstraction for sparse indexed caches such as projected-array
-child slots, which have different active-length semantics.
+Do not use this abstraction *as the indexed lookup array* for sparse projected children. It **is** appropriate for the separate dense list of child references activated during the current lease. In the projection and ODO caches, sparse indexed storage remains independent of this `ArrayWithSize` cleanup prefix.

@@ -99,15 +99,11 @@ createRecordState:
 
 That factory runs only when a new pooled physical-record holder must be created, not once per source row.
 
-JSON uses:
-
-```ts
-() => undefined
-```
+JSONL projections use `createJsonRecordState()`, which provides a retained `projectionViews` map on each pooled holder. Parser state is initialised **once per holder**, not once per JSON record; `JSON.parse()` still materialises a fresh value for each input row.
 
 The current CSV parser uses a state object containing reusable `Int32Array` field-boundary arrays and a field count. Those arrays remain attached to the pooled holder and are reused when it is leased again.
 
-Generic record machinery does not interpret parser state.
+Generic record machinery does not interpret parser state. `createDefaultPhysicalRecordConfig()` also accepts `cleanRecordState?: (state) => void`, and passes this hook to the physical-record pool's final-release cleaner. The callback runs when `close()` releases the holder's final reference, after byte-buffer ownership has been relinquished and before the holder becomes available again. For COBOL ODO state, register `cleanCobolRecordState`; it resets active boundaries and retains allocated storage.
 
 ## Record positions
 
@@ -218,9 +214,10 @@ Closing a physical record:
 
 1. releases its byte-buffer references;
 2. clears the reusable `buffers` array in place;
-3. returns the physical-record holder to its pool.
+3. releases the physical-record holder to its pool;
+4. on **final** release only, invokes an optional parser-state cleaner before the holder is available again.
 
-Parser-defined `recordState` remains attached to the holder and can be overwritten on the next lease.
+Parser-defined `recordState` remains attached to the holder, with its reusable capacity preserved. Lease-specific state must be reset by that cleaner where required; merely retaining allocated buffers does not make stale ODO offsets safe.
 
 ## Reference-counted buffers
 
@@ -287,3 +284,7 @@ small cursor carry state
 The architecture deliberately lets parser code remain an ordinary sequential algorithm across `await record.readMore()`.
 
 Performance work should therefore focus on measured allocation, memory traffic and parser cost rather than assuming a particular Promise optimisation strategy.
+
+## Cleanup cost versus retained capacity
+
+`ArrayWithSize` boundary caches invalidate their contiguous valid prefix by resetting `size`. In the COBOL ODO and generic projection layers, sparse indexed arrays retain their historical slots, but a separate dense valid-prefix of **currently active references** limits cleanup traversal to the current lease. This avoids work proportional to rare high indexes on later small records, at the cost of constant-time bookkeeping on first activation/bind. It is a verified structural property, not a benchmarked speedup.

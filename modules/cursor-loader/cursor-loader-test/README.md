@@ -125,3 +125,7 @@ Jest exercises runtime behaviour, but it is not sufficient to validate evolving 
 CI/CD should compile the package separately with `tsc` as well as running Jest. This catches stale call signatures even when the test transpilation path would otherwise execute them as JavaScript.
 
 The current package `test` script itself runs Jest only; TypeScript compilation is therefore a separate build/CI responsibility rather than something performed by that npm script.
+
+## Current cross-package validation boundary
+
+The end-to-end integration suites in this package primarily exercise JSONL and CSV. They are **not** evidence that COBOL nested ODO or primitive codecs work: COBOL-specific byte-coordinate, nested ODO, pooling and indexed-error tests live in `cursor-loader-cobol`, while layout and symbolic size tests live in their respective packages. Run those package suites, TypeScript checks and the full repository Jest suite separately before release. Do not publish a fixed test count in this README; the suite evolves.
