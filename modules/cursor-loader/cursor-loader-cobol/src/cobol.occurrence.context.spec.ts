@@ -119,7 +119,7 @@ describe("COBOL enclosing occurrence context",()=>{
         factory.clear(row);
     });
 
-    test("failure to select a nested-ODO outer occurrence reports the owning source and bytes",()=>{
+    test("selecting a nested-ODO outer occurrence now resolves its variable body",()=>{
         const layout=layoutFor([
             "01 ROW.",
             "  05 ORDER-COUNT PIC 9.",
@@ -144,12 +144,8 @@ describe("COBOL enclosing occurrence context",()=>{
         const r=record(bytes,42);
         factory.bind(row,r,r);
         expect(row.orders.length).toBe(2);
-        const message=errorMessage(()=>row.orders[1]);
-        expect(message).toBe(
-            "nested-odo.fb: record 42: projection ROW.ORDERS: " +
-            "Variable occurrence body requires nested ODO boundary resolution\n" +
-            "f2 f2 c1 f1 c1 c2 c3 c4 c5 c6 e8 c2 f2 c7 c8 c9 d1 d2 d3 d5 e9"
-        );
+        expect(row.orders[1].id()).toBe("11/13/c2 f2");
+        expect(row.orders[1].items[1].sku()).toBe("16/19/d1 d2 d3");
         factory.clear(row);
     });
 

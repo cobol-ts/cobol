@@ -3,7 +3,7 @@ import type {ProjectionPhysicalRecord} from "@cobol-ts/cursor-loader-types";
 import {createFileCursor} from "@cobol-ts/cursor-file";
 import {createProjection,defineProjection} from "@cobol-ts/cursor-projection";
 import {valueOrThrow} from "@cobol-ts/errors";
-import {cobolParser, createCobolFixedDetails,createCobolRecordState} from "./cobol.parser";
+import {cobolParser, createCobolFixedDetails,createCobolRecordState,cleanCobolRecordState} from "./cobol.parser";
 import {customerFixedOccurs} from "./customer.fixtures";
 
 interface PhoneParts {
@@ -98,9 +98,12 @@ describe("COBOL fixed OCCURS projected array",()=>{
     test("holds two independent record leases through the real byte cursor",async()=>{
         const bytes=Uint8Array.from([...customerFixedOccurs.records[0].bytes,...customerFixedOccurs.records[1].bytes]);
         const source={bytes,offset:0};
+        let cleanCalls=0;
         const cursor=createFileCursor(
             {filename:"phones.fb",fileType:"cobol" as const,projection:definition},source,
-            {parsers:{cobol:{parser:cobolParser,parserConfig:()=>details,createRecordState:createCobolRecordState}},
+            {parsers:{cobol:{parser:cobolParser,parserConfig:()=>details,
+                createRecordState:createCobolRecordState,
+                cleanRecordState:state=>{cleanCalls++;cleanCobolRecordState(state);}}},
             bufferSize:7,
             fillFileBuffer:async(s:typeof source,dst:Uint8Array)=>{
                 const n=Math.min(dst.length,s.bytes.length-s.offset);
@@ -112,8 +115,10 @@ describe("COBOL fixed OCCURS projected array",()=>{
         expect(first.result.telephones[1].raw()).toBe("10/16/d4 f6 f7 f8 f9 f0");
         expect(second.result.telephones[1].raw()).toBe("10/16/c2 f1 f1 f2 f2 f3");
         first.close();
+        expect(cleanCalls).toBe(1);
         expect(second.result.telephones[0].raw()).toBe("4/10/e6 f5 f4 f3 f2 f1");
         second.close();
+        expect(cleanCalls).toBe(2);
         expect((await cursor.next()).done).toBe(true);
     });
 });

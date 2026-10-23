@@ -4,6 +4,7 @@ import {evaluateStorageSize, resolveDependingOnCount, type ResolvePath, type Sto
 import {valueOrThrow} from "@cobol-ts/errors";
 import {locateCobolEntry} from "@cobol-ts/layout";
 import {findCobolName,type CobolNameIndex} from "./cobol.layout.index";
+import {occurrenceBoundary,positionBranch,type OdoPositionCache} from "./cobol.odo.positions";
 
 export type CobolNamedNode=CompiledCobolElementary|CompiledCobolGroup;
 export type CobolSymbolicStep=Readonly<{node:CobolNamedNode; index?:number}>;
@@ -149,10 +150,10 @@ export function selectSymbolic(
         if(occurs?.kind==="occurs" && index!==undefined) {
             const count=activeCount(node,resolve,view.enclosingIndices);
             if(!Number.isSafeInteger(index)||index<0||index>=count) throw new RangeError(`OCCURS index ${index} outside 0..${count-1}`);
-            const body=repeatedBody(node);
-            if(typeof body!=="number") throw new Error("Variable occurrence body requires nested ODO boundary resolution");
-            start+=index*body;
-            bodySize=body;
+            const selected=singleDepthOccurrence({physical:view.physical,originBits:start,
+                enclosingIndices:view.enclosingIndices},node,index,resolve);
+            start=selected.originBits;
+            bodySize=selected.endBits===undefined?undefined:selected.endBits-start;
         }
         // An independently known right suffix also supplies the *end* of a
         // variable-sized group, even when its left start was selected first.
@@ -176,8 +177,25 @@ export function singleDepthOccurrence(
     const count=activeCount(node,resolve,view.enclosingIndices);
     if(!Number.isSafeInteger(index)||index<0||index>=count) throw new RangeError(`OCCURS index ${index} outside 0..${count-1}`);
     const body=repeatedBody(node);
-    if(typeof body!=="number") throw new Error("Variable occurrence body requires nested ODO boundary resolution");
-    const originBits=view.originBits+index*body;
-    return {physical:view.physical,originBits,endBits:originBits+body,
+    let originBits:number, endBits:number;
+    if(typeof body==="number") {
+        originBits=view.originBits+index*body;
+        endBits=originBits+body;
+    } else {
+        // Array contents live with the physical record, not with projected elements.
+        const state=view.physical.recordState as {odoPositions?:OdoPositionCache}|undefined;
+        if(!state?.odoPositions) throw new Error("COBOL ODO position cache missing from physical record state");
+        const cache=positionBranch(state.odoPositions,node,view.enclosingIndices);
+        // Reuse one indexed context while walking missing preceding extents,
+        // rather than allocating a new index array per preceding occurrence.
+        const indices=[...view.enclosingIndices,0];
+        const coordinate=indices.length-1;
+        endBits=occurrenceBoundary(cache,view.originBits,index+1,previous=>{
+            indices[coordinate]=previous;
+            return evalBits(body,resolve,indices);
+        });
+        originBits=cache.starts.values[index];
+    }
+    return {physical:view.physical,originBits,endBits,
         enclosingIndices:[...view.enclosingIndices,index]};
 }

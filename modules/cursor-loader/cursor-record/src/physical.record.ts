@@ -59,6 +59,8 @@ export interface DefaultPhysicalRecordConfig<TRecordState,TFile> {
     readonly bufferSize: number;
     readonly fillFileBuffer: FillFileBuffer<TFile>;
     readonly createRecordState: () => TRecordState;
+    /** Called only on the final release of a pooled record; keeps retained capacity. */
+    readonly cleanRecordState?: (state:TRecordState) => void;
 }
 
 
@@ -92,7 +94,8 @@ export function createDefaultPhysicalRecordConfig<TRecordState,TFile>(
             physicalContentPool,
             readMore,
             close: closePhysicalRecord
-        })
+        }),
+        options.cleanRecordState ? record=>options.cleanRecordState!(record.recordState) : undefined
     );
 
     config = {
@@ -130,7 +133,8 @@ export function createPhysicalRecord<TRecordState,TFile>(
     record.fileFinished = false;
     record.readMore = config.readMore;
 
-    /* recordState belongs to the parser and is deliberately not reset. */
+    /* Parser state retains its allocated capacity; an optional final-release
+       cleaner has already invalidated lease-specific contents. */
     return record;
 }
 

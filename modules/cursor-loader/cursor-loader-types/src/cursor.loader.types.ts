@@ -17,7 +17,8 @@ import {type HasByteBuffers} from "./debug.string";
  * later records.
  *
  * recordState contains parser-specific state associated with this physical
- * record. Generic cursor and lifetime machinery do not interpret or reset it.
+ * record. Generic cursor machinery never interprets it; a parser-registered
+ * cleaner may invalidate lease-specific contents on final pool release.
  */
 export interface PhysicalRecordData<TRecordState> {
     readonly buffers:

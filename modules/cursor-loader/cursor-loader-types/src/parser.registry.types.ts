@@ -23,6 +23,9 @@ export interface ParserRegistryEntry<
 
     readonly createRecordState:
         () => ParserRecordState<TParser>;
+
+    /** Parser-owned state cleanup on the final physical-record release. */
+    readonly cleanRecordState?: (state:ParserRecordState<TParser>) => void;
 }
 
 

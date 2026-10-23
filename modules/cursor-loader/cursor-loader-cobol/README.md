@@ -139,17 +139,20 @@ The inner item's storage extent is **four bytes**, not two, because the longer o
 ## Pooled state and lifetime
 
 ```ts
-import {cobolParser, createCobolRecordState} from "@cobol-ts/cursor-loader-cobol";
+import {cobolParser, createCobolRecordState, cleanCobolRecordState} from "@cobol-ts/cursor-loader-cobol";
 
 // In the opened-file parser registry:
 cobol: {
     parser: cobolParser,
     parserConfig: () => preparedFixedDetails,
-    createRecordState: createCobolRecordState
+    createRecordState: createCobolRecordState,
+    cleanRecordState: cleanCobolRecordState
 }
 ```
 
-`CobolRecordState` is `ProjectionRecordState`: `{projectionViews: new Map()}`. This map lives on **each pooled physical-record holder** and survives that holder's reuse. The existing physical record and `FileCursorResult` pools retain ownership; projected children do not need separate pools.
+`CobolRecordState` extends `ProjectionRecordState` with `odoPositions`, a map keyed by compiled OCCURS nodes. Both maps live on **each pooled physical-record holder**. `projectionViews` retains reusable projected-array slots; `odoPositions` retains lazily grown, jagged arrays of physical bit boundaries.
+
+**Register `cleanRecordState: cleanCobolRecordState`** when opening a source. The physical-record pool invokes it only on final release, after the projection was cleared; it resets every calculated boundary prefix's `size` to zero but preserves the allocated arrays and projected slots. Without that callback, reuse of a physical holder across different ODO counts could produce stale positions. Neither a generation counter nor a new generic projection-object pool is required.
 
 `customer.orders[0]` can remain accessible alongside `customer.orders[1]` during the same record lease. Repeated selection of an already acquired index returns its child projection object. Closing the result clears all borrowed bindings; callers must not use root or child projections after close because pooled objects can be rebound to a later record.
 

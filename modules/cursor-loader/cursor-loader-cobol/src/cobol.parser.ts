@@ -7,6 +7,7 @@ import type {CompiledCobolEntry} from "@cobol-ts/layout";
 import {type ErrorsOr, errors, value, flatMapErrorsOr} from "@cobol-ts/errors";
 import {evaluateStorageSize} from "@cobol-ts/size";
 import type {ProjectedArraySource} from "@cobol-ts/arrays";
+import {cleanOdoPositions,type OdoPositionCache} from "./cobol.odo.positions";
 import {createCobolNameIndex, type CobolNameIndex} from "./cobol.layout.index";
 import {cobolDebugRangeFromBits, cobolDebugRangeNumber, cobolDebugRangeString} from "./cobol.debug.range";
 import {compileCobolMemberPath, locateCompiledCobolPath, type CobolProjectionPath} from "./cobol.projection.path";
@@ -28,7 +29,7 @@ export type CobolRepresentation = ProjectionPhysicalRecord | Readonly<{
     physical: ProjectionPhysicalRecord;
     displacementBits: number;
 }> | CobolSymbolicView;
-export type CobolRecordState = ProjectionRecordState;
+export type CobolRecordState = ProjectionRecordState & {readonly odoPositions:OdoPositionCache};
 export type CobolParser = Parser<CobolRepresentation, CobolProjectionDetails, CobolProjectionDetails, CobolRecordState, CobolProjectionPath>;
 
 const physical = (view:CobolRepresentation):ProjectionPhysicalRecord =>
@@ -158,4 +159,5 @@ export const cobolParser = {
     toDebugString: bytesToDebugString
 } satisfies CobolParser;
 
-export const createCobolRecordState = (): CobolRecordState => ({projectionViews:new Map()});
+export const createCobolRecordState = (): CobolRecordState => ({projectionViews:new Map(),odoPositions:new Map()});
+export const cleanCobolRecordState = (state:CobolRecordState):void => cleanOdoPositions(state.odoPositions);

@@ -308,7 +308,10 @@ async function openFileCursor<
             infrastructure.fillFileBuffer,
 
             createRecordState:
-            registered.createRecordState
+            registered.createRecordState,
+
+            cleanRecordState:
+            registered.cleanRecordState
         });
 
     const opened =

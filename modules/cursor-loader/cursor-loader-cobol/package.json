@@ -1,6 +1,6 @@
 {
   "name": "@cobol-ts/cursor-loader-cobol",
-  "description": "Fixed-length COBOL byte-backed parser, compile-once occurrence paths and debug projections",
+  "description": "COBOL byte-backed parser, symbolic and nested ODO projection paths with lazy record-scoped geometry",
   "version": "0.0.1",
   "main": "dist/index",
   "types": "dist/index",
