@@ -111,16 +111,22 @@ export function createProjection<T,R,D,P>(
         let owner:R | undefined;
         let physical:ProjectionPhysicalRecord | undefined;
         const view = createProjectedArray({
-            length: () => items?.length() ?? 0,
+            length: () => {
+                if (!items) return 0;
+                try {return items.length();}
+                catch(e) {if (!physical) throw e;throw diagnostic(parser,physical,node.original,e);}
+            },
             element(index) {
                 if (!items || !physical) throw new Error("Projected array is not bound");
-                let child=elements[index];
-                if (!child) {child=createView(node.schema,false);elements[index]=child;}
-                if (child[PHYSICAL_RECORD] !== physical || child[REPRESENTATION] === undefined) {
-                    clearView(child);
-                    bindView(child,items.element(index),physical);
-                }
-                return child;
+                try {
+                    let child=elements[index];
+                    if (!child) {child=createView(node.schema,false);elements[index]=child;}
+                    if (child[PHYSICAL_RECORD] !== physical || child[REPRESENTATION] === undefined) {
+                        clearView(child);
+                        bindView(child,items.element(index),physical);
+                    }
+                    return child;
+                } catch(e) {throw diagnostic(parser,physical,node.original,e);}
             }
         });
         return {

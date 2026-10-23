@@ -10,30 +10,41 @@ import type {ProjectedArraySource} from "@cobol-ts/arrays";
 import {createCobolNameIndex, type CobolNameIndex} from "./cobol.layout.index";
 import {cobolDebugRangeFromBits, cobolDebugRangeNumber, cobolDebugRangeString} from "./cobol.debug.range";
 import {compileCobolMemberPath, locateCompiledCobolPath, type CobolProjectionPath} from "./cobol.projection.path";
+import {activeCount,cobolCountResolver,rootSymbolicView,selectSymbolic,singleDepthOccurrence,
+    type CobolSymbolicView} from "./cobol.projection.symbolic";
 
-export type CobolFixedDetails = Readonly<{
+export type CobolProjectionDetails = Readonly<{
     layout: readonly CompiledCobolEntry[];
     names: CobolNameIndex;
-    recordLengthBytes: number;
+    recordLengthBytes?:number;
 }>;
+export type CobolFixedDetails = CobolProjectionDetails & Readonly<{recordLengthBytes:number}>;
 /**
- * A selected occurrence is a byte-backed view, not a second record or decoded
- * representation. Its only additional datum is a displacement in bits.
+ * Selected occurrences borrow the same physical record. Fixed layouts retain
+ * their numeric displacement, while symbolic selections carry the resolved
+ * group origin and, when independently known, its right boundary.
  */
 export type CobolRepresentation = ProjectionPhysicalRecord | Readonly<{
     physical: ProjectionPhysicalRecord;
     displacementBits: number;
-}>;
+}> | CobolSymbolicView;
 export type CobolRecordState = ProjectionRecordState;
-export type CobolParser = Parser<CobolRepresentation, CobolFixedDetails, CobolFixedDetails, CobolRecordState, CobolProjectionPath>;
+export type CobolParser = Parser<CobolRepresentation, CobolProjectionDetails, CobolProjectionDetails, CobolRecordState, CobolProjectionPath>;
 
 const physical = (view:CobolRepresentation):ProjectionPhysicalRecord =>
     "physical" in view ? view.physical : view;
 const displacement = (view:CobolRepresentation):number =>
-    "physical" in view ? view.displacementBits : 0;
+    "physical" in view && "displacementBits" in view ? view.displacementBits : 0;
+const symbolicView=(view:CobolRepresentation):CobolSymbolicView=>
+    "originBits" in view ? view : rootSymbolicView(physical(view));
 
 
 /** Compile the source-scoped index and validate the initially supported FB record size. */
+export function createCobolProjectionDetails(layout:readonly CompiledCobolEntry[]):ErrorsOr<CobolProjectionDetails> {
+    if(layout.length!==1) return errors("COBOL projection requires exactly one 01 record layout");
+    return flatMapErrorsOr(createCobolNameIndex(layout),names=>value({layout,names}));
+}
+
 export function createCobolFixedDetails(layout: readonly CompiledCobolEntry[]): ErrorsOr<CobolFixedDetails> {
     if (layout.length !== 1) return errors("Fixed COBOL parser requires exactly one 01 record layout");
     return flatMapErrorsOr(createCobolNameIndex(layout), names => {
@@ -53,8 +64,9 @@ export function createCobolFixedDetails(layout: readonly CompiledCobolEntry[]): 
 
 async function parse(
     record: ParserPhysicalRecordContent<CobolRecordState>,
-    details: CobolFixedDetails
+    details: CobolProjectionDetails
 ): Promise<CobolRepresentation | {errors: string[]}> {
+    if(details.recordLengthBytes===undefined) throw new Error("COBOL source framing is required for an ODO layout");
     const endByte = record.startByte + details.recordLengthBytes;
     while (record.lastValidByte < endByte && !record.fileFinished) {
         await record.readMore();
@@ -67,11 +79,20 @@ async function parse(
     return record;
 }
 
-function fieldRange(representation: CobolRepresentation, path: CobolProjectionPath, occurrenceIndices: readonly number[]) {
+function fieldRange(representation: CobolRepresentation, details:CobolProjectionDetails, path: CobolProjectionPath, occurrenceIndices: readonly number[]) {
     if (path.node.kind !== "elementary") throw new Error("COBOL scalar projection must select an elementary field");
-    const {offsetBits, sizeBits} = locateCompiledCobolPath(path, occurrenceIndices);
     const record=physical(representation);
-    const range = cobolDebugRangeFromBits(offsetBits + displacement(representation), sizeBits);
+    let offsetBits:number,sizeBits:number;
+    if("symbolic" in path) {
+        const selected=selectSymbolic(symbolicView(representation),path,cobolCountResolver(details,record),occurrenceIndices);
+        offsetBits=selected.originBits;
+        sizeBits=typeof path.node.size==="number"?path.node.size:NaN;
+    } else {
+        const located=locateCompiledCobolPath(path,occurrenceIndices);
+        offsetBits=located.offsetBits+displacement(representation);
+        sizeBits=located.sizeBits;
+    }
+    const range = cobolDebugRangeFromBits(offsetBits, sizeBits);
     if (record.startByte + range.to > record.endByte) {
         throw new RangeError("COBOL projection extends beyond the completed record");
     }
@@ -80,16 +101,32 @@ function fieldRange(representation: CobolRepresentation, path: CobolProjectionPa
 
 export const cobolParser = {
     parse,
-    compileProjectionPath(details: CobolFixedDetails, _context: PhysicalRecordContext | undefined, path: readonly (string | number)[], parent?:CobolProjectionPath) {
+    compileProjectionPath(details: CobolProjectionDetails, _context: PhysicalRecordContext | undefined, path: readonly (string | number)[], parent?:CobolProjectionPath) {
         return compileCobolMemberPath(details.names, path, parent);
     },
-    object(view: CobolRepresentation, _details: CobolFixedDetails, path: CobolProjectionPath): CobolRepresentation {
+    object(view: CobolRepresentation, _details: CobolProjectionDetails, path: CobolProjectionPath): CobolRepresentation {
+        if("symbolic" in path) {
+            if(path.node.kind!=="group" || path.node.source.clauses.some(c=>c.kind==="occurs"))
+                throw new Error("COBOL object selection requires a non-repeated group");
+            return selectSymbolic(symbolicView(view),path,cobolCountResolver(_details,physical(view)));
+        }
         if (path.node.kind !== "group" || path.runtimeDimensions.length !== 0) {
             throw new Error("COBOL object selection requires a non-repeated group");
         }
         return view; // Group offsets were resolved once when compiling its child paths.
     },
-    array(view: CobolRepresentation, _details: CobolFixedDetails, path: CobolProjectionPath): ProjectedArraySource<CobolRepresentation> {
+    array(view: CobolRepresentation, _details: CobolProjectionDetails, path: CobolProjectionPath): ProjectedArraySource<CobolRepresentation> {
+        if("symbolic" in path) {
+            if(path.node.kind!=="group" || !path.node.source.clauses.some(c=>c.kind==="occurs"))
+                throw new Error("COBOL projected array requires an OCCURS group");
+            const record=physical(view);
+            const resolve=cobolCountResolver(_details,record);
+            const selected=selectSymbolic(symbolicView(view),path,resolve);
+            return {
+                length:()=>activeCount(path.node,resolve,selected.enclosingIndices),
+                element(index:number){return singleDepthOccurrence(selected,path.node,index,resolve);}
+            };
+        }
         if (path.node.kind !== "group" || path.runtimeDimensions.length !== 1) {
             throw new Error("COBOL projected array requires one fixed OCCURS group");
         }
@@ -106,17 +143,17 @@ export const cobolParser = {
             }
         };
     },
-    integer(record: CobolRepresentation, _details: CobolFixedDetails, path: CobolProjectionPath, ...occurrenceIndices: number[]): number {
-        return cobolDebugRangeNumber(fieldRange(record, path, occurrenceIndices));
+    integer(record: CobolRepresentation, _details: CobolProjectionDetails, path: CobolProjectionPath, ...occurrenceIndices: number[]): number {
+        return cobolDebugRangeNumber(fieldRange(record, _details, path, occurrenceIndices));
     },
-    float(record: CobolRepresentation, _details: CobolFixedDetails, path: CobolProjectionPath, ...occurrenceIndices: number[]): number {
-        return cobolDebugRangeNumber(fieldRange(record, path, occurrenceIndices));
+    float(record: CobolRepresentation, _details: CobolProjectionDetails, path: CobolProjectionPath, ...occurrenceIndices: number[]): number {
+        return cobolDebugRangeNumber(fieldRange(record, _details, path, occurrenceIndices));
     },
-    character(record: CobolRepresentation, _details: CobolFixedDetails, path: CobolProjectionPath, ...occurrenceIndices: number[]): string {
-        return cobolDebugRangeString(physical(record), fieldRange(record, path, occurrenceIndices));
+    character(record: CobolRepresentation, _details: CobolProjectionDetails, path: CobolProjectionPath, ...occurrenceIndices: number[]): string {
+        return cobolDebugRangeString(physical(record), fieldRange(record, _details, path, occurrenceIndices));
     },
-    string(record: CobolRepresentation, _details: CobolFixedDetails, path: CobolProjectionPath, ...occurrenceIndices: number[]): string {
-        return cobolDebugRangeString(physical(record), fieldRange(record, path, occurrenceIndices));
+    string(record: CobolRepresentation, _details: CobolProjectionDetails, path: CobolProjectionPath, ...occurrenceIndices: number[]): string {
+        return cobolDebugRangeString(physical(record), fieldRange(record, _details, path, occurrenceIndices));
     },
     toDebugString: bytesToDebugString
 } satisfies CobolParser;

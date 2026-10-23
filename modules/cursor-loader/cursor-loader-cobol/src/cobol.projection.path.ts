@@ -1,13 +1,14 @@
 import type {CompiledCobolEntry, CompiledCobolElementary, CompiledCobolGroup} from "@cobol-ts/layout";
 import {evaluateStorageSize} from "@cobol-ts/size";
 import {findCobolName, type CobolNameIndex} from "./cobol.layout.index";
+import {compileCobolSymbolicPath,type CobolSymbolicPath} from "./cobol.projection.symbolic";
 
 /**
- * Once-only compilation of a COBOL projection path.
- * All geometry is in bits and relative to the beginning of the logical record.
- * Runtime access needs only occurrence arguments and this numeric descriptor.
+ * The existing constant-geometry fast path. All coordinates are in bits.
+ * ODO projections use CobolSymbolicPath instead, retaining the original
+ * compiled entries and their left/right expressions.
  */
-export type CobolProjectionPath = Readonly<{
+export type CobolFixedProjectionPath = Readonly<{
     node: CompiledCobolElementary | CompiledCobolGroup;
     offsetBits: number;
     sizeBits: number;
@@ -17,6 +18,7 @@ export type CobolProjectionPath = Readonly<{
     /** Dimensions already supplied by enclosing projected-array selections. */
     boundDimensions: number;
 }>;
+export type CobolProjectionPath = CobolFixedProjectionPath | CobolSymbolicPath;
 
 const describePath = (path: readonly (string | number)[]): string => path.join(".");
 
@@ -42,13 +44,13 @@ const staticBits = (expression: CompiledCobolEntry["size"], path: readonly (stri
  *   ["CUSTOMER", "ACCOUNTS", "ID"]     -> accountId(index)
  *   ["CUSTOMER", "ORDERS", "ITEMS", 1, "SKU"] -> sku(orderIndex)
  *
- * This first stage accepts only record-independent, fixed OCCURS geometry.
+ * This numeric path covers record-independent fixed OCCURS geometry.
  */
 export function compileCobolProjectionPath(
     index: CobolNameIndex,
     path: readonly (string | number)[],
     allowGroup = false
-): CobolProjectionPath {
+): CobolFixedProjectionPath {
     let scope = index;
     let offsetBits = 0;
     let selected: CompiledCobolEntry | undefined;
@@ -108,7 +110,7 @@ export function compileCobolProjectionPath(
 
 /** Resolve just the remaining runtime dimensions; there is no name lookup. */
 export function locateCompiledCobolPath(
-    path: CobolProjectionPath,
+    path: CobolFixedProjectionPath,
     occurrenceIndices: readonly number[] = []
 ): Readonly<{offsetBits: number; sizeBits: number}> {
     if (occurrenceIndices.length !== path.runtimeDimensions.length) {
@@ -127,25 +129,34 @@ export function locateCompiledCobolPath(
 }
 
 /**
- * Compile a relative member below an already selected group. The compiled
- * absolute offset is for occurrence zero. Array selection adds only its
- * numeric stride to the byte-backed view; inherited dimensions are removed
- * from the child's descriptor once, here, not during field access.
+ * Compile once, preserving the numeric fixed-layout fast path where possible.
+ * Symbolic paths keep parent-relative compiled storage geometry; fixed paths
+ * retain their existing inherited-dimension convention.
  */
 export function compileCobolMemberPath(
-    index: CobolNameIndex,
-    path: readonly (string | number)[],
-    parent?: CobolProjectionPath
-): CobolProjectionPath {
-    const fullPath = parent ? [...parent.fullPath, ...path] : path;
-    const compiled = compileCobolProjectionPath(index, fullPath, true);
-    const inherited = parent
+    index:CobolNameIndex,
+    path:readonly (string|number)[],
+    parent?:CobolProjectionPath
+):CobolProjectionPath {
+    const fullPath=parent?[...parent.fullPath,...path]:path;
+    // The existing numeric fast path is unchanged for fixed layouts.
+    // ODO paths retain the compiler's symbolic left/right geometry instead.
+    if(parent && "symbolic" in parent) {
+        return compileCobolSymbolicPath(index,fullPath,parent);
+    }
+    // Inspect compiled geometry once; never use exception messages for dispatch.
+    const symbolic=compileCobolSymbolicPath(index,fullPath,parent);
+    const hasRuntimeGeometry=symbolic.steps.some(({node})=>
+        typeof node.leftOffset!=="number" ||
+        (node.source.clauses.some(c=>c.kind==="occurs") && typeof node.size!=="number")
+    ) || (symbolic.node.kind==="group" && typeof symbolic.node.size!=="number");
+    if(hasRuntimeGeometry) return symbolic;
+    const compiled=compileCobolProjectionPath(index,fullPath,true);
+    const inherited = parent && !("symbolic" in parent)
         ? parent.boundDimensions + (parent.runtimeDimensions.length > 0 && parent.node.source.clauses.some(c=>c.kind === "occurs") ? 1 : 0)
         : 0;
-    if (inherited > compiled.runtimeDimensions.length) {
+    if(inherited>compiled.runtimeDimensions.length) {
         throw new Error(`Invalid enclosing OCCURS selection at ${describePath(fullPath)}`);
     }
-    return {...compiled,
-        runtimeDimensions:compiled.runtimeDimensions.slice(inherited),
-        boundDimensions:inherited};
+    return {...compiled,runtimeDimensions:compiled.runtimeDimensions.slice(inherited),boundDimensions:inherited};
 }
