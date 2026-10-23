@@ -243,10 +243,24 @@ export function selectSymbolic(
 
 /** A selected projected-array child legitimately retains its own view.
  * No temporary working views are needed to locate its occurrence. */
+/** Rebind a retained occurrence selection, without allocating an index array. */
+export function singleDepthOccurrenceInto(
+    view:CobolSymbolicView,node:CobolNamedNode,index:number,resolve:ResolvePath,
+    result:MutableSymbolicView
+):void {
+    if(result===view) throw new Error("Cannot overwrite an enclosing COBOL occurrence");
+    const indices=result.enclosingIndices;
+    indices.length=0;
+    for(const outer of view.enclosingIndices) indices.push(outer);
+    indices.push(index);
+    setOccurrencePosition(result,view.physical,view.originBits,view.enclosingIndices,node,index,resolve);
+    result.physical=view.physical;
+}
+
 export function singleDepthOccurrence(
     view:CobolSymbolicView,node:CobolNamedNode,index:number,resolve:ResolvePath
 ):CobolSymbolicView {
-    const selected:MutableSymbolicView={physical:view.physical,originBits:0,enclosingIndices:[...view.enclosingIndices,index]};
-    setOccurrencePosition(selected,view.physical,view.originBits,view.enclosingIndices,node,index,resolve);
+    const selected:MutableSymbolicView={physical:view.physical,originBits:0,enclosingIndices:[]};
+    singleDepthOccurrenceInto(view,node,index,resolve,selected);
     return selected;
 }

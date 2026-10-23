@@ -84,3 +84,23 @@ describe("record-owned ODO occurrence boundaries",()=>{
         b.close();
     });
 });
+
+describe("ODO cache cleanup cost",()=>{
+    test("clean traverses only activated jagged children, not retained high-water indexes",()=>{
+        const state=createCobolRecordState();
+        const large=positionBranch(state.odoPositions,inner,[20000]);
+        occurrenceBoundary(large,32,1,()=>8);
+        cleanCobolRecordState(state);
+        const small=positionBranch(state.odoPositions,inner,[0]);
+        occurrenceBoundary(small,80,1,()=>16);
+        // If cleanup scans high-water backing storage it touches this poison slot.
+        const root=state.odoPositions.get(inner)!;
+        Object.defineProperty(root.children,15000,{configurable:true,get(){throw new Error("read stale capacity");}});
+        try {
+            cleanCobolRecordState(state);
+            expect(small.starts.size).toBe(0);
+            expect(large.starts.size).toBe(0);
+            expect(root.children.length).toBeGreaterThan(15000);
+        }finally {delete root.children[15000];}
+    });
+});

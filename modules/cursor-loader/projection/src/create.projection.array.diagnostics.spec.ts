@@ -125,7 +125,7 @@ describe("createProjection deferred array diagnostics",()=>{
         const first=items[0];
         expect(first.name()).toBe("A");
         expect(errorMessage(()=>items[1])).toBe(
-            "rows.dat: record 23: projection items: Unable to locate occurrence 1\nTEST"
+            "rows.dat: record 23: projection items [access items[1]]: Unable to locate occurrence 1\nTEST"
         );
         expect(data.elementReads).toEqual([0,1]);
         expect(items[0]).toBe(first); // Other projections remain usable.
@@ -143,7 +143,7 @@ describe("createProjection deferred array diagnostics",()=>{
         factory.bind(projected,row(["A"],{failElement:0}),physical());
         const items=projected.items;
         expect(()=>Object.getOwnPropertyDescriptor(items,"0")).toThrow(
-            /rows\.dat: record 7: projection items: Unable to locate occurrence 0\nTEST/
+            /rows\.dat: record 7: projection items \[access items\[0\]\]: Unable to locate occurrence 0\nTEST/
         );
         factory.clear(projected);
     });
@@ -155,7 +155,7 @@ describe("createProjection deferred array diagnostics",()=>{
         const items=projected.group.items;
         expect(items.length).toBe(1);
         expect(errorMessage(()=>items[0])).toBe(
-            "rows.dat: record 31: projection group.items: Unable to locate occurrence 0\nTEST"
+            "rows.dat: record 31: projection group.items [access group.items[0]]: Unable to locate occurrence 0\nTEST"
         );
         factory.clear(projected);
     });

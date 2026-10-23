@@ -55,3 +55,28 @@ describe("projection lazy selection reuse",()=>{
         factory.clear(projection);
     });
 });
+
+describe("array cleanup retains sparse capacity without revisiting historical slots",()=>{
+    test("high-water slots not touched this lease are not scanned on clear",()=>{
+        const values=Array.from({length:3001},(_,i)=>String(i));
+        const factory=createProjection(parser,undefined,undefined,schema);
+        const projection=factory.create(),holder=record();
+        factory.bind(projection,{row:{values},group:false},holder);
+        const large=projection.group.items;
+        const old=large[3000];
+        expect(old.value()).toBe("3000");
+        factory.clear(projection);
+        factory.bind(projection,{row:{values:["small"]},group:false},holder);
+        const small=projection.group.items;
+        expect(small[0].value()).toBe("small");
+        // A cached array runtime exposes retained slots to inspection, but the
+        // application-facing projected array remains unchanged.
+        const group=projection.group as unknown as {[k:symbol]:unknown};
+        const maps=Object.getOwnPropertySymbols(group).map(symbol=>group[symbol]).filter(v=>v instanceof Map);
+        const runtime=[...maps.flatMap(v=>[...(v as Map<unknown,unknown>).values()])]
+            .find(v=>v && typeof v==="object" && "elements" in v) as {elements:unknown[]};
+        expect(runtime.elements.length).toBeGreaterThan(3000);
+        Object.defineProperty(runtime.elements,2000,{configurable:true,get(){throw new Error("stale array slot scanned");}});
+        try {factory.clear(projection);}finally {delete runtime.elements[2000];}
+    });
+});

@@ -11,7 +11,7 @@ export interface ProjectedArray<T> extends ReadonlyArray<T> {}
 /** Internal provider: the count is active length, not retained capacity. */
 export type ProjectedArraySource<T> = Readonly<{
     length(): number;
-    element(index: number): T;
+    element(index: number, reusable?: T): T;
 }>;
 
 const numericIndex = (property: PropertyKey): number | undefined => {

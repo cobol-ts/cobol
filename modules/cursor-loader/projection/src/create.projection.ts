@@ -4,7 +4,7 @@ import {
     type ProjectionFactory, type ProjectionField, type ProjectionPhysicalRecord,
     type ProjectionSupport, type ProjectionAuthoring, type ProjectionRecordState
 } from "@cobol-ts/cursor-loader-types";
-import {createProjectedArray, type ProjectedArray, type ProjectedArraySource} from "@cobol-ts/arrays";
+import {createProjectedArray,createArrayWithSize,appendArrayWithSize,resetArrayWithSize, type ProjectedArray, type ProjectedArraySource} from "@cobol-ts/arrays";
 import {canonicalProjection} from "./projection.definition";
 
 const REPRESENTATION = Symbol("projectionRepresentation");
@@ -12,6 +12,10 @@ const PHYSICAL_RECORD = Symbol("projectionPhysicalRecord");
 const ARRAYS = Symbol("projectionArrays");
 const OBJECTS = Symbol("projectionObjects");
 const ROOT = Symbol("rootProjection");
+const SAVED = Symbol("projectionRetainedSelection");
+const PARENT = Symbol("projectionParent");
+const VIA = Symbol("projectionVia");
+const INDEX = Symbol("projectionIndex");
 
 type Parser<R,D,P> = ProjectionSupport<R,D,P> & PhysicalRecordDebugRenderer;
 type BoundView<R> = {
@@ -20,6 +24,10 @@ type BoundView<R> = {
     [ARRAYS]: Map<object, ArrayRuntime<R>>;
     [OBJECTS]: Map<object, BoundView<R>>;
     [ROOT]: boolean;
+    [SAVED]: R | undefined;
+    [PARENT]: BoundView<R> | undefined;
+    [VIA]: string | undefined;
+    [INDEX]: number | undefined;
 };
 type ScalarMember<R> = {kind:"scalar";name:string; accessor:(this:BoundView<R>,...indices:number[])=>number|string};
 type ObjectMember<R,D,P> = {kind:"object"; name:string;path:P; schema: Compiled<R,D,P>; original: ProjectionField};
@@ -33,7 +41,8 @@ type ArrayRuntime<R> = {
     readonly view: ProjectedArray<unknown>;
     readonly elements: BoundView<R>[];
     isBoundTo(record: ProjectionPhysicalRecord, owner: R): boolean;
-    bind(items: ProjectedArraySource<R>, record: ProjectionPhysicalRecord, owner: R): void;
+    source(): ProjectedArraySource<R> | undefined;
+    bind(items: ProjectedArraySource<R>, record: ProjectionPhysicalRecord, owner: R, ownerView: BoundView<R>): void;
     clear(): void;
 };
 
@@ -65,7 +74,8 @@ export function createProjection<T,R,D,P>(
             [PHYSICAL_RECORD]:undefined,
             [ARRAYS]:new Map(),
             [OBJECTS]:new Map(),
-            [ROOT]:root
+            [ROOT]:root,
+            [SAVED]:undefined, [PARENT]:undefined, [VIA]:undefined, [INDEX]:undefined
         };
         for (const node of nodes) {
             if (node.kind === "scalar") {
@@ -79,11 +89,11 @@ export function createProjection<T,R,D,P>(
                         // A child remains valid until its parent is cleared; reselecting
                         // can create a fresh representation of the *same* occurrence.
                         if (child?.[PHYSICAL_RECORD] === record) return child;
-                        const selected = parser.object(view[REPRESENTATION] as R,details,node.path);
+                        const selected = parser.object(view[REPRESENTATION] as R,details,node.path,child?.[SAVED]);
                         if (!child) {child = createView(node.schema,false);view[OBJECTS].set(node,child);}
-                        bindView(child,selected,record);
+                        bindView(child,selected,record,view,node.name);
                         return child;
-                    } catch (e) {throw diagnostic(parser,record,node.original,e);}
+                    } catch (e) {throw diagnostic(parser,record,node.original,e,view,node.name);}
                 }});
             } else {
                 Object.defineProperty(view,node.name,{enumerable:true,get() {
@@ -94,12 +104,12 @@ export function createProjection<T,R,D,P>(
                         let runtime = cache.get(node) as ArrayRuntime<R> | undefined;
                         const owner = view[REPRESENTATION] as R;
                         if (!runtime?.isBoundTo(record,owner)) {
-                            const selected = parser.array(view[REPRESENTATION] as R,details,node.path);
+                            const selected = parser.array(view[REPRESENTATION] as R,details,node.path,runtime?.source());
                             if (!runtime) {runtime=makeArray(node);cache.set(node,runtime);}
-                            runtime.bind(selected,record,owner);
+                            runtime.bind(selected,record,owner,view);
                         }
                         return runtime.view;
-                    } catch(e) {throw diagnostic(parser,record,node.original,e);}
+                    } catch(e) {throw diagnostic(parser,record,node.original,e,view,node.name);}
                 }});
             }
         }
@@ -109,13 +119,16 @@ export function createProjection<T,R,D,P>(
     function makeArray(node:ArrayMember<R,D,P>):ArrayRuntime<R> {
         const elements:BoundView<R>[] = [];
         let items:ProjectedArraySource<R> | undefined;
+        let retainedSource:ProjectedArraySource<R> | undefined;
+        const active=createArrayWithSize<BoundView<R>>();
+        let ownerView:BoundView<R> | undefined;
         let owner:R | undefined;
         let physical:ProjectionPhysicalRecord | undefined;
         const view = createProjectedArray({
             length: () => {
                 if (!items) return 0;
                 try {return items.length();}
-                catch(e) {if (!physical) throw e;throw diagnostic(parser,physical,node.original,e);}
+                catch(e) {if (!physical) throw e;throw diagnostic(parser,physical,node.original,e,ownerView,node.name);}
             },
             element(index) {
                 if (!items || !physical) throw new Error("Projected array is not bound");
@@ -124,30 +137,37 @@ export function createProjection<T,R,D,P>(
                     if (!child) {child=createView(node.schema,false);elements[index]=child;}
                     if (child[PHYSICAL_RECORD] !== physical || child[REPRESENTATION] === undefined) {
                         clearView(child);
-                        bindView(child,items.element(index),physical);
+                        bindView(child,items.element(index,child[SAVED]),physical,ownerView,node.name,index);
+                        appendArrayWithSize(active,child);
                     }
                     return child;
-                } catch(e) {throw diagnostic(parser,physical,node.original,e);}
+                } catch(e) {throw diagnostic(parser,physical,node.original,e,ownerView,node.name,index);}
             }
         });
         return {
             name:node.label, view,elements,
+            source() {return retainedSource;},
             isBoundTo(record,nextOwner) {return physical===record && owner===nextOwner && items!==undefined;},
-            bind(next,record,nextOwner) {
+            bind(next,record,nextOwner,nextOwnerView) {
                 if (physical === record && owner === nextOwner) return;
                 // The retained slots survive re-binding; their borrowed values do not.
-                for (const element of elements) if (element) clearView(element);
-                items=next;physical=record;owner=nextOwner;
+                for(let i=0;i<active.size;i++) clearView(active.values[i]);
+                resetArrayWithSize(active);
+                retainedSource=next;items=next;physical=record;owner=nextOwner;ownerView=nextOwnerView;
             },
             clear() {
-                items=undefined;physical=undefined;owner=undefined;
-                for (const element of elements) if (element) clearView(element);
+                items=undefined;physical=undefined;owner=undefined;ownerView=undefined;
+                for(let i=0;i<active.size;i++) clearView(active.values[i]);
+                resetArrayWithSize(active);
             }
         };
     }
 
-    function bindView(view:BoundView<R>, representation:R,record:ProjectionPhysicalRecord) {
+    function bindView(view:BoundView<R>, representation:R,record:ProjectionPhysicalRecord,
+                      parent?:BoundView<R>,via?:string,index?:number) {
         view[REPRESENTATION]=representation;
+        view[SAVED]=representation;
+        view[PARENT]=parent;view[VIA]=via;view[INDEX]=index;
         view[PHYSICAL_RECORD]=record;
     }
 
@@ -189,14 +209,26 @@ function compileTree<R,D,P>(parser:Parser<R,D,P>, details:D, context:PhysicalRec
         return {kind:"scalar",name,accessor:function(this:BoundView<R>,...indices:number[]) {
             const record=requireRecord(this);
             try {return parser[kind](this[REPRESENTATION] as R,details,path,...indices);}
-            catch(e) {throw diagnostic(parser,record,field,e);}
+            catch(e) {throw diagnostic(parser,record,field,e,this,name);}
         }};
     });
 }
-function diagnostic(parser:PhysicalRecordDebugRenderer,record:ProjectionPhysicalRecord,
-                    field:ProjectionField,error:unknown):Error {
+function indexedPath<R>(owner:BoundView<R> | undefined,member?:string,index?:number):string | undefined {
+    const parts:string[]=[];
+    let selected=false;
+    if(member!==undefined) {parts.push(member+(index===undefined?"":`[${index}]`));selected=index!==undefined;}
+    for(let view=owner;view && view[PARENT];view=view[PARENT]) {
+        const suffix=view[INDEX]===undefined?"":`[${view[INDEX]}]`;
+        if(suffix) selected=true;
+        parts.unshift((view[VIA] ?? "<unknown>")+suffix);
+    }
+    return selected?parts.join("."):undefined;
+}
+function diagnostic<R>(parser:PhysicalRecordDebugRenderer,record:ProjectionPhysicalRecord,
+                    field:ProjectionField,error:unknown,owner?:BoundView<R>,member?:string,index?:number):Error {
     const reason=error instanceof Error ? error.message:String(error);
     const path=field.path.length ? field.path.join("."):"<root>";
-    return new Error(`${record.source}: record ${record.recordNumber}: projection ${path}: ${reason}\n`
+    const location=indexedPath(owner,member,index);
+    return new Error(`${record.source}: record ${record.recordNumber}: projection ${path}${location?` [access ${location}]`:""}: ${reason}\n`
         +parser.toDebugString(record,record.startByte,record.endByte));
 }

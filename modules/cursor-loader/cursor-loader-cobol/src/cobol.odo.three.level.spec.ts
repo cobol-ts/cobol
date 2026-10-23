@@ -116,3 +116,60 @@ describe("three levels of ODO projected arrays",()=>{
         }finally {factory.clear(row);}
     });
 });
+
+describe("nested ODO allocation and diagnostic regression",()=>{
+    test("reuses the array provider, selected child and occurrence index array across leases",()=>{
+        const outerPath=cobolParser.compileProjectionPath(details,undefined,["ROW","OUTERS"]);
+        const state=createCobolRecordState(),first=record(bytes,state,101);
+        const provider=cobolParser.array!(first,details,outerPath);
+        const selection=provider.element(1);
+        if(!("originBits" in selection)) throw new Error("Expected symbolic view");
+        const indices=selection.enclosingIndices;
+        expect(selection.originBits).toBe(17*8);
+        cleanCobolRecordState(state);
+        const second=record(bytes,state,102);
+        const rebound=cobolParser.array!(second,details,outerPath,provider);
+        expect(rebound).toBe(provider);
+        const same=rebound.element(1,selection);
+        expect(same).toBe(selection);
+        if(!("originBits" in same)) throw new Error("Expected symbolic view");
+        expect(same.enclosingIndices).toBe(indices);
+        expect(same.enclosingIndices).toEqual([1]);
+        expect(same.originBits).toBe(17*8);
+    });
+
+    test("reports the fully indexed access path and controller on nested count errors",()=>{
+        const changed=Uint8Array.from(bytes);
+        const factory=createProjection(cobolParser,details,undefined,projection);
+        const row=factory.create(),p=record(changed,createCobolRecordState(),113);
+        factory.bind(row,p,p);
+        try {
+            const inner=row.outers[1].middles[1].inners;
+            // After geometry was selected, invalidate the count field solely to
+            // exercise deferred length diagnostics. Production bytes stay stable.
+            changed[2]=0xff;
+            let message="";
+            try {void inner.length;}catch(e){message=e instanceof Error?e.message:String(e);}
+            expect(message).toMatch(/three-level-odo\.fb: record 113/);
+            expect(message).toMatch(/outers\[1\]\.middles\[1\]\.inners/);
+            expect(message).toMatch(/ROW\.I-COUNT/);
+            expect(message).toMatch(/f2 f2 ff/);
+        } finally {factory.clear(row);}
+    });
+
+    test("fully qualified scalar diagnostic retains all three occurrence indexes",()=>{
+        const factory=createProjection(cobolParser,details,undefined,projection);
+        const row=factory.create(),p=record(bytes,createCobolRecordState(),114);
+        factory.bind(row,p,p);
+        try {
+            const inner=row.outers[1].middles[1].inners[1];
+            (p as {readonly endByte:number} as {endByte:number}).endByte=28; // Test-only truncated frame after selection.
+            let message="";
+            try {inner.code();}catch(e){message=e instanceof Error?e.message:String(e);}
+            expect(message).toMatch(/three-level-odo\.fb: record 114/);
+            expect(message).toMatch(/outers\[1\]\.middles\[1\]\.inners\[1\]\.code/);
+            expect(message).toMatch(/extends beyond the completed record/);
+            expect(message).toMatch(/f2 f2 f2/);
+        }finally {factory.clear(row);}
+    });
+});

@@ -661,8 +661,8 @@ export interface ProjectionSupport<TRepresentation,TParserDetails,TProjectionPat
     string(representation: TRepresentation,details: TParserDetails,path: TProjectionPath,...occurrenceIndices: number[]): string;
 
     /** Optional structural capabilities; flat CSV and COBOL scalar readers need not implement them. */
-    object?(representation: TRepresentation, details: TParserDetails, path: TProjectionPath): TRepresentation;
-    array?(representation: TRepresentation, details: TParserDetails, path: TProjectionPath): ProjectedArraySource<TRepresentation>;
+    object?(representation: TRepresentation, details: TParserDetails, path: TProjectionPath, reusable?: TRepresentation): TRepresentation;
+    array?(representation: TRepresentation, details: TParserDetails, path: TProjectionPath, reusable?: ProjectedArraySource<TRepresentation>): ProjectedArraySource<TRepresentation>;
 }
 
 /*

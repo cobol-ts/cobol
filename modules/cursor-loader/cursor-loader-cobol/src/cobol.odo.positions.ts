@@ -5,9 +5,12 @@ import type {CompiledCobolElementary, CompiledCobolGroup} from "@cobol-ts/layout
 export type OdoPositionBranch = {
     readonly starts: ArrayWithSize<number>;
     readonly children: (OdoPositionBranch | undefined)[];
+    /** Dense prefix of child branches used this lease; indexed slots stay sparse. */
+    readonly activeChildren:ArrayWithSize<OdoPositionBranch>;
+    active:boolean;
 };
 export type OdoPositionCache = Map<CompiledCobolElementary | CompiledCobolGroup, OdoPositionBranch>;
-const branch = ():OdoPositionBranch => ({starts:createArrayWithSize<number>(),children:[]});
+const branch = ():OdoPositionBranch => ({starts:createArrayWithSize<number>(),children:[],activeChildren:createArrayWithSize<OdoPositionBranch>(),active:false});
 
 /** Lazy jagged array: a distinct prefix cache for each enclosing occurrence selection. */
 export function positionBranch(cache:OdoPositionCache, node:CompiledCobolElementary | CompiledCobolGroup,
@@ -18,6 +21,7 @@ export function positionBranch(cache:OdoPositionCache, node:CompiledCobolElement
         if(!Number.isSafeInteger(index)||index<0) throw new RangeError(`Invalid enclosing OCCURS index ${index}`);
         let child:OdoPositionBranch|undefined=current.children[index];
         if(!child){child=branch();current.children[index]=child;}
+        if(!child.active) {appendArrayWithSize(current.activeChildren,child);child.active=true;}
         current=child;
     }
     return current;
@@ -42,7 +46,9 @@ export function occurrenceBoundary(branch:OdoPositionBranch, originBits:number, 
 /** Invalidate the active boundaries on close but retain arrays and nested cache objects. */
 function cleanBranch(current:OdoPositionBranch):void {
     resetArrayWithSize(current.starts);
-    for(const child of current.children) if(child) cleanBranch(child);
+    for(let i=0;i<current.activeChildren.size;i++) cleanBranch(current.activeChildren.values[i]);
+    resetArrayWithSize(current.activeChildren);
+    current.active=false;
 }
 
 export function cleanOdoPositions(cache:OdoPositionCache):void {

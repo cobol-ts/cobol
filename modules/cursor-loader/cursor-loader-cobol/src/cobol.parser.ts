@@ -12,7 +12,7 @@ import {cleanOdoPositions,type OdoPositionCache} from "./cobol.odo.positions";
 import {createCobolNameIndex, type CobolNameIndex} from "./cobol.layout.index";
 import {cobolDebugRangeFromBits, cobolDebugRangeNumber, cobolDebugRangeString} from "./cobol.debug.range";
 import {compileCobolMemberPath, locateCompiledCobolPath, type CobolProjectionPath} from "./cobol.projection.path";
-import {activeCount,resolveCobolCount,rootSymbolicView,selectSymbolic,selectSymbolicInto,singleDepthOccurrence,
+import {activeCount,resolveCobolCount,rootSymbolicView,selectSymbolic,selectSymbolicInto,singleDepthOccurrenceInto,
     type CobolSymbolicView,type MutableSymbolicView} from "./cobol.projection.symbolic";
 
 export type CobolProjectionDetails = Readonly<{
@@ -133,49 +133,87 @@ function fieldRange(representation: CobolRepresentation, details:CobolProjection
     return range;
 }
 
+/** One provider per retained projected-array runtime. Methods live on the
+ * prototype; rebinding does not create a source object or closures. */
+class CobolArraySelection implements ProjectedArraySource<CobolRepresentation> {
+    private record?:ProjectionPhysicalRecord;
+    private path?:CobolProjectionPath;
+    private resolver?:ResolvePath;
+    private table?:MutableSymbolicView;
+    private base=0;
+
+    bind(parent:CobolRepresentation,details:CobolProjectionDetails,path:CobolProjectionPath):void {
+        const record=physical(parent);
+        if("symbolic" in path) {
+            if(path.node.kind!=="group" || !path.node.source.clauses.some(c=>c.kind==="occurs"))
+                throw new Error("COBOL projected array requires an OCCURS group");
+            const table=this.table ?? (this.table={physical:record,originBits:0,enclosingIndices:[]});
+            const resolver=countResolver(details,record);
+            selectSymbolicInto(symbolicView(parent),path,resolver,[],table);
+            this.resolver=resolver;
+        } else {
+            if(path.node.kind!=="group" || path.runtimeDimensions.length!==1)
+                throw new Error("COBOL projected array requires one fixed OCCURS group");
+            this.base=displacement(parent);
+        }
+        this.record=record;
+        this.path=path;
+    }
+    length():number {
+        const path=this.path;
+        if(!path) throw new Error("COBOL projected array is not bound");
+        if("symbolic" in path) return activeCount(path.node,this.resolver!,this.table!.enclosingIndices);
+        return path.runtimeDimensions[0].count;
+    }
+    element(index:number,reusable?:CobolRepresentation):CobolRepresentation {
+        const path=this.path,record=this.record;
+        if(!path||!record) throw new Error("COBOL projected array is not bound");
+        if("symbolic" in path) {
+            const selected=reusable && "originBits" in reusable
+                ? reusable as MutableSymbolicView
+                : {physical:record,originBits:0,enclosingIndices:[]};
+            singleDepthOccurrenceInto(this.table!,path.node,index,this.resolver!,selected);
+            return selected;
+        }
+        const dimension=path.runtimeDimensions[0];
+        if(!Number.isSafeInteger(index)||index<0||index>=dimension.count)
+            throw new RangeError(`OCCURS index ${index} outside 0..${dimension.count-1}`);
+        const selected=reusable && "physical" in reusable && "displacementBits" in reusable
+            ? reusable as {physical:ProjectionPhysicalRecord;displacementBits:number}
+            : {physical:record,displacementBits:0};
+        selected.physical=record;
+        selected.displacementBits=this.base+index*dimension.strideBits;
+        return selected;
+    }
+}
+
 export const cobolParser = {
     parse,
     compileProjectionPath(details: CobolProjectionDetails, _context: PhysicalRecordContext | undefined, path: readonly (string | number)[], parent?:CobolProjectionPath) {
         return compileCobolMemberPath(details.names, path, parent);
     },
-    object(view: CobolRepresentation, _details: CobolProjectionDetails, path: CobolProjectionPath): CobolRepresentation {
+    object(view: CobolRepresentation, details: CobolProjectionDetails, path: CobolProjectionPath,
+           reusable?:CobolRepresentation): CobolRepresentation {
         if("symbolic" in path) {
             if(path.node.kind!=="group" || path.node.source.clauses.some(c=>c.kind==="occurs"))
                 throw new Error("COBOL object selection requires a non-repeated group");
-            return selectSymbolic(symbolicView(view),path,countResolver(_details,physical(view)));
+            const record=physical(view);
+            const selected="originBits" in (reusable ?? {})
+                ? reusable as MutableSymbolicView
+                : {physical:record,originBits:0,enclosingIndices:[]};
+            selectSymbolicInto(symbolicView(view),path,countResolver(details,record),[],selected);
+            return selected;
         }
         if (path.node.kind !== "group" || path.runtimeDimensions.length !== 0) {
             throw new Error("COBOL object selection requires a non-repeated group");
         }
-        return view; // Group offsets were resolved once when compiling its child paths.
+        return view;
     },
-    array(view: CobolRepresentation, _details: CobolProjectionDetails, path: CobolProjectionPath): ProjectedArraySource<CobolRepresentation> {
-        if("symbolic" in path) {
-            if(path.node.kind!=="group" || !path.node.source.clauses.some(c=>c.kind==="occurs"))
-                throw new Error("COBOL projected array requires an OCCURS group");
-            const record=physical(view);
-            const resolve=countResolver(_details,record);
-            const selected=selectSymbolic(symbolicView(view),path,resolve);
-            return {
-                length:()=>activeCount(path.node,resolve,selected.enclosingIndices),
-                element(index:number){return singleDepthOccurrence(selected,path.node,index,resolve);}
-            };
-        }
-        if (path.node.kind !== "group" || path.runtimeDimensions.length !== 1) {
-            throw new Error("COBOL projected array requires one fixed OCCURS group");
-        }
-        const dimension=path.runtimeDimensions[0];
-        const record=physical(view);
-        const base=displacement(view);
-        return {
-            length:()=>dimension.count,
-            element(index:number) {
-                if (!Number.isSafeInteger(index) || index < 0 || index >= dimension.count) {
-                    throw new RangeError(`OCCURS index ${index} outside 0..${dimension.count-1}`);
-                }
-                return {physical:record, displacementBits:base+index*dimension.strideBits};
-            }
-        };
+    array(view:CobolRepresentation, details:CobolProjectionDetails, path:CobolProjectionPath,
+          reusable?:ProjectedArraySource<CobolRepresentation>):ProjectedArraySource<CobolRepresentation> {
+        const selected=reusable instanceof CobolArraySelection?reusable:new CobolArraySelection();
+        selected.bind(view,details,path);
+        return selected;
     },
     integer(record: CobolRepresentation, _details: CobolProjectionDetails, path: CobolProjectionPath, ...occurrenceIndices: number[]): number {
         return cobolDebugRangeNumber(fieldRange(record, _details, path, occurrenceIndices));

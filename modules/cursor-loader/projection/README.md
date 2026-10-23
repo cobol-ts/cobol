@@ -129,3 +129,19 @@ Diagnostics from deeply nested accessors currently identify the compiled member'
 Relevant tests are in `src/projection.definition.spec.ts`, `src/create.projection.spec.ts`, `src/nested.projection.type-tests.ts` and `src/indexed.projection.type-tests.ts`; parser packages also exercise this factory through real file cursors. Run the package's normal Jest script and TypeScript compilation separately.
 
 The generic factory intentionally does not parse COBOL, infer business semantics, copy record payloads or resolve ODO controllers. The COBOL adapter now supports nested ODO through parser-owned record-scoped position caches; those details do not affect the generic projection contract.
+
+## Rebinding without transient selections
+
+`createProjection` checks cached bound object and array views before asking the
+parser to reselect them. When a projected hierarchy is rebound to a later record,
+its parser receives the previously retained selected representation or array
+source as an optional reuse parameter. Parsers not supporting reuse ignore that
+parameter. The COBOL parser uses it to update already-retained selections and
+provider state without constructing per-lease array closures or index arrays.
+
+Projected arrays keep their sparse indexed high-water child slots, plus an
+`ArrayWithSize` prefix of the child views *bound during the current lease*.
+Clearing a runtime visits this active prefix rather than traversing the full
+historical sparse array. Previously visited children retain their allocation.
+Successful scalar reads do not format access paths; errors can include a full
+indexed path built from the retained parent/member/index links.
