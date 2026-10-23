@@ -22,7 +22,9 @@
     "@cobol-ts/errors": "0.0.1",
     "@cobol-ts/size": "0.0.1",
     "@cobol-ts/arrays": "0.0.1",
-    "@cobol-ts/codec": "0.0.1"
+    "@cobol-ts/codec": "0.0.1",
+    "@cobol-ts/copybook": "0.0.1",
+    "@cobol-ts/cursor-file": "0.0.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.1.4",
@@ -55,7 +57,9 @@
     "dist/index.js",
     "dist/index.d.ts",
     "dist/src/",
-    "build/"
+    "build/",
+    "dist/node.js",
+    "dist/node.d.ts"
   ],
   "keywords": [
     "cobol",
@@ -70,5 +74,15 @@
     "test": "jest --config jest.config.json --env node",
     "test:watch": "npm run test -- --watch",
     "start": "react-scripts start"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    }
   }
 }

@@ -8,14 +8,24 @@
   ],
   "packageJson": {
     "files": [
-      "build/"
+      "build/",
+      "dist/node.js",
+      "dist/node.d.ts"
     ],
-    "dependencies": {
-    },
-    "devDependencies": {
-    },
+    "dependencies": {},
+    "devDependencies": {},
     "scripts": {
       "start": "react-scripts start"
+    },
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./node": {
+        "types": "./dist/node.d.ts",
+        "default": "./dist/node.js"
+      }
     }
   },
   "guards": {

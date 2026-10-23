@@ -5,3 +5,4 @@ export * from './src/cobol.debug.range'
 export {cobolParser, createCobolDecodedFixedDetails, createCobolDecodedProjectionDetails,
     createCobolFixedDetails, createCobolProjectionDetails, createCobolRecordState,
     cleanCobolRecordState} from './src/cobol.parser';
+export * from './src/cobol.registration'

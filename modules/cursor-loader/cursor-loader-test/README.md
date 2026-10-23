@@ -4,6 +4,25 @@ Cross-package integration tests and shared application projections for the curre
 
 This package verifies that the separately tested packages agree on their shared contracts when used through the normal `@cobol-ts/cursor-file` orchestration path.
 
+## Fixed-record COBOL consumer API
+
+The AWS FB/150 integration suite exercises the public Node.js entry point:
+
+```ts
+import {readCobolFile} from '@cobol-ts/cursor-loader-cobol/node';
+
+for await (const record of readCobolFile({copybook, filename, projection, bufferSize: 3})) {
+    try { console.log(record.result.id()); }
+    finally { record.close(); }
+}
+```
+
+The reader compiles the original copybook and projection, opens the real binary
+file and streams borrowed views. No parser registry, record-state factory or
+file-handle callback appears in the test. The AWS EBCDIC bytes and CSV oracle
+are external published fixtures, not output from our encoder. The 3-byte read
+case forces fields across multiple physical buffers without assembling them.
+
 ## Current integration path
 
 The JSONL, CSV and COBOL integration suites use the same architecture:
@@ -33,7 +52,7 @@ pooled FileCursorResult + reusable projection
 application values
 ```
 
-The fixture helpers load test files from disk into a simple in-memory `bytes + offset` file abstraction. `fillFileBuffer` then feeds those bytes into the production pooled cursor machinery in deliberately small chunks.
+The JSONL/CSV fixture helpers load data into an in-memory `bytes + offset` source for deterministic physical-buffer tests. The AWS COBOL tests instead use `readCobolFile` and actual Node filesystem I/O.
 
 The tests therefore exercise the production cursor-record, parser, projection and cursor-file contracts while keeping OS-specific streaming I/O outside the scope of this package.
 

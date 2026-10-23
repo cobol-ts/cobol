@@ -1,3 +1,32 @@
+# Quick start — Node.js fixed-block files
+
+```ts
+import {readCobolFile} from '@cobol-ts/cursor-loader-cobol/node';
+
+const cursor = readCobolFile({
+    copybook: 'EMPREC01.cpy',
+    filename: 'TEST.EMP.RECORD.FILE.dat',
+    projection: employeeProjection,
+    bufferSize: 64 * 1024 // optional; default is 64 KiB
+});
+
+for await (const row of cursor) {
+    try { console.log(row.result.salary()); }
+    finally { row.close(); }
+}
+```
+
+This convenience API uses the existing `createThrowingFileCursor` and original
+byte-backed projections. It compiles the copybook, geometry and requested scalar
+decoders once per opened source. It deliberately does not materialise rows or
+create per-field joined byte arrays. The Node file handle closes on EOF, error
+or iteration cancellation; yielded `FileCursorResult` lifetimes are still
+owned by the caller and require `close()`.
+
+The standard COBOL registry can also be used directly through
+`createCobolParserRegistry(details)` for other physical byte sources or
+alternative cursor error policies.
+
 # `@cobol-ts/cursor-loader-cobol`
 
 Byte-backed COBOL projections over compiled copybook storage geometry. The original record buffers remain authoritative: the adapter selects physical byte ranges and borrowed, application-facing views rather than decoding an entire COBOL record into an object graph. `REDEFINES` alternatives are distinct views of the same storage; choosing their business meaning is the caller's responsibility.
@@ -14,7 +43,7 @@ Byte-backed COBOL projections over compiled copybook storage geometry. The origi
 | Variable-body occurrence start positions | Lazy, record-owned cached boundary prefixes |
 | ODO controllers at variable physical positions / one count **per outer occurrence** | **Not supported** by the current controller locator |
 | Variable-length physical **record framing** (VB/RDW or other conventions) | Not implemented; `parse()` requires opened-source `recordLengthBytes` |
-| Production primitive decoding for projected scalar members | Not wired: scalar methods currently expose debug byte ranges |
+| Production primitive decoding for projected scalar members | Implemented for the subset documented in `README.decoder.md`; diagnostic projection details remain available for layout tests |
 
 **Do not confuse storage layout with record framing.** `compileCobolLayout()` and `createCobolProjectionDetails()` accept symbolic ODO layouts; the `cobolParser.parse()` implementation still requires `details.recordLengthBytes`. For an ODO layout, the caller must arrange a valid framed record length before calling this parser; **the current `parse()` method accepts one `details.recordLengthBytes` for the opened source, not a varying length supplied for each record**. The end-to-end nested geometry tests construct completed `ProjectionPhysicalRecord` fixtures and bind projections directly, rather than testing an automatic ODO record-framing algorithm. `createCobolFixedDetails()` intentionally fails when the record length is not statically known.
 

@@ -24,7 +24,8 @@
 
   "include": [
     "src/**/*.ts",
-    "index.ts"
+    "index.ts",
+    "node.ts"
   ],
 
   "exclude": [

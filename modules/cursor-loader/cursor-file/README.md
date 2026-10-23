@@ -333,3 +333,11 @@ parser record state
 File-scoped setup performs parser preparation and projection-path compilation once before the row hot path.
 
 For JSON, `JSON.parse()` has already eagerly materialised the source record. For CSV, the same application API sits over a genuinely byte-backed representation and materialises only requested field values.
+
+## Node.js file-buffer adapter
+
+`fillNodeFileBuffer(handle, pooledUint8Array)` is an optional Node adapter. It
+retries short positive reads into the *same* destination until the buffer is
+full or `read()` returns zero. It does not allocate a record or field buffer.
+The caller owns and closes the `FileHandle`. The standard COBOL Node wrapper
+(`@cobol-ts/cursor-loader-cobol/node`) manages that lifetime automatically.
