@@ -1,1 +1,0 @@
-export * from './src/cobol.file.reader'

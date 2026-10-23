@@ -1,6 +1,6 @@
 {
   "name": "@cobol-ts/codec",
-  "description": "Allocation-conscious COBOL primitive decoders over fragmented borrowed record bytes",
+  "description": "COBOL primitive decoders over fragmented borrowed bytes",
   "version": "0.0.1",
   "main": "dist/index",
   "types": "dist/index",

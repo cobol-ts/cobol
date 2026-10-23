@@ -1,6 +1,6 @@
 {
   "name": "@cobol-ts/cursor-loader-cobol",
-  "description": "COBOL byte-backed parser, symbolic and nested ODO projection paths with lazy record-scoped geometry",
+  "description": "Fixed-length COBOL byte-backed parser with compiled occurrence paths and debug projections",
   "version": "0.0.1",
   "main": "dist/index",
   "types": "dist/index",
@@ -17,14 +17,15 @@
     ]
   },
   "dependencies": {
-    "@cobol-ts/cursor-loader-types": "0.0.1",
-    "@cobol-ts/layout": "0.0.1",
-    "@cobol-ts/errors": "0.0.1",
-    "@cobol-ts/size": "0.0.1",
     "@cobol-ts/arrays": "0.0.1",
     "@cobol-ts/codec": "0.0.1",
     "@cobol-ts/copybook": "0.0.1",
-    "@cobol-ts/cursor-file": "0.0.1"
+    "@cobol-ts/cursor-file": "0.0.1",
+    "@cobol-ts/cursor-loader-types": "0.0.1",
+    "@cobol-ts/cursor-projection": "0.0.1",
+    "@cobol-ts/errors": "0.0.1",
+    "@cobol-ts/layout": "0.0.1",
+    "@cobol-ts/size": "0.0.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.1.4",
@@ -32,10 +33,7 @@
     "@types/node": "^14.0.0",
     "jest": "^29.0.0",
     "ts-jest": "^29.0.0",
-    "typescript": "^5.2.2",
-    "@cobol-ts/copybook": "0.0.1",
-    "@cobol-ts/cursor-projection": "0.0.1",
-    "@cobol-ts/cursor-file": "0.0.1"
+    "typescript": "^5.2.2"
   },
   "eslintConfig": {
     "extends": [
@@ -59,14 +57,12 @@
     "dist/src/",
     "build/",
     "dist/node.js",
-    "dist/node.d.ts"
+    "dist/node.d.ts",
+    "node.js",
+    "node.d.ts"
   ],
   "keywords": [
-    "cobol",
-    "byte-backed",
-    "cursor",
-    "projection",
-    "debug"
+    "indexing"
   ],
   "license": "MIT",
   "repository": "git@github.com:intellimaintain/intellimaintain.git",
@@ -74,15 +70,5 @@
     "test": "jest --config jest.config.json --env node",
     "test:watch": "npm run test -- --watch",
     "start": "react-scripts start"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    },
-    "./node": {
-      "types": "./dist/node.d.ts",
-      "default": "./dist/node.js"
-    }
   }
 }

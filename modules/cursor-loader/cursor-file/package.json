@@ -50,7 +50,9 @@
     "dist/src/",
     "build/",
     "dist/node.js",
-    "dist/node.d.ts"
+    "dist/node.d.ts",
+    "node.js",
+    "node.d.ts"
   ],
   "keywords": [
     "indexing"
@@ -61,15 +63,5 @@
     "test": "jest --config jest.config.json --env node",
     "test:watch": "npm run test -- --watch",
     "start": "react-scripts start"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    },
-    "./node": {
-      "types": "./dist/node.d.ts",
-      "default": "./dist/node.js"
-    }
   }
 }

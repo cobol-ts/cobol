@@ -427,29 +427,11 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@cobol-ts/cobolcodec@npm:0.0.1, @cobol-ts/cobolcodec@workspace:modules/cobolcodec":
-  version: 0.0.0-use.local
-  resolution: "@cobol-ts/cobolcodec@workspace:modules/cobolcodec"
-  dependencies:
-    "@cobol-ts/copybook": "npm:0.0.1"
-    "@cobol-ts/copybookfiles": "npm:0.0.1"
-    "@cobol-ts/errors": "npm:0.0.1"
-    "@cobol-ts/string_utils": "npm:0.0.1"
-    "@testing-library/jest-dom": "npm:^6.1.4"
-    "@types/jest": "npm:^29.0.0"
-    "@types/node": "npm:^14.0.0"
-    jest: "npm:^29.0.0"
-    ts-jest: "npm:^29.0.0"
-    typescript: "npm:^5.2.2"
-  languageName: unknown
-  linkType: soft
-
-"@cobol-ts/codec@workspace:modules/utils/codec":
+"@cobol-ts/codec@npm:0.0.1, @cobol-ts/codec@workspace:modules/utils/codec":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/codec@workspace:modules/utils/codec"
   dependencies:
-    "@cobol-ts/errors": "npm:0.0.1"
-    "@cobol-ts/validate": "npm:0.0.1"
+    "@cobol-ts/layout": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
     "@types/jest": "npm:^29.0.0"
     "@types/node": "npm:^14.0.0"
@@ -463,22 +445,6 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@cobol-ts/copybook@workspace:modules/cursor-loader/copybook"
   dependencies:
-    "@cobol-ts/errors": "npm:0.0.1"
-    "@cobol-ts/string_utils": "npm:0.0.1"
-    "@testing-library/jest-dom": "npm:^6.1.4"
-    "@types/jest": "npm:^29.0.0"
-    "@types/node": "npm:^14.0.0"
-    jest: "npm:^29.0.0"
-    ts-jest: "npm:^29.0.0"
-    typescript: "npm:^5.2.2"
-  languageName: unknown
-  linkType: soft
-
-"@cobol-ts/copybookfiles@npm:0.0.1, @cobol-ts/copybookfiles@workspace:modules/copybook_files":
-  version: 0.0.0-use.local
-  resolution: "@cobol-ts/copybookfiles@workspace:modules/copybook_files"
-  dependencies:
-    "@cobol-ts/copybook": "npm:0.0.1"
     "@cobol-ts/errors": "npm:0.0.1"
     "@cobol-ts/string_utils": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
@@ -509,7 +475,10 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-loader-cobol@workspace:modules/cursor-loader/cursor-loader-cobol"
   dependencies:
+    "@cobol-ts/arrays": "npm:0.0.1"
+    "@cobol-ts/codec": "npm:0.0.1"
     "@cobol-ts/copybook": "npm:0.0.1"
+    "@cobol-ts/cursor-file": "npm:0.0.1"
     "@cobol-ts/cursor-loader-types": "npm:0.0.1"
     "@cobol-ts/cursor-projection": "npm:0.0.1"
     "@cobol-ts/errors": "npm:0.0.1"
@@ -543,6 +512,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-loader-json@workspace:modules/cursor-loader/cursor-loader-json"
   dependencies:
+    "@cobol-ts/arrays": "npm:0.0.1"
     "@cobol-ts/cursor-file": "npm:0.0.1"
     "@cobol-ts/cursor-loader-types": "npm:0.0.1"
     "@cobol-ts/cursor-record": "npm:0.0.1"
@@ -560,6 +530,8 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@cobol-ts/cursor-loader-test@workspace:modules/cursor-loader/cursor-loader-test"
   dependencies:
+    "@cobol-ts/arrays": "npm:0.0.1"
+    "@cobol-ts/copybook": "npm:0.0.1"
     "@cobol-ts/cursor-file": "npm:0.0.1"
     "@cobol-ts/cursor-loader-cobol": "npm:0.0.1"
     "@cobol-ts/cursor-loader-csv": "npm:0.0.1"
@@ -568,6 +540,7 @@ __metadata:
     "@cobol-ts/cursor-projection": "npm:0.0.1"
     "@cobol-ts/cursor-record": "npm:0.0.1"
     "@cobol-ts/errors": "npm:0.0.1"
+    "@cobol-ts/layout": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
     "@types/jest": "npm:^29.0.0"
     "@types/node": "npm:^14.0.0"
@@ -651,62 +624,11 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@cobol-ts/file_parse_write@npm:0.0.1, @cobol-ts/file_parse_write@workspace:modules/file_parse_write":
-  version: 0.0.0-use.local
-  resolution: "@cobol-ts/file_parse_write@workspace:modules/file_parse_write"
-  dependencies:
-    "@cobol-ts/copybookfiles": "npm:0.0.1"
-    "@cobol-ts/errors": "npm:0.0.1"
-    "@testing-library/jest-dom": "npm:^6.1.4"
-    "@types/jest": "npm:^29.0.0"
-    "@types/node": "npm:^14.0.0"
-    jest: "npm:^29.0.0"
-    ts-jest: "npm:^29.0.0"
-    typescript: "npm:^5.2.2"
-  languageName: unknown
-  linkType: soft
-
-"@cobol-ts/file_readers_writers@npm:0.0.1, @cobol-ts/file_readers_writers@workspace:modules/file_readers_writers":
-  version: 0.0.0-use.local
-  resolution: "@cobol-ts/file_readers_writers@workspace:modules/file_readers_writers"
-  dependencies:
-    "@cobol-ts/cobolcodec": "npm:0.0.1"
-    "@cobol-ts/copybook": "npm:0.0.1"
-    "@cobol-ts/copybookfiles": "npm:0.0.1"
-    "@cobol-ts/errors": "npm:0.0.1"
-    "@cobol-ts/file_parse_write": "npm:0.0.1"
-    "@cobol-ts/string_utils": "npm:0.0.1"
-    "@testing-library/jest-dom": "npm:^6.1.4"
-    "@types/jest": "npm:^29.0.0"
-    "@types/node": "npm:^14.0.0"
-    jest: "npm:^29.0.0"
-    ts-jest: "npm:^29.0.0"
-    typescript: "npm:^5.2.2"
-  languageName: unknown
-  linkType: soft
-
 "@cobol-ts/files@workspace:modules/utils/files":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/files@workspace:modules/utils/files"
   dependencies:
     "@cobol-ts/records": "npm:0.0.1"
-    "@testing-library/jest-dom": "npm:^6.1.4"
-    "@types/jest": "npm:^29.0.0"
-    "@types/node": "npm:^14.0.0"
-    jest: "npm:^29.0.0"
-    ts-jest: "npm:^29.0.0"
-    typescript: "npm:^5.2.2"
-  languageName: unknown
-  linkType: soft
-
-"@cobol-ts/integration_test@workspace:modules/integration_test":
-  version: 0.0.0-use.local
-  resolution: "@cobol-ts/integration_test@workspace:modules/integration_test"
-  dependencies:
-    "@cobol-ts/copybook": "npm:0.0.1"
-    "@cobol-ts/errors": "npm:0.0.1"
-    "@cobol-ts/file_readers_writers": "npm:0.0.1"
-    "@cobol-ts/string_utils": "npm:0.0.1"
     "@testing-library/jest-dom": "npm:^6.1.4"
     "@types/jest": "npm:^29.0.0"
     "@types/node": "npm:^14.0.0"
@@ -871,7 +793,7 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@cobol-ts/validate@npm:0.0.1, @cobol-ts/validate@workspace:modules/utils/validator":
+"@cobol-ts/validate@workspace:modules/utils/validator":
   version: 0.0.0-use.local
   resolution: "@cobol-ts/validate@workspace:modules/utils/validator"
   dependencies:
