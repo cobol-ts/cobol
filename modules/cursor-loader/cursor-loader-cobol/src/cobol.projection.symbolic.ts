@@ -5,6 +5,7 @@ import {valueOrThrow} from "@cobol-ts/errors";
 import {locateCobolEntry} from "@cobol-ts/layout";
 import {findCobolName,type CobolNameIndex} from "./cobol.layout.index";
 import {occurrenceBoundary,positionBranch,type OdoPositionCache} from "./cobol.odo.positions";
+import {findOccursClause} from "./cobol.occurs.clause";
 
 export type CobolNamedNode=CompiledCobolElementary|CompiledCobolGroup;
 export type CobolSymbolicStep=Readonly<{node:CobolNamedNode; index?:number}>;
@@ -44,7 +45,7 @@ export function compileCobolSymbolicPath(
         if(typeof name!=="string") throw new Error(`Unexpected OCCURS index ${name} in ${fullPath.join(".")}`);
         const named=findCobolName(scope,name);
         if(!named) throw new Error(`Unknown COBOL declaration '${name}' in ${fullPath.join(".")}`);
-        const occurs=named.node.source.clauses.find(c=>c.kind==="occurs");
+        const occurs=findOccursClause(named.node.source.clauses);
         const next=fullPath[i+1];
         if(typeof next==="number" && !occurs) throw new Error(`Unexpected index after '${name}'`);
         if(occurs?.kind==="occurs" && typeof next==="number") {
@@ -56,8 +57,10 @@ export function compileCobolSymbolicPath(
     }
     if(!steps.length) throw new Error("COBOL projection path cannot be empty");
     const prefix=parent?.fullPath ?? [];
-    if(prefix.some((x,i)=>x!==fullPath[i])) throw new Error("Invalid enclosing COBOL projection path");
-    const inherited=parent ? parent.fullPath.filter(part=>typeof part==="string").length : 0;
+    for(let i=0;i<prefix.length;i++)
+        if(prefix[i]!==fullPath[i]) throw new Error("Invalid enclosing COBOL projection path");
+    let inherited=0;
+    if(parent) for(const part of parent.fullPath) if(typeof part==="string") inherited++;
     return {symbolic:true,node:steps[steps.length-1].node,fullPath,steps,relativeSteps:steps.slice(inherited)};
 }
 
@@ -107,7 +110,7 @@ function evalBits(expression:StorageSizeExpression,resolve:ResolvePath,enclosing
     return evaluateStorageSize(expression,resolve,enclosingIndices);
 }
 function repeatedBody(node:CobolNamedNode):StorageSizeExpression {
-    const occurs=node.source.clauses.find(c=>c.kind==="occurs");
+    const occurs=findOccursClause(node.source.clauses);
     if(occurs?.kind!=="occurs") return node.size;
     if(typeof node.size==="number") {
         if(!("count" in occurs) || occurs.count===0) throw new Error("Invalid OCCURS constant body extent");
@@ -118,7 +121,7 @@ function repeatedBody(node:CobolNamedNode):StorageSizeExpression {
 }
 
 export function activeCount(node:CobolNamedNode,resolve:ResolvePath,enclosingIndices:readonly number[]=[]):number {
-    const occurs=node.source.clauses.find(c=>c.kind==="occurs");
+    const occurs=findOccursClause(node.source.clauses);
     if(occurs?.kind!=="occurs") throw new Error("Selected COBOL array has no OCCURS clause");
     if("count" in occurs) return occurs.count;
     if(typeof node.size==="number"||node.size.kind!=="depending-on") throw new Error("Expected ODO expression");
@@ -203,7 +206,7 @@ export function selectSymbolicInto(
         else start=origin+evalBits(node.leftOffset,resolve,indices);
 
         let bodySize:number|undefined=typeof size==="number"?size:undefined;
-        const occurs=node.source.clauses.find(c=>c.kind==="occurs");
+        const occurs=findOccursClause(node.source.clauses);
         const index=step.index ?? (occurs && usedIndices<occurrenceIndices.length
             ? occurrenceIndices[usedIndices++] : undefined);
         if(occurs?.kind==="occurs" && index===undefined && position<path.relativeSteps.length-1)

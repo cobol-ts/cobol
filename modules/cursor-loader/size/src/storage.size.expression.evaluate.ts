@@ -17,12 +17,19 @@ export function resolveDependingOnCount(
     // identity instead of allocating a new array on every controller read.
     let hasBinding=false;
     for(const part of path) if(typeof part !== "string") {hasBinding=true;break;}
-    const concrete: readonly (string | number)[] = hasBinding ? path.map(part => {
-        if (typeof part === "string") return part;
-        if (!Number.isInteger(part) || part < 0 || part >= enclosingIndices.length)
-            throw new Error(`Unbound OCCURS variable at relative depth ${part}`);
-        return enclosingIndices[enclosingIndices.length - 1 - part];
-    }) : path;
+    let concrete: readonly (string | number)[] = path;
+    if(hasBinding) {
+        const resolved:(string|number)[]=[];
+        for(const part of path){
+            if(typeof part==="string") resolved.push(part);
+            else {
+                if(!Number.isInteger(part)||part<0||part>=enclosingIndices.length)
+                    throw new Error(`Unbound OCCURS variable at relative depth ${part}`);
+                resolved.push(enclosingIndices[enclosingIndices.length-1-part]);
+            }
+        }
+        concrete=resolved;
+    }
 
     const count = resolve(concrete);
     if (typeof count !== "number"
@@ -57,7 +64,9 @@ export function evaluateStorageSize(
 
         switch (node.kind) {
             case "sum":
-                return node.terms.reduce<number>((total, term) => total + evaluate(term), 0);
+                let total=0;
+                for(const term of node.terms) total+=evaluate(term);
+                return total;
 
             case "occurs": {
                 const depth = variables.length;

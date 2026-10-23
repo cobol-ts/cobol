@@ -39,15 +39,20 @@ export function locateCobolEntry(
             const name = path[ordinal++];
             if (typeof name !== "string" || !name.length)
                 return errors("Expected a COBOL declaration name in location path");
-            const matches = siblings.filter((node): node is Extract<CompiledCobolEntry, {kind: "group" | "elementary"}> => node.kind !== "padding" &&
-                node.source.name.kind === "named" &&
-                node.source.name.name.toUpperCase() === name.toUpperCase());
-            if (!matches.length) return errors(`Unknown COBOL field '${name}'`);
-            if (matches.length !== 1) return errors(`Ambiguous COBOL field '${name}'`);
-            const node = matches[0];
+            // No filter array or capturing predicate on controller location lookup.
+            const wanted = name.toUpperCase();
+            let node:Extract<CompiledCobolEntry,{kind:"group"|"elementary"}>|undefined;
+            for(const sibling of siblings){
+                if(sibling.kind==="padding" || sibling.source.name.kind!=="named" ||
+                    sibling.source.name.name.toUpperCase()!==wanted) continue;
+                if(node) return errors(`Ambiguous COBOL field '${name}'`);
+                node=sibling;
+            }
+            if(!node) return errors(`Unknown COBOL field '${name}'`);
             position += evaluateStorageSize(node.leftOffset, resolve, enclosingIndices);
 
-            const occurs = node.source.clauses.find(clause => clause.kind === "occurs");
+            let occurs:Extract<typeof node.source.clauses[number],{kind:"occurs"}>|undefined;
+            for(const clause of node.source.clauses) if(clause.kind==="occurs") {occurs=clause;break;}
             let selectedSize: StorageSizeExpression = node.size;
             if (occurs?.kind === "occurs") {
                 const index = path[ordinal];

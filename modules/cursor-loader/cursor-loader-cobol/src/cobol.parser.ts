@@ -9,6 +9,7 @@ import {evaluateStorageSize} from "@cobol-ts/size";
 import type {ProjectedArraySource} from "@cobol-ts/arrays";
 import type {ResolvePath} from "@cobol-ts/size";
 import {cleanOdoPositions,type OdoPositionCache} from "./cobol.odo.positions";
+import {hasOccursClause} from "./cobol.occurs.clause";
 import {createCobolNameIndex, type CobolNameIndex} from "./cobol.layout.index";
 import {cobolDebugRangeFromBits, cobolDebugRangeNumber, cobolDebugRangeString} from "./cobol.debug.range";
 import {compileCobolMemberPath, locateCompiledCobolPath, type CobolProjectionPath} from "./cobol.projection.path";
@@ -145,7 +146,7 @@ class CobolArraySelection implements ProjectedArraySource<CobolRepresentation> {
     bind(parent:CobolRepresentation,details:CobolProjectionDetails,path:CobolProjectionPath):void {
         const record=physical(parent);
         if("symbolic" in path) {
-            if(path.node.kind!=="group" || !path.node.source.clauses.some(c=>c.kind==="occurs"))
+            if(path.node.kind!=="group" || !hasOccursClause(path.node.source.clauses))
                 throw new Error("COBOL projected array requires an OCCURS group");
             const table=this.table ?? (this.table={physical:record,originBits:0,enclosingIndices:[]});
             const resolver=countResolver(details,record);
@@ -195,7 +196,7 @@ export const cobolParser = {
     object(view: CobolRepresentation, details: CobolProjectionDetails, path: CobolProjectionPath,
            reusable?:CobolRepresentation): CobolRepresentation {
         if("symbolic" in path) {
-            if(path.node.kind!=="group" || path.node.source.clauses.some(c=>c.kind==="occurs"))
+            if(path.node.kind!=="group" || hasOccursClause(path.node.source.clauses))
                 throw new Error("COBOL object selection requires a non-repeated group");
             const record=physical(view);
             const selected="originBits" in (reusable ?? {})
