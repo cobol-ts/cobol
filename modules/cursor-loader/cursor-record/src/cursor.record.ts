@@ -233,6 +233,19 @@ async function* createRecordCursorFromState<
                     details
                 );
 
+            // A full final physical buffer does not signal EOF until the
+            // next readMore(). If that read discovers no additional bytes,
+            // there is no third, zero-length logical record to yield.
+            // Keep the decision in the cursor: a parser cannot signal EOF
+            // through its normal (successful/Errors) result contract.
+            if (record.fileFinished && record.startByte === record.lastValidByte) {
+                record.endByte = record.startByte;
+                completeRecord(state, record);
+                record.close();
+                record = undefined;
+                break;
+            }
+
             completeRecord(
                 state,
                 record

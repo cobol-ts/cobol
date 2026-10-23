@@ -1,16 +1,13 @@
 {
   "template": "typescript",
   "name": "@cobol-ts/codec",
-  "description": "Coders and decoders for the @cobol-ts project",
+  "description": "COBOL primitive decoders over fragmented borrowed bytes",
   "packageJson": {
-    "dependencies": {
-    },
-    "devDependencies": {
-    }
+    "dependencies": {},
+    "devDependencies": {}
   },
   "links": [
-    "@cobol-ts/errors",
-    "@cobol-ts/validate"
+    "@cobol-ts/layout"
   ],
   "guards": {
     "compile": true,

@@ -21,7 +21,8 @@
     "@cobol-ts/layout": "0.0.1",
     "@cobol-ts/errors": "0.0.1",
     "@cobol-ts/size": "0.0.1",
-    "@cobol-ts/arrays": "0.0.1"
+    "@cobol-ts/arrays": "0.0.1",
+    "@cobol-ts/codec": "0.0.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.1.4",

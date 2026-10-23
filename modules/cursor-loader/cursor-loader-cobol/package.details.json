@@ -10,7 +10,8 @@
     "@cobol-ts/size",
     "@cobol-ts/cursor-projection",
     "@cobol-ts/cursor-file",
-    "@cobol-ts/arrays"
+    "@cobol-ts/arrays",
+    "@cobol-ts/codec"
   ],
   "packageJson": {
     "files": [

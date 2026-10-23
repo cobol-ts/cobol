@@ -3,7 +3,8 @@ import type {
     PhysicalRecordContext, ProjectionRecordState
 } from "@cobol-ts/cursor-loader-types";
 import {bytesToDebugString} from "@cobol-ts/cursor-loader-types";
-import type {CompiledCobolEntry} from "@cobol-ts/layout";
+import type {CompiledCobolEntry, CompiledCobolElementary} from "@cobol-ts/layout";
+import {FragmentedByteCursor, compileCobolFieldDecoder, type CobolDecodeOptions, type CobolFieldDecoder} from "@cobol-ts/codec";
 import {type ErrorsOr, errors, value, flatMapErrorsOr} from "@cobol-ts/errors";
 import {evaluateStorageSize} from "@cobol-ts/size";
 import type {ProjectedArraySource} from "@cobol-ts/arrays";
@@ -23,6 +24,13 @@ export type CobolProjectionDetails = Readonly<{
     controllerLocations:WeakMap<readonly (string|number)[],import("./cobol.projection.symbolic").CobolControllerLocation>;
 }>;
 export type CobolFixedDetails = CobolProjectionDetails & Readonly<{recordLengthBytes:number}>;
+/** Opt-in decoded-value details. Existing diagnostic fixture helpers continue
+ * to use createCobolProjectionDetails / createCobolFixedDetails unchanged. */
+export type CobolDecodedDetails = CobolProjectionDetails & Readonly<{
+    decodeOptions:CobolDecodeOptions;
+    decoderCache:WeakMap<CompiledCobolElementary,CobolFieldDecoder>;
+}>;
+
 /**
  * Selected occurrences borrow the same physical record. Fixed layouts retain
  * their numeric displacement, while symbolic selections carry the resolved
@@ -44,6 +52,7 @@ export type CobolRecordState = ProjectionRecordState & {
     scalarScratch?:MutableSymbolicView;
     rangeScratch?:{from:number;to:number};
     fixedScratch?:{offsetBits:number;sizeBits:number};
+    byteCursor?:FragmentedByteCursor;
 };
 export type CobolParser = Parser<CobolRepresentation, CobolProjectionDetails, CobolProjectionDetails, CobolRecordState, CobolProjectionPath>;
 
@@ -91,6 +100,73 @@ export function createCobolFixedDetails(layout: readonly CompiledCobolEntry[]): 
             return errors(`COBOL fixed-record framing cannot determine record size: ${e instanceof Error ? e.message : String(e)}`);
         }
     });
+}
+
+/** Production setup: the same compiled storage layout, with scalar decoders
+ * compiled for selected elementary projections during opened-source setup. */
+export function createCobolDecodedProjectionDetails(layout:readonly CompiledCobolEntry[],
+    decodeOptions:CobolDecodeOptions = {}):ErrorsOr<CobolDecodedDetails> {
+    return flatMapErrorsOr(createCobolProjectionDetails(layout), details =>
+        value({...details, decodeOptions, decoderCache:new WeakMap()}));
+}
+
+export function createCobolDecodedFixedDetails(layout:readonly CompiledCobolEntry[],
+    decodeOptions:CobolDecodeOptions = {}):ErrorsOr<CobolFixedDetails & CobolDecodedDetails> {
+    return flatMapErrorsOr(createCobolFixedDetails(layout), details =>
+        value({...details, decodeOptions, decoderCache:new WeakMap()}));
+}
+
+function isDecoded(details:CobolProjectionDetails):details is CobolDecodedDetails {
+    return 'decoderCache' in details;
+}
+
+/** Construct selected-field plans before record iteration, never per record. */
+function ensureDecoder(details:CobolDecodedDetails,path:CobolProjectionPath):void {
+    if(path.node.kind!=='elementary' || details.decoderCache.has(path.node)) return;
+    const bits=path.node.size;
+    if(typeof bits!=='number' || bits%8!==0)
+        throw new Error(`Cannot compile primitive with non-constant storage width: ${path.fullPath.join('.')}`);
+    // Honour group-inherited USAGE, as the layout compiler does. Only stable
+    // declaration metadata is walked, once, during projection compilation.
+    let inheritedUsage:string|undefined;
+    let current:readonly CompiledCobolEntry[]=details.layout;
+    for(const part of path.fullPath) {
+        if(typeof part !== 'string') continue;
+        let found:CompiledCobolEntry|undefined;
+        for(const entry of current) {
+            if(entry.kind==='padding') continue;
+            if(entry.source.name.kind==='named' && entry.source.name.name.toUpperCase()===part.toUpperCase()) {
+                found=entry;break;
+            }
+        }
+        if(!found) break;
+        if(found.kind==='group') {
+            for(const clause of found.source.clauses)
+                if(clause.kind==='usage') inheritedUsage=clause.usage;
+            current=found.children;
+        }
+    }
+    const source=path.node.source;
+    const explicit=source.clauses.some(c=>c.kind==='usage');
+    const declaration=explicit || !inheritedUsage ? source
+        : {...source,clauses:[...source.clauses,{kind:'usage' as const,usage:inheritedUsage}]};
+    try {
+        details.decoderCache.set(path.node,compileCobolFieldDecoder(declaration,bits/8,details.decodeOptions));
+    } catch(error) {
+        throw new Error(`COBOL decoder for ${path.fullPath.join('.')}: ${error instanceof Error?error.message:String(error)}`);
+    }
+}
+
+function decodedField(representation:CobolRepresentation,details:CobolDecodedDetails,
+    path:CobolProjectionPath,occurrenceIndices:readonly number[]):string|number {
+    const decoder=path.node.kind==='elementary'?details.decoderCache.get(path.node):undefined;
+    if(!decoder) throw new Error(`No compiled COBOL decoder for ${path.fullPath.join('.')}`);
+    const range=fieldRange(representation,details,path,occurrenceIndices);
+    const record=physical(representation);
+    const state=record.recordState as CobolRecordState;
+    const cursor=state.byteCursor??(state.byteCursor=new FragmentedByteCursor());
+    cursor.bind(record,record.startByte+range.from,record.startByte+range.to);
+    return decoder.decode(cursor);
 }
 
 async function parse(
@@ -191,7 +267,9 @@ class CobolArraySelection implements ProjectedArraySource<CobolRepresentation> {
 export const cobolParser = {
     parse,
     compileProjectionPath(details: CobolProjectionDetails, _context: PhysicalRecordContext | undefined, path: readonly (string | number)[], parent?:CobolProjectionPath) {
-        return compileCobolMemberPath(details.names, path, parent);
+        const compiled=compileCobolMemberPath(details.names, path, parent);
+        if(isDecoded(details)) ensureDecoder(details,compiled);
+        return compiled;
     },
     object(view: CobolRepresentation, details: CobolProjectionDetails, path: CobolProjectionPath,
            reusable?:CobolRepresentation): CobolRepresentation {
@@ -216,17 +294,41 @@ export const cobolParser = {
         selected.bind(view,details,path);
         return selected;
     },
-    integer(record: CobolRepresentation, _details: CobolProjectionDetails, path: CobolProjectionPath, ...occurrenceIndices: number[]): number {
-        return cobolDebugRangeNumber(fieldRange(record, _details, path, occurrenceIndices));
+    integer(record: CobolRepresentation, details: CobolProjectionDetails, path: CobolProjectionPath, ...indices: number[]): number {
+        if(isDecoded(details)) {
+            const decoded=decodedField(record,details,path,indices);
+            if(typeof decoded!=='number' || !Number.isInteger(decoded))
+                throw new TypeError(`Expected integral COBOL value at ${path.fullPath.join('.')}`);
+            return decoded;
+        }
+        return cobolDebugRangeNumber(fieldRange(record, details, path, indices));
     },
-    float(record: CobolRepresentation, _details: CobolProjectionDetails, path: CobolProjectionPath, ...occurrenceIndices: number[]): number {
-        return cobolDebugRangeNumber(fieldRange(record, _details, path, occurrenceIndices));
+    float(record: CobolRepresentation, details: CobolProjectionDetails, path: CobolProjectionPath, ...indices: number[]): number {
+        if(isDecoded(details)) {
+            const decoded=decodedField(record,details,path,indices);
+            if(typeof decoded!=='number')
+                throw new TypeError(`Expected numeric COBOL value at ${path.fullPath.join('.')}`);
+            return decoded;
+        }
+        return cobolDebugRangeNumber(fieldRange(record, details, path, indices));
     },
-    character(record: CobolRepresentation, _details: CobolProjectionDetails, path: CobolProjectionPath, ...occurrenceIndices: number[]): string {
-        return cobolDebugRangeString(physical(record), fieldRange(record, _details, path, occurrenceIndices));
+    character(record: CobolRepresentation, details: CobolProjectionDetails, path: CobolProjectionPath, ...indices: number[]): string {
+        if(isDecoded(details)) {
+            const decoded=decodedField(record,details,path,indices);
+            if(typeof decoded!=='string' || decoded.length!==1)
+                throw new TypeError(`Expected one COBOL character at ${path.fullPath.join('.')}`);
+            return decoded;
+        }
+        return cobolDebugRangeString(physical(record), fieldRange(record, details, path, indices));
     },
-    string(record: CobolRepresentation, _details: CobolProjectionDetails, path: CobolProjectionPath, ...occurrenceIndices: number[]): string {
-        return cobolDebugRangeString(physical(record), fieldRange(record, _details, path, occurrenceIndices));
+    string(record: CobolRepresentation, details: CobolProjectionDetails, path: CobolProjectionPath, ...indices: number[]): string {
+        if(isDecoded(details)) {
+            const decoded=decodedField(record,details,path,indices);
+            if(typeof decoded!=='string')
+                throw new TypeError(`Expected text COBOL value at ${path.fullPath.join('.')}`);
+            return decoded;
+        }
+        return cobolDebugRangeString(physical(record), fieldRange(record, details, path, indices));
     },
     toDebugString: bytesToDebugString
 } satisfies CobolParser;
