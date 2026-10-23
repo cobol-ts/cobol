@@ -6,6 +6,27 @@ Objects can be shared by multiple owners and are returned to the pool only when 
 
 Checked-out objects are not retained by the pool, so normal garbage collection still applies if an object becomes unreachable without being released.
 
+
+## Optional final-release cleanup
+
+`createRefCountedPool(create, clean?)` accepts an optional synchronous cleaner.
+It runs only when the final reference is released, immediately before the
+object is returned to the pool. Intermediate releases never clean the object.
+When omitted, the original reuse semantics remain unchanged.
+
+```typescript
+const pool = createRefCountedPool(
+    () => ({values: [] as number[], size: 0}),
+    state => { state.size = 0; }
+);
+```
+
+The cleaner resets active state while retaining capacity. It must not try to
+retain or release the same object during cleanup. If it throws, `release()`
+throws and the object is not put back into the available pool; this avoids
+reusing dirty state. Cleanup is not a destructor for shared resources: any
+resource-owning code must continue to release those resources correctly.
+
 ## Why
 
 A normal object pool assumes that one caller acquires an object and later returns it.

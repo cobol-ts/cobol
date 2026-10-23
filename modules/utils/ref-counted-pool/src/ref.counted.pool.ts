@@ -181,14 +181,14 @@ export interface RefCountedPool<
  * Object state
  * ------------
  *
- * This pool deliberately knows nothing about the application state stored
- * inside T.
+ * The optional clean(value) callback runs exactly once on the final release,
+ * before the value is returned to the available list. The pool chooses when
+ * to clean; the caller decides what application state must be invalidated.
+ * When omitted, the prior behaviour is unchanged: application state remains.
  *
- * An object returned by acquire() may contain state from its previous use.
- * If a particular T needs to be initialised before use, that is the
- * responsibility of the code using that T.
- *
- * This keeps the pool concerned only with ownership and reuse.
+ * Cleanup is synchronous and must not attempt to retain or release the
+ * same object. If it throws, release() throws and the object is discarded
+ * rather than being made available while dirty.
  *
  *
  * Garbage collection
@@ -211,7 +211,10 @@ export function createRefCountedPool<
     T extends object
 >(
     create:
-    () => T
+    () => T,
+
+    clean?:
+    (value: T) => void
 ): RefCountedPool<
     T
 > {
@@ -476,13 +479,12 @@ export function createRefCountedPool<
 
 
             /*
-             * The final owner has released the object.
-             *
-             * The pool deliberately performs no reset or cleanup here.
-             *
-             * Application state belongs to T and is outside the concerns of
-             * this pool.
+             * The last reference has gone. Cleanup happens before reuse is
+             * possible. If it throws, the value is NOT placed in available:
+             * its count remains zero, so it cannot be accidentally recycled.
              */
+            clean?.(value);
+
             available.push(
                 value
             );
