@@ -24,7 +24,10 @@
     "@cobol-ts/cursor-loader-types": "0.0.1",
     "@cobol-ts/cursor-projection": "0.0.1",
     "@cobol-ts/cursor-record": "0.0.1",
-    "@cobol-ts/errors": "0.0.1"
+    "@cobol-ts/errors": "0.0.1",
+    "@cobol-ts/layout": "0.0.1",
+    "@cobol-ts/copybook": "0.0.1",
+    "@cobol-ts/arrays": "0.0.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.1.4",

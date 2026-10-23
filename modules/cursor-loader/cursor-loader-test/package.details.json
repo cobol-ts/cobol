@@ -10,16 +10,17 @@
     "@cobol-ts/cursor-loader-json",
     "@cobol-ts/cursor-loader-types",
     "@cobol-ts/cursor-projection",
-    "@cobol-ts/errors"
+    "@cobol-ts/errors",
+    "@cobol-ts/arrays",
+    "@cobol-ts/copybook",
+    "@cobol-ts/layout"
   ],
   "packageJson": {
     "files": [
       "build/"
     ],
-    "dependencies": {
-    },
-    "devDependencies": {
-    },
+    "dependencies": {},
+    "devDependencies": {},
     "scripts": {
       "start": "react-scripts start"
     }

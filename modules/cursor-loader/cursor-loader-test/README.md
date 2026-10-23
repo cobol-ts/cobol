@@ -6,7 +6,7 @@ This package verifies that the separately tested packages agree on their shared 
 
 ## Current integration path
 
-Both JSONL and CSV integration suites use the same architecture:
+The JSONL, CSV and COBOL integration suites use the same architecture:
 
 ```text
 fixture bytes
@@ -89,6 +89,36 @@ The CSV suite covers:
 
 The tests use small physical buffer sizes specifically to force parser behaviour across pooled buffer boundaries.
 
+## COBOL integration coverage (AWS EMPREC01, FB/150)
+
+`src/cursor.loader.cobol.aws.int.test.ts` uses fixtures in
+`fixtures/aws-employee/`: a complete five-record 750-byte binary source,
+the original EMPREC01 copybook and the upstream expected CSV values. The binary
+is transcribed from the published upstream hex dump, **not** encoded using our
+library, and its first record was independently checked against the already
+established layout fixture. See the fixture README for attribution and SHA-256.
+
+- Real copybook parsing and storage compilation feed `createCobolDecodedFixedDetails`.
+- The public COBOL parser, record state and projection API are exercised via
+  `createFileCursor`, not by calling a decoder on standalone bytes.
+- Every published employee field is compared across **all five records**:
+  `REDEFINES` ID interpretations, three `OCCURS` address lines, CP037 text,
+  signed DISPLAY, COMP, COMP-3, implied decimals and negative values. The
+  published CSV preserves padding and leading zeroes so these are checked too.
+- Five deliberately different physical read sizes (3, 7, 149, 150 and 4096)
+  must produce identical values. This includes fragmentation **within** numeric
+  fields, array bodies and records. The codec never assembles field bytes.
+- One test reads from a real filesystem handle with 11-byte reads, and one
+  retains two simultaneously live records and verifies closing one does not
+  corrupt the other; subsequent records are also verified after pool reuse.
+
+No network requests are made by these tests. The golden output comes from AWS,
+not from running an in-project encoder or writer. The independent AWS example
+is still a published sample; it does not constitute testing against a client's
+original production files. An additional CardDemo binary/oracle corpus may be
+added when both its original bytes and independent expected values can be
+verified and bundled without guessing.
+
 ## What belongs in package-level tests
 
 The parser packages themselves own detailed unit coverage for grammar and conversion rules.
@@ -128,4 +158,4 @@ The current package `test` script itself runs Jest only; TypeScript compilation 
 
 ## Current cross-package validation boundary
 
-The end-to-end integration suites in this package primarily exercise JSONL and CSV. They are **not** evidence that COBOL nested ODO or primitive codecs work: COBOL-specific byte-coordinate, nested ODO, pooling and indexed-error tests live in `cursor-loader-cobol`, while layout and symbolic size tests live in their respective packages. Run those package suites, TypeScript checks and the full repository Jest suite separately before release. Do not publish a fixed test count in this README; the suite evolves.
+COBOL also has an end-to-end FB/150 integration suite here using an independently published AWS data/copybook/CSV oracle. Detailed nested ODO geometry, local codec unit tests, pooling and indexed-error tests remain in `cursor-loader-cobol`, `codec` and `layout`; this external FB suite does not establish full compiler/dialect support or variable-record framing. Run the package Jest suites, TypeScript checks and the complete repository suite separately before release. Do not publish a fixed test count in this README; the suite evolves.
