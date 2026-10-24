@@ -1,0 +1,4 @@
+*.ebcdic
+*.ascii
+*.cpy
+manifest.json
