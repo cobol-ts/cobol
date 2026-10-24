@@ -5,6 +5,6 @@ These files are minimal **test-authored** CP037 byte sequences. They are not cla
 * `active-shift.fb` is 12 bytes containing three records: `0Z` (2 bytes), `2AABBY` (6 bytes), and `1CCX` (4 bytes). The count determines the active stored extent and hence the start of the next record.
 * `reserved-max.fb` is 16 bytes containing two FB/8 records: `0      Z` and `2AABB  Y`. Space is reserved for three 2-byte occurrences even when fewer are active; the trailer remains at byte 7 in each record.
 
-The tests are marked `test.failing` because `readCobolFile` currently delegates to `createCobolDecodedFixedDetails`, which refuses symbolic ODO record lengths. A passing implementation of either scenario should make its test fail under Jest's inverted `test.failing` expectation. At that point, change the test to normal `test`, and expose any required framing policy in the public reader.
+These are ordinary Jest tests and are expected to **fail** until `readCobolFile` supports the required ODO record-layout and framing policies. Do not invert or suppress their failures. Implement the missing production behaviour and make the tests pass without changing the expected values.
 
 **These are two distinct physical storage contracts.** Do not make the fixed-reserved test pass by silently treating the file as variable-size, or vice versa. Neither test assumes a generic RDW; RDW-framed V/VB can be a third acceptance dataset once genuine RDW bytes and copybook are available.

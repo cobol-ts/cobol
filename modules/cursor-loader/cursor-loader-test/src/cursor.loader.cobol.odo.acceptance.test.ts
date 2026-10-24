@@ -4,9 +4,8 @@
  * produced mainframe files). Unlike the external CardDemo tests they exist
  * to drive the next implementation step.
  *
- * Jest test.failing marks currently missing functionality without breaking
- * the rest of the integration suite. When the reader begins passing one,
- * Jest will report that test as a failure until `.failing` is removed.
+ * These are ordinary acceptance tests: unsupported behaviour must fail visibly.
+ * Keep failures red until the production reader satisfies the assertions.
  */
 import {join} from 'node:path';
 import type {ProjectedArray} from '@cobol-ts/arrays';
@@ -36,8 +35,8 @@ async function read(filename:string,bufferSize:number) {
     return values;
 }
 
-describe('future ODO file-framing contracts (expected RED)',()=>{
-    test.failing('variable active extent: use each count to find the next record start',async()=>{
+describe('ODO file-framing acceptance contracts',()=>{
+    test('variable active extent: use each count to find the next record start',async()=>{
         // Three records of 2, 6, 4 bytes. No RDWs: this scenario requires
         // determining each record extent from the data and chosen ODO policy.
         expect(await read('active-shift.fb',3)).toEqual([
@@ -46,7 +45,7 @@ describe('future ODO file-framing contracts (expected RED)',()=>{
             {count:1,codes:['CC'],trailer:'X'}
         ]);
     });
-    test.failing('fixed-length maximum capacity: active ODO count excludes unused slots',async()=>{
+    test('fixed-length maximum capacity: active ODO count excludes unused slots',async()=>{
         // Two FB/8 records. The suffix is anchored after the reserved
         // 3x2-byte table capacity, not directly after active occurrences.
         // This will need a distinct storage/framing choice when implemented.

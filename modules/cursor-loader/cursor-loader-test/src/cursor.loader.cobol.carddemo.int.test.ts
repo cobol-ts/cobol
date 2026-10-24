@@ -13,8 +13,7 @@ import {readCobolFile,type CobolFileOptions} from '@cobol-ts/cursor-loader-cobol
 import {defineProjection} from '@cobol-ts/cursor-projection';
 
 const dir=join(__dirname,'..','fixtures','carddemo');
-const available=existsSync(join(dir,'manifest.json'));
-const integration=available ? describe : describe.skip;
+const manifestFile=join(dir,'manifest.json');
 
 type Xref = {card():string;customer():number;account():number};
 const xrefProjection=defineProjection<Xref>({
@@ -47,7 +46,14 @@ const accountProjection=defineProjection<Account>({
 
 type Dataset = {name:string; length:number; records:number; binary:string; ascii:string; copybook:string; sources:{sha256:string}[]};
 function manifest():{datasets:Dataset[]} {
-    return JSON.parse(readFileSync(join(dir,'manifest.json'),'utf8')) as {datasets:Dataset[]};
+    if(!existsSync(manifestFile)) {
+        throw new Error(
+            `Missing AWS CardDemo integration fixtures (${manifestFile}). `+
+            'Run node scripts/fetch-carddemo-fixtures.mjs from '+
+            'modules/cursor-loader/cursor-loader-test before running Jest.'
+        );
+    }
+    return JSON.parse(readFileSync(manifestFile,'utf8')) as {datasets:Dataset[]};
 }
 function rows(file:string):string[] {
     return readFileSync(file,'utf8').split(/\r?\n/).filter(line=>line.length>0);
@@ -82,7 +88,7 @@ function testDataset<T>(name:string,projection:CobolFileOptions<T>['projection']
     }
 }
 
-integration('AWS CardDemo original FB binary/copybook/ASCII corpus',()=>{
+describe('AWS CardDemo original FB binary/copybook/ASCII corpus',()=>{
     test('original datasets have exact published record lengths',()=>{
         const entries=manifest().datasets;
         expect(entries.map(d=>[d.name,d.length])).toEqual([
