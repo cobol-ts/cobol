@@ -10,7 +10,7 @@ import {
     type FileCursorResult
 } from '@cobol-ts/cursor-file';
 import {fillNodeFileBuffer} from '@cobol-ts/cursor-file/node';
-import {createCobolDecodedFixedDetails} from './cobol.parser';
+import {createCobolDecodedFramedDetails, type CobolFraming} from './cobol.parser';
 import {createCobolParserRegistry} from './cobol.registration';
 
 /** Input paths are filenames, not COBOL text or precompiled descriptors. */
@@ -21,10 +21,11 @@ export type CobolFileOptions<TProjection> = Readonly<{
     bufferSize?: number;
     layoutOptions?: CobolLayoutOptions;
     decodeOptions?: CobolDecodeOptions;
+    framing?: CobolFraming;
 }>;
 
 /**
- * Open an FB COBOL file as a streaming cursor of borrowed, lazy projections.
+ * Open an FB or RDW-framed COBOL file as borrowed, lazy projections.
  *
  * Source setup and decoder compilation happen once, before any row is read.
  * Records use the existing FileCursorResult.close() ownership contract.
@@ -37,7 +38,7 @@ export async function* readCobolFile<TProjection>(
     const text = await readFile(options.copybook, 'utf8');
     const ast = valueOrThrow(parseCopybook(text));
     const layout = valueOrThrow(compileCobolLayout(ast, basename(options.copybook), options.layoutOptions));
-    const details = valueOrThrow(createCobolDecodedFixedDetails(layout, options.decodeOptions));
+    const details = valueOrThrow(createCobolDecodedFramedDetails(layout, options.framing, options.decodeOptions));
 
     const file = await open(options.filename, 'r');
     try {

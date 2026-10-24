@@ -1,0 +1,4 @@
+/dist/
+/node_modules/
+/data/*.dat
+!/data/sample-100k.dat

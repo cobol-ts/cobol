@@ -1,0 +1,27 @@
+{
+  "template": "node",
+  "name": "@cobol-ts/cursor-loader-benchmark",
+  "description": "TypeScript end-to-end COBOL cursor benchmark against JRecord with deterministic 200-byte fixtures",
+  "links": [
+    "@cobol-ts/cursor-loader-cobol",
+    "@cobol-ts/cursor-loader-types",
+    "@cobol-ts/cursor-projection",
+    "@cobol-ts/codec"
+  ],
+  "packageJson": {
+    "files": [
+      "build/"
+    ],
+    "dependencies": {},
+    "devDependencies": {},
+    "scripts": {
+      "benchmark": "ts-node --transpile-only --prefer-ts-exts src/benchmark.cli.ts",
+      "benchmark:sample": "ts-node --transpile-only --prefer-ts-exts src/benchmark.cli.ts --sample"    }
+  },
+  "guards": {
+    "compile": true,
+    "publish": false,
+    "test": true,
+    "react": false
+  }
+}

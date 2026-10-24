@@ -1,10 +1,12 @@
-# ODO acceptance fixtures — constructed, not external
+# ODO physical framing acceptance fixtures
 
-These files are minimal **test-authored** CP037 byte sequences. They are not claimed to be original mainframe datasets and are not checked against a third-party output oracle. They exercise future record framing through the same public `readCobolFile` API. Encoding used Python's standard-library `cp037` codec, not the implementation under test.
+These binary fixtures are **test-authored CP037 source bytes**, not externally obtained mainframe records. None is encoded by the production COBOL codec. The AWS Employee/CardDemo tests remain our independent external oracles.
 
-* `active-shift.fb` is 12 bytes containing three records: `0Z` (2 bytes), `2AABBY` (6 bytes), and `1CCX` (4 bytes). The count determines the active stored extent and hence the start of the next record.
-* `reserved-max.fb` is 16 bytes containing two FB/8 records: `0      Z` and `2AABB  Y`. Space is reserved for three 2-byte occurrences even when fewer are active; the trailer remains at byte 7 in each record.
+* `ODO.cpy` has a one-digit count, 0–3 two-byte items, and a trailing one-byte field.
+* `active-shift.rdw` contains three unblocked, RDW-prefixed records. Their RDW bytes are `00 06 00 00`, `00 0a 00 00` and `00 08 00 00`. The COBOL payloads are the original `active-shift.fb` slices: `0Z`, `2AABBY`, `1CCX`. Total physical size is 24 bytes; no RDW is part of the COBOL layout.
+* `reserved-max.fb` contains two FB/8 records; each reserves 3 × 2 bytes irrespective of the active count. The trailing field remains at offset 7, not immediately after active items.
+* `invalid-length.rdw`, `truncated-header.rdw`, `truncated-payload.rdw` and `unsupported-control.rdw` drive negative framing cases.
 
-These are ordinary Jest tests and are expected to **fail** until `readCobolFile` supports the required ODO record-layout and framing policies. Do not invert or suppress their failures. Implement the missing production behaviour and make the tests pass without changing the expected values.
+`active-shift.fb` is kept as the original unframed 12-byte data reference; the production `rdw` reader does **not** accept it as an RDW stream.
 
-**These are two distinct physical storage contracts.** Do not make the fixed-reserved test pass by silently treating the file as variable-size, or vice versa. Neither test assumes a generic RDW; RDW-framed V/VB can be a third acceptance dataset once genuine RDW bytes and copybook are available.
+Every acceptance test uses ordinary Jest `test()`, never `test.failing()` or conditional skipping. Reader framing is explicit: `{kind:'rdw'}` or `{kind:'fixed',recordLength:8}`. Other integrations omit framing and continue using constant compiled FB lengths.

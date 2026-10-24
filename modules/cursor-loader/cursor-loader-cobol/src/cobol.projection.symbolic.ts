@@ -32,6 +32,7 @@ export type CobolGeometryDetails=Readonly<{
     layout:readonly import("@cobol-ts/layout").CompiledCobolEntry[];
     /** Immutable controller geometry, memoised by compiled literal path identity. */
     controllerLocations?:WeakMap<readonly (string|number)[],CobolControllerLocation>;
+    dataOffsetBytes?:number;
 }>;
 
 export function compileCobolSymbolicPath(
@@ -83,7 +84,7 @@ export function resolveCobolCount(details:CobolGeometryDetails,record:Projection
             location={offsetBits:located.offsetBits,sizeBits:located.sizeBits};
             details.controllerLocations?.set(path,location);
         }
-        const start=record.startByte+location.offsetBits/8;
+        const start=record.startByte+(details.dataOffsetBytes??0)+location.offsetBits/8;
         const end=start+location.sizeBits/8;
         if(end>record.endByte) throw new RangeError(`ODO controller ${path.join(".")} exceeds record boundary`);
         let result=0;

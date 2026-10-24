@@ -22,12 +22,12 @@
     "@cobol-ts/safe": "0.0.1"
   },
   "devDependencies": {
+    "typescript": "^5.2.2",
     "@testing-library/jest-dom": "^6.1.4",
     "@types/jest": "^29.0.0",
     "@types/node": "^14.0.0",
     "jest": "^29.0.0",
-    "ts-jest": "^29.0.0",
-    "typescript": "^5.2.2"
+    "ts-jest": "^29.0.0"
   },
   "eslintConfig": {
     "extends": [

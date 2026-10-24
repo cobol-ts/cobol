@@ -21,9 +21,14 @@ export type CobolProjectionDetails = Readonly<{
     layout: readonly CompiledCobolEntry[];
     names: CobolNameIndex;
     recordLengthBytes?:number;
+    /** RDW is physical framing, never part of the copybook layout. */
+    framing?:'rdw';
+    dataOffsetBytes?:number;
     controllerLocations:WeakMap<readonly (string|number)[],import("./cobol.projection.symbolic").CobolControllerLocation>;
 }>;
 export type CobolFixedDetails = CobolProjectionDetails & Readonly<{recordLengthBytes:number}>;
+/** Fixed capacity is independent of the number of active ODO occurrences. */
+export type CobolFraming = Readonly<{kind:'fixed';recordLength?:number}> | Readonly<{kind:'rdw'}>;
 /** Opt-in decoded-value details. Existing diagnostic fixture helpers continue
  * to use createCobolProjectionDetails / createCobolFixedDetails unchanged. */
 export type CobolDecodedDetails = CobolProjectionDetails & Readonly<{
@@ -48,6 +53,8 @@ type CountContext = {
 export type CobolRecordState = ProjectionRecordState & {
     readonly odoPositions:OdoPositionCache;
     readonly countContext:CountContext;
+    /** Start of copybook data relative to the physical record start. */
+    dataOffsetBytes?:number;
     rootScratch?:MutableSymbolicView;
     scalarScratch?:MutableSymbolicView;
     rangeScratch?:{from:number;to:number};
@@ -66,7 +73,7 @@ function symbolicView(view:CobolRepresentation):CobolSymbolicView {
     const record=physical(view),state=record.recordState as CobolRecordState;
     const root=state.rootScratch ?? (state.rootScratch=rootSymbolicView(record) as MutableSymbolicView);
     root.physical=record;
-    root.originBits=0;
+    root.originBits=(state.dataOffsetBytes ?? 0)*8;
     root.endBits=(record.endByte-record.startByte)*8;
     return root;
 }
@@ -108,6 +115,25 @@ export function createCobolDecodedProjectionDetails(layout:readonly CompiledCobo
     decodeOptions:CobolDecodeOptions = {}):ErrorsOr<CobolDecodedDetails> {
     return flatMapErrorsOr(createCobolProjectionDetails(layout), details =>
         value({...details, decodeOptions, decoderCache:new WeakMap()}));
+}
+
+/** One source-scoped decoder setup for FB (compiled or declared physical length)
+ * and RDW-prefixed records. Record framing is independent of active ODO count.
+ * In particular, an FB file may reserve unused table capacity. */
+export function createCobolDecodedFramedDetails(layout:readonly CompiledCobolEntry[],
+    framing:CobolFraming|undefined,
+    decodeOptions:CobolDecodeOptions = {}):ErrorsOr<CobolDecodedDetails> {
+    if(!framing || (framing.kind==='fixed' && framing.recordLength===undefined))
+        return createCobolDecodedFixedDetails(layout,decodeOptions);
+    if(framing.kind==='fixed') {
+        const length=framing.recordLength;
+        if(!Number.isSafeInteger(length) || length===undefined || length<=0)
+            return errors('Fixed COBOL record length must be a positive whole number of bytes');
+        return flatMapErrorsOr(createCobolDecodedProjectionDetails(layout,decodeOptions),details=>
+            value({...details,recordLengthBytes:length}));
+    }
+    return flatMapErrorsOr(createCobolDecodedProjectionDetails(layout,decodeOptions),details=>
+        value({...details,framing:'rdw' as const,dataOffsetBytes:4}));
 }
 
 export function createCobolDecodedFixedDetails(layout:readonly CompiledCobolEntry[],
@@ -169,20 +195,60 @@ function decodedField(representation:CobolRepresentation,details:CobolDecodedDet
     return decoder.decode(cursor);
 }
 
+/** The parser owns COBOL record boundaries. The physical cursor supplies only
+ * reusable buffers and readMore(); neither a payload nor field is assembled.
+ * The RDW's 16-bit big-endian length includes its four header bytes. */
 async function parse(
     record: ParserPhysicalRecordContent<CobolRecordState>,
     details: CobolProjectionDetails
 ): Promise<CobolRepresentation | {errors: string[]}> {
-    if(details.recordLengthBytes===undefined) throw new Error("COBOL source framing is required for an ODO layout");
-    const endByte = record.startByte + details.recordLengthBytes;
-    while (record.lastValidByte < endByte && !record.fileFinished) {
+    const start=record.startByte;
+    const rdw=details.framing==='rdw';
+    const headerEnd=start+(rdw?4:0);
+    if(rdw){
+        while(record.lastValidByte<headerEnd && !record.fileFinished)
+            await record.readMore();
+        // A read that discovers EOF at the boundary of the preceding record
+        // must not manufacture an additional truncated record.
+        if(record.fileFinished && record.lastValidByte===start){
+            record.endByte=start;
+            return record;
+        }
+        if(record.lastValidByte<headerEnd){
+            record.endByte=record.lastValidByte;
+            return {errors:[`Truncated COBOL RDW: expected 4 bytes, got ${record.lastValidByte-start}`]};
+        }
+        const state=record.recordState;
+        const cursor=state.byteCursor??(state.byteCursor=new FragmentedByteCursor());
+        cursor.bind(record,start,headerEnd);
+        const hi=cursor.next(),lo=cursor.next(),control1=cursor.next(),control2=cursor.next();
+        if(control1!==0 || control2!==0)
+            throw new Error('Unsupported COBOL RDW control bytes (spanned records are not supported)');
+        const recordLength=hi*256+lo;
+        if(recordLength<4)
+            throw new Error(`Invalid COBOL RDW length ${recordLength}: must include four header bytes`);
+        record.recordState.dataOffsetBytes=4;
+        const endByte=start+recordLength;
+        while(record.lastValidByte<endByte && !record.fileFinished)
+            await record.readMore();
+        if(record.lastValidByte<endByte){
+            record.endByte=record.lastValidByte;
+            return {errors:[`Truncated COBOL RDW record: expected ${recordLength} bytes, got ${record.lastValidByte-start}`]};
+        }
+        record.endByte=endByte;
+        return record;
+    }
+    if(details.recordLengthBytes===undefined)
+        throw new Error('COBOL source framing is required for an ODO layout');
+    const endByte=start+details.recordLengthBytes;
+    while(record.lastValidByte<endByte && !record.fileFinished)
         await record.readMore();
+    if(record.lastValidByte<endByte){
+        record.endByte=record.lastValidByte;
+        return {errors:[`Truncated COBOL fixed record: expected ${details.recordLengthBytes} bytes, got ${record.lastValidByte-start}`]};
     }
-    if (record.lastValidByte < endByte) {
-        record.endByte = record.lastValidByte;
-        return {errors: [`Truncated COBOL fixed record: expected ${details.recordLengthBytes} bytes, got ${record.lastValidByte - record.startByte}`]};
-    }
-    record.endByte = endByte;
+    record.recordState.dataOffsetBytes=0;
+    record.endByte=endByte;
     return record;
 }
 
@@ -199,7 +265,7 @@ function fieldRange(representation: CobolRepresentation, details:CobolProjection
     } else {
         const state=record.recordState as CobolRecordState;
         const located=locateCompiledCobolPath(path,occurrenceIndices,state.fixedScratch ?? (state.fixedScratch={offsetBits:0,sizeBits:0}));
-        offsetBits=located.offsetBits+displacement(representation);
+        offsetBits=located.offsetBits+displacement(representation)+(state.dataOffsetBytes??0)*8;
         sizeBits=located.sizeBits;
     }
     const state=record.recordState as CobolRecordState;
@@ -346,6 +412,7 @@ export function cleanCobolRecordState(state:CobolRecordState):void {
     // and source-specific details do not remain bound after final release.
     state.countContext.record=undefined;
     state.countContext.details=undefined;
+    state.dataOffsetBytes=undefined;
     if(state.rootScratch) state.rootScratch.endBits=undefined;
     if(state.scalarScratch) state.scalarScratch.endBits=undefined;
 }

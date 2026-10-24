@@ -22,10 +22,10 @@ const projection=defineProjection<OdoRecord>({
     }},
     trailer:{type:'string',path:['ODO-RECORD','TRAILER']}
 });
-async function read(filename:string,bufferSize:number) {
+async function read(filename:string,bufferSize:number,framing?:{kind:'rdw'}|{kind:'fixed';recordLength:number}) {
     const values:{count:number;codes:string[];trailer:string}[]=[];
     for await(const record of readCobolFile({
-        filename:join(fixtures,filename),copybook:join(fixtures,'ODO.cpy'),projection,bufferSize
+        filename:join(fixtures,filename),copybook:join(fixtures,'ODO.cpy'),projection,bufferSize,framing
     })) {
         try {
             const row=record.result;
@@ -36,22 +36,54 @@ async function read(filename:string,bufferSize:number) {
 }
 
 describe('ODO file-framing acceptance contracts',()=>{
-    test('variable active extent: use each count to find the next record start',async()=>{
-        // Three records of 2, 6, 4 bytes. No RDWs: this scenario requires
-        // determining each record extent from the data and chosen ODO policy.
-        expect(await read('active-shift.fb',3)).toEqual([
-            {count:0,codes:[],trailer:'Z'},
-            {count:2,codes:['AA','BB'],trailer:'Y'},
-            {count:1,codes:['CC'],trailer:'X'}
-        ]);
+    for(const bufferSize of [1,2,3,4,7,4096]) {
+        test(`RDW: independently framed variable ODO records, ${bufferSize}-byte buffers`,async()=>{
+            // The four-byte big-endian RDW length includes its four-byte header.
+            // Three CP037 payloads are 2, 6, 4 bytes; no decoder-generated input.
+            expect(await read('active-shift.rdw',bufferSize,{kind:'rdw'})).toEqual([
+                {count:0,codes:[],trailer:'Z'},
+                {count:2,codes:['AA','BB'],trailer:'Y'},
+                {count:1,codes:['CC'],trailer:'X'}
+            ]);
+        });
+        test(`FB reserved capacity: active ODO count is not physical size, ${bufferSize}-byte buffers`,async()=>{
+            expect(await read('reserved-max.fb',bufferSize,{kind:'fixed',recordLength:8})).toEqual([
+                {count:0,codes:[],trailer:'Z'},
+                {count:2,codes:['AA','BB'],trailer:'Y'}
+            ]);
+        });
+    }
+    test('RDW: two simultaneously live records have independent counts and borrowed bytes',async()=>{
+        const cursor=readCobolFile({
+            filename:join(fixtures,'active-shift.rdw'),
+            copybook:join(fixtures,'ODO.cpy'),projection,
+            bufferSize:1,framing:{kind:'rdw'}
+        });
+        const first=await cursor.next(),second=await cursor.next();
+        if(first.done||second.done||!first.value||!second.value)
+            throw new Error('Expected two live RDW records');
+        const a=first.value,b=second.value;
+        try{
+            expect(a.result.count()).toBe(0);
+            expect(b.result.count()).toBe(2);
+            a.close();
+            expect(Array.from(b.result.items,item=>item.code())).toEqual(['AA','BB']);
+            expect(b.result.trailer()).toBe('Y');
+        }finally{
+            b.close();
+            await cursor.return();
+        }
     });
-    test('fixed-length maximum capacity: active ODO count excludes unused slots',async()=>{
-        // Two FB/8 records. The suffix is anchored after the reserved
-        // 3x2-byte table capacity, not directly after active occurrences.
-        // This will need a distinct storage/framing choice when implemented.
-        expect(await read('reserved-max.fb',3)).toEqual([
-            {count:0,codes:[],trailer:'Z'},
-            {count:2,codes:['AA','BB'],trailer:'Y'}
-        ]);
+    test('RDW: invalid zero length is rejected',async()=>{
+        await expect(read('invalid-length.rdw',3,{kind:'rdw'})).rejects.toThrow(/Invalid COBOL RDW length/);
+    });
+    test('RDW: incomplete header is rejected',async()=>{
+        await expect(read('truncated-header.rdw',1,{kind:'rdw'})).rejects.toThrow(/Truncated COBOL RDW/);
+    });
+    test('RDW: incomplete payload is rejected',async()=>{
+        await expect(read('truncated-payload.rdw',2,{kind:'rdw'})).rejects.toThrow(/Truncated COBOL RDW record/);
+    });
+    test('RDW: unsupported control bytes are rejected',async()=>{
+        await expect(read('unsupported-control.rdw',2,{kind:'rdw'})).rejects.toThrow(/RDW control bytes/);
     });
 });

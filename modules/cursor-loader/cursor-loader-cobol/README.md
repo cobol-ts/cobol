@@ -190,3 +190,37 @@ Projection failures report source filename, record number, offending COBOL field
 Run the package's Jest suite and TypeScript checks in the real workspace; focused lightweight harness checks are not a substitute for the full suite. Remaining work includes occurrence-local ODO controllers, external variable-record framing, integrating scalar codecs, validation with real client files and heap/throughput benchmarks.
 
 Companion walkthrough: *Byte-Backed COBOL Projections — Nested ODOs, Lazy Positions and Reusable Views* (Google Docs).
+
+
+## COBOL framing: FB, reserved-capacity ODO, and RDW
+
+The Node entry point `@cobol-ts/cursor-loader-cobol/node` exposes
+`readCobolFile({copybook, filename, projection, framing?})`. The same generic
+byte-backed cursor, layout compiler, lazy projection and pooled record holder
+are used for every framing mode:
+
+* Omit `framing` for ordinary fixed-block data with a constant compiled copybook
+  extent (backward-compatible default).
+* `{kind: 'fixed', recordLength: 8}` supplies a physical record size, e.g. for
+  FB records where space is reserved for the **maximum** ODO table capacity.
+  The ODO controller still controls the number of *visible* projected entries;
+  it does **not** change the physical eight-byte frame.
+* `{kind: 'rdw'}` reads a four-byte unblocked RDW before each COBOL payload.
+  Its first two bytes are an unsigned big-endian length **including** the RDW;
+  bytes two and three must be zero. The RDW is outside the copybook's logical
+  data origin. The current reader does not implement VB block descriptors,
+  spanned VBS data, or nonzero RDW control-byte conventions.
+
+RDW parsing obtains the header via the existing `readMore()` mechanism even
+when its four bytes span four distinct physical buffers; it establishes the
+physical `endByte` independently of the ODO controller. Copybook offsets and
+ODO count locations begin at the COBOL payload origin, not at the RDW.
+Scalar decoding continues to operate directly on fragmented borrowed buffers.
+No intermediate record or field buffer is constructed.
+
+Tests in `cursor-loader-test` cover RDW records with different active ODO
+lengths; explicit FB reserved maximum capacity; corrupt/truncated headers;
+1-, 2-, 3-, 4-, 7-, and 4096-byte buffers; and an RDW-wrapped copy of the
+externally specified AWS Employee binary data to verify ordinary constant
+scalar offsets. The RDW fixture is **test-authored**, not an original IBM
+variable-record file.
