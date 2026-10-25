@@ -25,7 +25,7 @@ test('callback stays synchronous and returns false at the requested limit',async
 
 test('benchmark independently opens the file for warm-up and measured passes',async()=>{
     const options={...parseBenchmarkArgs(['--sample','--warmup','10','--limit','20'])!};
-    options.data=join(__dirname,'../../data/sample-100k.dat');
+    options.data=join(__dirname,'../data/sample-100k.dat');
     let opens=0;
     const open=async (callback:(row:BenchmarkRow)=>void|boolean)=>{
         opens++;

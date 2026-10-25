@@ -41,7 +41,7 @@ test('CLI generator arguments validate numeric sizes',()=>{
 });
 
 test('bundled sample is identical to the JRecord fixture',()=>{
-    const data=readFileSync(join(__dirname,'../../data/sample-100k.dat'));
+    const data=readFileSync(join(__dirname,'../data/sample-100k.dat'));
     expect(data.length).toBe(20_000_000);
     expect(data.subarray(0,CYCLE.length)).toEqual(CYCLE);
     expect(data.subarray(-CYCLE.length)).toEqual(CYCLE);

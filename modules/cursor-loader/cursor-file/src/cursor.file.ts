@@ -99,7 +99,7 @@ export async function scanThrowingFileCursor<
 ): Promise<void> {
     const opened = await openFileCursor(definition,file,{
         ...infrastructure,
-        recordPool: infrastructure.recordPool ?? createReferenceCountedRecordPool()gi
+        recordPool: infrastructure.recordPool ?? createReferenceCountedRecordPool()
     });
     const projected = opened.projection.create();
     try {

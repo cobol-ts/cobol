@@ -53,7 +53,7 @@ test('scan closes the failing record on a getter exception',async()=>{
 
 test('benchmark independently opens the same file for warmup and measurement',async()=>{
     const options={...parseBenchmarkArgs(['--sample','--warmup','10','--limit','20'])!};
-    options.data=join(__dirname,'../../data/sample-100k.dat');
+    options.data=join(__dirname,'../data/sample-100k.dat');
     const track={opened:0,closed:0,finished:0};
     const messages:string[]=[];
     const result=await runBenchmark(options,source(50,track),message=>messages.push(message));
@@ -64,7 +64,7 @@ test('benchmark independently opens the same file for warmup and measurement',as
 
 test('CLI defaults match the Java benchmark and reject invalid inputs',()=>{
     expect(parseBenchmarkArgs([])).toEqual({data:'data/benchmark.dat',copybook:'copybooks/benchmark.cbl',
-        warmup:100000,limit:'all',bufferSize:65536,decodeOptions:{}});
+        warmup:100000,limit:'all',bufferSize:65536,decodeOptions:{encoding:'ascii'}});
     expect(parseBenchmarkArgs(['--limit','123'])?.limit).toBe(123);
     expect(()=>parseBenchmarkArgs(['--buffer-size','50'])).toThrow(/at least 200/);
     expect(()=>parseBenchmarkArgs(['--decode-options','[]'])).toThrow(/JSON object/);

@@ -281,9 +281,17 @@ function fieldRange(representation: CobolRepresentation, details:CobolProjection
         sizeBits=typeof path.node.size==="number"?path.node.size:NaN;
     } else {
         const state=record.recordState as CobolRecordState;
-        const located=locateCompiledCobolPath(path,occurrenceIndices,state.fixedScratch ?? (state.fixedScratch={offsetBits:0,sizeBits:0}));
-        offsetBits=located.offsetBits+displacement(representation)+(state.dataOffsetBytes??0)*8;
-        sizeBits=located.sizeBits;
+        if(path.runtimeDimensions.length===0 && occurrenceIndices.length===0) {
+            // The size-expression compiler has already reduced this geometry
+            // to numbers. No occurrence resolution or scratch is required.
+            offsetBits=path.offsetBits+displacement(representation)+(state.dataOffsetBytes??0)*8;
+            sizeBits=path.sizeBits;
+        } else {
+            // Preserve occurrence-count and index validation for indexed fields.
+            const located=locateCompiledCobolPath(path,occurrenceIndices,state.fixedScratch ?? (state.fixedScratch={offsetBits:0,sizeBits:0}));
+            offsetBits=located.offsetBits+displacement(representation)+(state.dataOffsetBytes??0)*8;
+            sizeBits=located.sizeBits;
+        }
     }
     const state=record.recordState as CobolRecordState;
     const range=cobolDebugRangeFromBits(offsetBits,sizeBits,state.rangeScratch ?? (state.rangeScratch={from:0,to:0}));

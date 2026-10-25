@@ -1,1 +1,4 @@
 * text=auto eol=lf
+# COBOL fixed-block and record-descriptor-word fixtures
+*.fb binary
+*.rdw binary

@@ -38,6 +38,28 @@ const record=(n:number,state=createCobolRecordState()):ProjectionPhysicalRecord=
 });
 
 describe("COBOL fixed OCCURS projected array",()=>{
+    test("constant-position scalar access skips occurrence-location scratch",()=>{
+        const factory=createProjection(cobolParser,details,undefined,definition);
+        const customer=factory.create(),bytes=record(0);
+        factory.bind(customer,bytes,bytes);
+        const state=bytes.recordState as ReturnType<typeof createCobolRecordState>;
+        expect(state.fixedScratch).toBeUndefined();
+        expect(customer.status()).toBe("16/17/c1");
+        expect(state.fixedScratch).toBeUndefined();
+        expect(state.rangeScratch).toEqual({from:16,to:17});
+        factory.clear(customer);
+    });
+
+    test("indexed fixed fields retain occurrence resolution and index validation",()=>{
+        const factory=createProjection(cobolParser,details,undefined,definition);
+        const customer=factory.create(),bytes=record(0);
+        factory.bind(customer,bytes,bytes);
+        const state=bytes.recordState as ReturnType<typeof createCobolRecordState>;
+        expect(customer.telephones[1].raw()).toBe("10/16/d4 f6 f7 f8 f9 f0");
+        expect(customer.telephones[2]).toBeUndefined();
+        factory.clear(customer);
+    });
+
     test("uses compiled byte offsets for a single fixed array without copying bytes",()=>{
         const factory=createProjection(cobolParser,details,undefined,definition);
         const customer=factory.create();
