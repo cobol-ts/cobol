@@ -11,6 +11,7 @@ import {
     type FileCursorResult
 } from '@cobol-ts/cursor-file';
 import {fillNodeFileBuffer} from '@cobol-ts/cursor-file/node';
+import type {RecordObjectPool} from '@cobol-ts/cursor-record';
 import {createCobolDecodedFramedDetails, type CobolFraming} from './cobol.parser';
 import {createCobolParserRegistry} from './cobol.registration';
 
@@ -23,6 +24,9 @@ export type CobolFileOptions<TProjection> = Readonly<{
     layoutOptions?: CobolLayoutOptions;
     decodeOptions?: CobolDecodeOptions;
     framing?: CobolFraming;
+    /** Optional physical record pool. Callback scans default to a fresh simple pool. */
+    recordPool?: RecordObjectPool<any>;
+    byteBufferPool?: import("@cobol-ts/cursor-loader-types").FileBufferPool;
 }>;
 
 /**
@@ -77,7 +81,9 @@ export async function scanCobolFile<TProjection>(
             file,
             {parsers:createCobolParserRegistry(details),
                 bufferSize:options.bufferSize??64*1024,
-                fillFileBuffer:fillNodeFileBuffer},
+                fillFileBuffer:fillNodeFileBuffer,
+                recordPool:options.recordPool,
+                byteBufferPool:options.byteBufferPool},
             onRecord
         );
     } finally {

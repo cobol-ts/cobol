@@ -14,6 +14,8 @@ target3/
 tests/git/org/.git
 .yarn/
 
+*.cpuprofile
+
 question_directory/
 json_directory/
 

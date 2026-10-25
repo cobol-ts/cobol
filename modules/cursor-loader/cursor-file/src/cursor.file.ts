@@ -20,7 +20,9 @@ import {
 import {
     createDefaultPhysicalRecordConfig,
     openRecordCursor,
-    type RecordCursorVisitor
+    type RecordCursorVisitor,
+    createSimpleRecordPool,
+    type RecordObjectPool, createReferenceCountedRecordPool
 } from "@cobol-ts/cursor-record";
 
 import {
@@ -33,6 +35,7 @@ import {
     type FileCursorResult,
     type FileCursorResultPool
 } from "./cursor.file.result";
+import {createRefCountedPool} from "@cobol-ts/ref_counted_pool";
 
 
 type ProjectRecordResult<TProjection> =
@@ -60,6 +63,10 @@ export interface FileCursorInfrastructure<
     readonly parsers: ParserRegistry<TFileType>;
     readonly bufferSize: number;
     readonly fillFileBuffer: FillFileBuffer<TFile>;
+    /** Physical record-object pool; independent of the shared byte-buffer pool. */
+    readonly recordPool?: RecordObjectPool<any>;
+    /** Shared buffers must support retain/release for records crossing boundaries. */
+    readonly byteBufferPool?: import("@cobol-ts/cursor-loader-types").FileBufferPool;
 }
 
 
@@ -90,7 +97,10 @@ export async function scanThrowingFileCursor<
     infrastructure: FileCursorInfrastructure<TFile,TFileType>,
     onRecord: (record:TProjection) => void | boolean
 ): Promise<void> {
-    const opened = await openFileCursor(definition,file,infrastructure);
+    const opened = await openFileCursor(definition,file,{
+        ...infrastructure,
+        recordPool: infrastructure.recordPool ?? createReferenceCountedRecordPool()gi
+    });
     const projected = opened.projection.create();
     try {
         await opened.scanRecords((result,physicalRecord) => {
@@ -352,7 +362,10 @@ async function openFileCursor<
             registered.createRecordState,
 
             cleanRecordState:
-            registered.cleanRecordState
+            registered.cleanRecordState,
+
+            recordPool: infrastructure.recordPool,
+            byteBufferPool: infrastructure.byteBufferPool
         });
 
     const opened =

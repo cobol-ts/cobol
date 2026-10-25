@@ -1,4 +1,5 @@
-import {createRefCountedPool, type RefCountedPool} from "@cobol-ts/ref_counted_pool";
+import {createRefCountedPool} from "@cobol-ts/ref_counted_pool";
+import {type RecordObjectPool} from "./record.pool";
 import {
     type FileBufferPool,
     type FillFileBuffer,
@@ -61,6 +62,9 @@ export interface DefaultPhysicalRecordConfig<TRecordState,TFile> {
     readonly createRecordState: () => TRecordState;
     /** Called only on the final release of a pooled record; keeps retained capacity. */
     readonly cleanRecordState?: (state:TRecordState) => void;
+    /** Inject an existing pool; omitted means a fresh pool for this reader. */
+    readonly recordPool?: RecordObjectPool<PooledPhysicalRecordContent<TRecordState>>;
+    readonly byteBufferPool?: FileBufferPool;
 }
 
 
@@ -68,7 +72,7 @@ export interface DefaultPhysicalRecordConfig<TRecordState,TFile> {
 export function createDefaultPhysicalRecordConfig<TRecordState,TFile>(
     options: DefaultPhysicalRecordConfig<TRecordState,TFile>
 ): PhysicalRecordConfig<TRecordState,TFile> {
-    const byteBufferPool: RefCountedPool<Uint8Array> = createRefCountedPool(
+    const byteBufferPool: FileBufferPool = options.byteBufferPool ?? createRefCountedPool(
         () => new Uint8Array(options.bufferSize)
     );
 
@@ -80,8 +84,8 @@ export function createDefaultPhysicalRecordConfig<TRecordState,TFile>(
         return readMorePhysicalRecord(this, config);
     };
 
-    physicalContentPool = createRefCountedPool<PooledPhysicalRecordContent<TRecordState>>(
-        () => ({
+    const recordPool = options.recordPool;
+    const makeRecord = (): PooledPhysicalRecordContent<TRecordState> => ({
             buffers: [],
             source: options.source,
             recordNumber: 0,
@@ -94,9 +98,20 @@ export function createDefaultPhysicalRecordConfig<TRecordState,TFile>(
             physicalContentPool,
             readMore,
             close: closePhysicalRecord
-        }),
-        options.cleanRecordState ? record=>options.cleanRecordState!(record.recordState) : undefined
-    );
+        });
+
+    physicalContentPool = recordPool
+        ? {
+            acquire: () => recordPool.acquire(makeRecord),
+            release: (record: PooledPhysicalRecordContent<TRecordState>) => {
+                options.cleanRecordState?.(record.recordState);
+                recordPool.release(record);
+            }
+        } as PhysicalContentPool<TRecordState>
+        : createRefCountedPool<PooledPhysicalRecordContent<TRecordState>>(
+            makeRecord,
+            options.cleanRecordState ? record=>options.cleanRecordState!(record.recordState) : undefined
+        );
 
     config = {
         source: options.source,

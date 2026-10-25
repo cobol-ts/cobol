@@ -355,3 +355,19 @@ Parsers supporting synchronous framing of already-buffered bytes can supply
 `parseBuffered`; a result of `undefined` means another buffer must be read.
 No record-level promise or async generator is used on this fast path. Existing
 parsers without this capability retain their original asynchronous parsing.
+
+### Record-object pool injection
+
+The callback API creates a new non-reference-counted physical-record object pool
+per scan unless `infrastructure.recordPool` is provided. The caller may inject
+`createSimpleRecordPool()` or `createReferenceCountedRecordPool()` from
+`@cobol-ts/cursor-record`; the pool is an instance, not a pool factory.
+Treat a supplied pool as scoped to one opened reader. Pooled physical records
+capture that reader's buffer pool and cleanup functions; do not share the same
+pool instance between distinct or concurrent file scans.
+
+The optional `byteBufferPool` may also be injected at the top level, but it must
+support `reuse`/`release` because neighbouring records can share a byte buffer.
+Byte-buffer references are still reference-counted. A record can share its
+final byte buffer with the following record, including when it spans buffers.
+The existing iterator API retains its original reference-counted default.

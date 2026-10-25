@@ -30,3 +30,14 @@ test('callback errors terminate scan and release the borrowed row',async()=>{
         name:'ErrorsException', errors:['bad row']
     });
 });
+
+test('accepts an injected record pool on the callback path', async () => {
+    const {createSimpleRecordPool} = require('@cobol-ts/cursor-record') as typeof import('@cobol-ts/cursor-record');
+    const pool = createSimpleRecordPool<any>();
+    const infrastructure = {...createTestInfrastructure(), recordPool: pool};
+    const names: string[] = [];
+    await scanThrowingFileCursor(customerFileDefinition, createTestFile('ABA'), infrastructure, row => {
+        names.push(row.name());
+    });
+    expect(names).toEqual(['Alice','Bob','Alice']);
+});
