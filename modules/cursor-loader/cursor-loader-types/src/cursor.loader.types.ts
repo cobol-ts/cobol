@@ -832,6 +832,20 @@ export type Parser<
     ) => Promise<
         ParserResult<TRepresentation>
     >;
+
+    /**
+     * Optional synchronous framing path for a callback-based consumer.
+     *
+     * Return undefined ONLY when another physical buffer is needed; the
+     * cursor will await readMore() and invoke this method again. Otherwise
+     * establish record.endByte and return the normal parser result.
+     * Implementations must not retain a borrowed record or return a Promise.
+     * Parsers without this capability continue through parse().
+     */
+    readonly parseBuffered?: (
+        record: ParserPhysicalRecordContent<TRecordState>,
+        details: TParserDetails
+    ) => ParserResult<TRepresentation> | undefined;
 };
 
 

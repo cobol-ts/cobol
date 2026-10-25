@@ -341,3 +341,17 @@ retries short positive reads into the *same* destination until the buffer is
 full or `read()` returns zero. It does not allocate a record or field buffer.
 The caller owns and closes the `FileHandle`. The standard COBOL Node wrapper
 (`@cobol-ts/cursor-loader-cobol/node`) manages that lifetime automatically.
+
+## Synchronous record callback
+
+`scanThrowingFileCursor(definition, file, infrastructure, onRecord)` is an
+additive alternative to the async iterator APIs. It returns one Promise for
+the complete scan and invokes `onRecord(projectedRow)` synchronously for each
+record. Returning `false` stops the scan. The projected row is borrowed and
+invalid once the callback returns; it is released automatically even when the
+callback throws. A Promise-returning callback is rejected.
+
+Parsers supporting synchronous framing of already-buffered bytes can supply
+`parseBuffered`; a result of `undefined` means another buffer must be read.
+No record-level promise or async generator is used on this fast path. Existing
+parsers without this capability retain their original asynchronous parsing.

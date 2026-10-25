@@ -19,7 +19,8 @@ import {
 
 import {
     createDefaultPhysicalRecordConfig,
-    openRecordCursor
+    openRecordCursor,
+    type RecordCursorVisitor
 } from "@cobol-ts/cursor-record";
 
 import {
@@ -65,7 +66,47 @@ export interface FileCursorInfrastructure<
 interface OpenedFileCursor<TProjection> {
     readonly recordCursor: RecordCursor<any,any>;
     readonly projection: ProjectionFactory<TProjection,any>;
+    scanRecords(visitor:RecordCursorVisitor<any,any>):Promise<void>;
     close(): void;
+}
+
+
+/**
+ * Callback alternative to createThrowingFileCursor.
+ *
+ * The callback receives the projected row, not a lease. Its lifetime ends
+ * when the callback returns, so callers must not retain it or await inside
+ * the callback. Returning false stops iteration (e.g. during warm-up).
+ *
+ * Unlike an async generator, the file cursor can process buffered records
+ * synchronously when the parser implements parseBuffered(). Projection and
+ * physical-record objects are pooled/reused throughout the scan.
+ */
+export async function scanThrowingFileCursor<
+    TProjection,TFile,TFileType extends string
+>(
+    definition: CursorFileDefinition<TProjection,TFileType>,
+    file: TFile,
+    infrastructure: FileCursorInfrastructure<TFile,TFileType>,
+    onRecord: (record:TProjection) => void | boolean
+): Promise<void> {
+    const opened = await openFileCursor(definition,file,infrastructure);
+    const projected = opened.projection.create();
+    try {
+        await opened.scanRecords((result,physicalRecord) => {
+            if (isErrors(result)) {
+                throw new ErrorsException(result.errors,result.reference);
+            }
+            opened.projection.bind(projected,result,physicalRecord);
+            try {
+                return onRecord(projected);
+            } finally {
+                opened.projection.clear(projected);
+            }
+        });
+    } finally {
+        opened.close();
+    }
 }
 
 
@@ -335,6 +376,8 @@ async function openFileCursor<
             opened.recordCursor,
 
             projection,
+
+            scanRecords: opened.scanRecords,
 
             close:
             opened.close

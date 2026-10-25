@@ -30,8 +30,16 @@ export interface OpenedRecordCursor<
             void
         >;
 
+    /** Synchronous record visitor; returning false stops the scan. */
+    scanRecords(visitor: RecordCursorVisitor<TRepresentation,TRecordState>): Promise<void>;
+
     close(): void;
 }
+
+export type RecordCursorVisitor<TRepresentation,TRecordState> = (
+    result: ParserResult<TRepresentation>,
+    record: PhysicalRecordContent<TRecordState>
+) => void | boolean;
 
 
 interface RecordParser<
@@ -43,6 +51,11 @@ interface RecordParser<
         record: ParserPhysicalRecordContent<TRecordState>,
         details: TParserDetails
     ) => Promise<ParserResult<TRepresentation>>;
+
+    readonly parseBuffered?: (
+        record: ParserPhysicalRecordContent<TRecordState>,
+        details: TParserDetails
+    ) => ParserResult<TRepresentation> | undefined;
 }
 
 
@@ -131,6 +144,9 @@ export async function openRecordCursor<
                     state
                 ),
 
+            scanRecords: visitor =>
+                scanRecordCursorFromState(parser,details,state,visitor),
+
             close:
                 () => closeRecordCursorState(state)
         };
@@ -199,6 +215,10 @@ export async function openRecordCursor<
                     state
                 ),
 
+
+            scanRecords: visitor =>
+                scanRecordCursorFromState(parser,prepared,state,visitor),
+
             close:
                 () => closeRecordCursorState(state)
         };
@@ -206,6 +226,74 @@ export async function openRecordCursor<
         record?.close();
         closeRecordCursorState(state);
         throw error;
+    }
+}
+
+/**
+ * Visit records without yielding a promise (or a wrapper) per record.
+ *
+ * When the parser exposes parseBuffered(), parsing and the visitor are both
+ * synchronous while buffered bytes suffice. Only a genuine need for more
+ * input calls readMore(). Older parsers retain the original async parse API.
+ * The borrowed physical record is always released after the visitor returns,
+ * even on an exception or an early stop.
+ */
+async function scanRecordCursorFromState<TRepresentation,TParserDetails,TRecordState>(
+    parser: RecordParser<TRepresentation,TParserDetails,TRecordState>,
+    details: TParserDetails,
+    state: RecordCursorState<TRecordState>,
+    visitor: RecordCursorVisitor<TRepresentation,TRecordState>
+): Promise<void> {
+    let record: RecordCursorPhysicalRecord<TRecordState> | undefined;
+
+    try {
+        while (!state.finished) {
+            record = acquireRecord(state);
+
+            let result: ParserResult<TRepresentation>;
+            if (parser.parseBuffered) {
+                let parsed = parser.parseBuffered(record,details);
+                while (parsed === undefined) {
+                    if (record.fileFinished) {
+                        throw new Error('Buffered parser requested data after EOF');
+                    }
+                    await record.readMore();
+                    parsed = parser.parseBuffered(record,details);
+                }
+                result = parsed;
+            } else {
+                result = await parser.parse(record,details);
+            }
+
+            if (record.fileFinished && record.startByte === record.lastValidByte) {
+                record.endByte = record.startByte;
+                completeRecord(state,record);
+                record.close();
+                record = undefined;
+                break;
+            }
+
+            completeRecord(state,record);
+
+            const current = record;
+            record = undefined;
+            let decision: void | boolean;
+            try {
+                decision = visitor(result,current);
+                // An async callback would use the borrowed record after it
+                // has been released. Catch this mistake even from JS callers.
+                if (decision !== null && typeof decision === 'object'
+                    && typeof (decision as {then?:unknown}).then === 'function') {
+                    throw new TypeError('Record callback must be synchronous');
+                }
+            } finally {
+                current.close();
+            }
+            if (decision === false) break;
+        }
+    } finally {
+        record?.close();
+        closeRecordCursorState(state);
     }
 }
 

@@ -61,6 +61,8 @@
     "test": "jest --config jest.config.json --env node",
     "test:watch": "npm run test -- --watch",
     "benchmark": "ts-node --transpile-only --prefer-ts-exts src/benchmark.cli.ts",
-    "benchmark:sample": "ts-node --transpile-only --prefer-ts-exts src/benchmark.cli.ts --sample"
+    "benchmark:sample": "ts-node --transpile-only --prefer-ts-exts src/benchmark.cli.ts --sample",
+    "benchmark:callback": "ts-node --transpile-only --prefer-ts-exts src/benchmark.callback.cli.ts",
+    "benchmark:callback:sample": "ts-node --transpile-only --prefer-ts-exts src/benchmark.callback.cli.ts --sample"
   }
 }

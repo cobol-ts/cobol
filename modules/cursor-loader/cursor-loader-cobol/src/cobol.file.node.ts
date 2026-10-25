@@ -6,6 +6,7 @@ import {valueOrThrow} from '@cobol-ts/errors';
 import {type CobolDecodeOptions} from '@cobol-ts/codec';
 import {
     createThrowingFileCursor,
+    scanThrowingFileCursor,
     type CursorFileDefinition,
     type FileCursorResult
 } from '@cobol-ts/cursor-file';
@@ -50,6 +51,34 @@ export async function* readCobolFile<TProjection>(
                 bufferSize: options.bufferSize ?? 64 * 1024,
                 fillFileBuffer: fillNodeFileBuffer
             }
+        );
+    } finally {
+        await file.close();
+    }
+}
+
+/**
+ * High-throughput alternative to readCobolFile(). Each borrowed projection is
+ * usable only until the synchronous callback returns. Return false to stop.
+ * All COBOL setup and field decoding is identical to readCobolFile().
+ */
+export async function scanCobolFile<TProjection>(
+    options:CobolFileOptions<TProjection>,
+    onRecord:(row:TProjection)=>void|boolean
+):Promise<void> {
+    const text = await readFile(options.copybook,'utf8');
+    const ast = valueOrThrow(parseCopybook(text));
+    const layout = valueOrThrow(compileCobolLayout(ast,basename(options.copybook),options.layoutOptions));
+    const details = valueOrThrow(createCobolDecodedFramedDetails(layout,options.framing,options.decodeOptions));
+    const file = await open(options.filename,'r');
+    try {
+        await scanThrowingFileCursor<TProjection,typeof file,'cobol'>(
+            {filename:options.filename,fileType:'cobol',projection:options.projection},
+            file,
+            {parsers:createCobolParserRegistry(details),
+                bufferSize:options.bufferSize??64*1024,
+                fillFileBuffer:fillNodeFileBuffer},
+            onRecord
         );
     } finally {
         await file.close();

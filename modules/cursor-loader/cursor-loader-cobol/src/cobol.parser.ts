@@ -198,57 +198,74 @@ function decodedField(representation:CobolRepresentation,details:CobolDecodedDet
 /** The parser owns COBOL record boundaries. The physical cursor supplies only
  * reusable buffers and readMore(); neither a payload nor field is assembled.
  * The RDW's 16-bit big-endian length includes its four header bytes. */
+/** The same synchronous framing routine serves both delivery models.
+ * Ordinary iteration retains its Promise API, but buffered parsing itself
+ * never suspends. Only an actual need for more input awaits readMore().
+ */
 async function parse(
     record: ParserPhysicalRecordContent<CobolRecordState>,
     details: CobolProjectionDetails
-): Promise<CobolRepresentation | {errors: string[]}> {
-    const start=record.startByte;
-    const rdw=details.framing==='rdw';
-    const headerEnd=start+(rdw?4:0);
-    if(rdw){
-        while(record.lastValidByte<headerEnd && !record.fileFinished)
-            await record.readMore();
-        // A read that discovers EOF at the boundary of the preceding record
-        // must not manufacture an additional truncated record.
-        if(record.fileFinished && record.lastValidByte===start){
-            record.endByte=start;
-            return record;
-        }
-        if(record.lastValidByte<headerEnd){
-            record.endByte=record.lastValidByte;
+): Promise<CobolRepresentation | {errors:string[]}> {
+    let result = parseBuffered(record, details);
+    while (result === undefined) {
+        await record.readMore();
+        result = parseBuffered(record, details);
+    }
+    return result;
+}
+
+/**
+ * Synchronous counterpart for the callback cursor. undefined means that the
+ * caller must read another byte buffer and retry with the SAME record.
+ * No physical byte array is copied, and RDW/FB rules match parse().
+ */
+function parseBuffered(
+    record: ParserPhysicalRecordContent<CobolRecordState>,
+    details: CobolProjectionDetails
+): CobolRepresentation | {errors:string[]} | undefined {
+    const start = record.startByte;
+    if (details.framing === 'rdw') {
+        const headerEnd = start + 4;
+        if (record.lastValidByte < headerEnd) {
+            if (!record.fileFinished) return undefined;
+            if (record.lastValidByte === start) {
+                record.endByte = start;
+                return record;
+            }
+            record.endByte = record.lastValidByte;
             return {errors:[`Truncated COBOL RDW: expected 4 bytes, got ${record.lastValidByte-start}`]};
         }
-        const state=record.recordState;
-        const cursor=state.byteCursor??(state.byteCursor=new FragmentedByteCursor());
+
+        const state = record.recordState;
+        const cursor = state.byteCursor ?? (state.byteCursor = new FragmentedByteCursor());
         cursor.bind(record,start,headerEnd);
-        const hi=cursor.next(),lo=cursor.next(),control1=cursor.next(),control2=cursor.next();
-        if(control1!==0 || control2!==0)
+        const hi = cursor.next(),lo = cursor.next(),control1 = cursor.next(),control2 = cursor.next();
+        if (control1 !== 0 || control2 !== 0)
             throw new Error('Unsupported COBOL RDW control bytes (spanned records are not supported)');
-        const recordLength=hi*256+lo;
-        if(recordLength<4)
-            throw new Error(`Invalid COBOL RDW length ${recordLength}: must include four header bytes`);
-        record.recordState.dataOffsetBytes=4;
-        const endByte=start+recordLength;
-        while(record.lastValidByte<endByte && !record.fileFinished)
-            await record.readMore();
-        if(record.lastValidByte<endByte){
-            record.endByte=record.lastValidByte;
-            return {errors:[`Truncated COBOL RDW record: expected ${recordLength} bytes, got ${record.lastValidByte-start}`]};
+        const length = hi * 256 + lo;
+        if (length < 4)
+            throw new Error(`Invalid COBOL RDW length ${length}: must include four header bytes`);
+        const endByte = start + length;
+        if (record.lastValidByte < endByte) {
+            if (!record.fileFinished) return undefined;
+            record.endByte = record.lastValidByte;
+            return {errors:[`Truncated COBOL RDW record: expected ${length} bytes, got ${record.lastValidByte-start}`]};
         }
-        record.endByte=endByte;
+        state.dataOffsetBytes = 4;
+        record.endByte = endByte;
         return record;
     }
-    if(details.recordLengthBytes===undefined)
+
+    if (details.recordLengthBytes === undefined)
         throw new Error('COBOL source framing is required for an ODO layout');
-    const endByte=start+details.recordLengthBytes;
-    while(record.lastValidByte<endByte && !record.fileFinished)
-        await record.readMore();
-    if(record.lastValidByte<endByte){
-        record.endByte=record.lastValidByte;
+    const endByte = start + details.recordLengthBytes;
+    if (record.lastValidByte < endByte) {
+        if (!record.fileFinished) return undefined;
+        record.endByte = record.lastValidByte;
         return {errors:[`Truncated COBOL fixed record: expected ${details.recordLengthBytes} bytes, got ${record.lastValidByte-start}`]};
     }
-    record.recordState.dataOffsetBytes=0;
-    record.endByte=endByte;
+    record.recordState.dataOffsetBytes = 0;
+    record.endByte = endByte;
     return record;
 }
 
@@ -332,6 +349,7 @@ class CobolArraySelection implements ProjectedArraySource<CobolRepresentation> {
 
 export const cobolParser = {
     parse,
+    parseBuffered,
     compileProjectionPath(details: CobolProjectionDetails, _context: PhysicalRecordContext | undefined, path: readonly (string | number)[], parent?:CobolProjectionPath) {
         const compiled=compileCobolMemberPath(details.names, path, parent);
         if(isDecoded(details)) ensureDecoder(details,compiled);
