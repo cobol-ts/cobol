@@ -2,6 +2,7 @@ import {statSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {performance} from 'node:perf_hooks';
 import type {ProjectionDefinition} from '@cobol-ts/cursor-loader-types';
+import type {ProjectedArray} from '@cobol-ts/arrays';
 import {
     COUNTER_NAMES,checkedNonNegativeInteger,emptyCounters,expectedCounters,RECORD_BYTES,
     type Counters
@@ -16,6 +17,24 @@ export type BenchmarkRow = Readonly<{
     category(): string;
     approved(): string;
 }>;
+
+export type BenchmarkScenario = 'baseline' | 'array' | 'redefines';
+export type BenchmarkArrayRow = BenchmarkRow & Readonly<{
+    amounts:ProjectedArray<Readonly<{value():number}>>;
+}>;
+
+/** Both complex scenarios read the same physical bytes as the baseline. */
+export const BENCHMARK_COMPLEX_PROJECTION:ProjectionDefinition<BenchmarkArrayRow> = {
+    amountA:{type:'integer',path:['BENCHMARK-RECORD','AMOUNTS-ALIAS','AMOUNT-A']},
+    amountB:{type:'integer',path:['BENCHMARK-RECORD','AMOUNTS-ALIAS','AMOUNT-B']},
+    amounts:{type:'array',path:['BENCHMARK-RECORD','AMOUNT-AREA','AMOUNT-CELL'],element:{
+        value:{type:'integer',path:['CELL-VALUE']}
+    }},
+    status:{type:'character',path:['BENCHMARK-RECORD','STATUS-CODE']},
+    region:{type:'character',path:['BENCHMARK-RECORD','REGION-CODE']},
+    category:{type:'character',path:['BENCHMARK-RECORD','CATEGORY-CODE']},
+    approved:{type:'character',path:['BENCHMARK-RECORD','APPROVED-FLAG']}
+};
 
 export const BENCHMARK_PROJECTION: ProjectionDefinition<BenchmarkRow> = {
     amountA: {type:'integer',path:['BENCHMARK-RECORD','AMOUNT-A']},
@@ -35,6 +54,7 @@ export type BenchmarkOptions = Readonly<{
     limit:number|'all';
     bufferSize:number;
     decodeOptions:Readonly<Record<string,unknown>>;
+    scenario:BenchmarkScenario;
 }>;
 export type BenchmarkResult = Counters & Readonly<{
     seconds:number;
@@ -43,9 +63,10 @@ export type BenchmarkResult = Counters & Readonly<{
 }>;
 
 /** Same six decoded fields and two predicates as the Java/JRecord benchmark. */
-export function processRow(row:BenchmarkRow,result:Counters):void {
-    const a = row.amountA();
-    const b = row.amountB();
+export function processRow(row:BenchmarkRow,result:Counters,scenario:BenchmarkScenario='baseline'):void {
+    const amounts=scenario==='array' ? (row as BenchmarkArrayRow).amounts : undefined;
+    const a=amounts ? amounts[0].value() : row.amountA();
+    const b=amounts ? amounts[1].value() : row.amountB();
     const sum = a + b;
     const status = row.status();
     const region = row.region();
@@ -64,12 +85,12 @@ export function processRow(row:BenchmarkRow,result:Counters):void {
 }
 
 /** Always release the borrowed record, including when a getter throws. */
-export async function scan(source:RecordSource,maxRecords:number):Promise<Counters> {
+export async function scan(source:RecordSource,maxRecords:number,scenario:BenchmarkScenario='baseline'):Promise<Counters> {
     checkedNonNegativeInteger(maxRecords,'maxRecords');
     const result = emptyCounters();
     if(maxRecords===0) return result;
     for await(const lease of source()) {
-        try {processRow(lease.result,result);}
+        try {processRow(lease.result,result,scenario);}
         finally {lease.close();}
         if(result.records>=maxRecords) break;
     }
@@ -88,14 +109,23 @@ export function formatTotals(result:Counters):string {
 }
 
 export function parseBenchmarkArgs(args:readonly string[]):BenchmarkOptions|undefined {
-    const options:{data:string;copybook:string;warmup:number;limit:number|'all';bufferSize:number;decodeOptions:Record<string,unknown>}={
+    const options:{data:string;copybook:string;warmup:number;limit:number|'all';bufferSize:number;decodeOptions:Record<string,unknown>;scenario:BenchmarkScenario}={
         data:'data/benchmark.dat',copybook:'copybooks/benchmark.cbl',warmup:100_000,
-        limit:'all',bufferSize:64*1024,decodeOptions:{encoding: 'ascii' }
+        limit:'all',bufferSize:64*1024,decodeOptions:{encoding:'ascii'},scenario:'baseline'
     };
     for(let i=0;i<args.length;i++) {
         const arg=args[i];
         if(arg==='--help' || arg==='-h') return undefined;
         if(arg==='--sample') {options.data='data/sample-100k.dat';continue;}
+        if(arg==='--scenario') {
+            const name=args[++i];
+            if(name!=='baseline' && name!=='array' && name!=='redefines')
+                throw new Error('--scenario requires baseline, array or redefines');
+            options.scenario=name;
+            if(name!=='baseline') options.copybook='copybooks/benchmark-complex.cbl';
+            else options.copybook='copybooks/benchmark.cbl';
+            continue;
+        }
         if(!['--data','--copybook','--warmup','--limit','--buffer-size','--decode-options'].includes(arg))
             throw new Error(`Unknown argument: ${arg}`);
         const value=args[++i];
@@ -129,17 +159,17 @@ export async function runBenchmark(options:BenchmarkOptions,open:RecordSource,
     if(fileBytes%RECORD_BYTES!==0) throw new Error(`File size ${fileBytes} is not divisible by 200`);
     const availableRecords=fileBytes/RECORD_BYTES;
     const count=options.limit==='all'?availableRecords:Math.min(availableRecords,checkedNonNegativeInteger(options.limit,'limit'));
-    log(`Node COBOL benchmark / fixed ${RECORD_BYTES} bytes / same JRecord record rules`);
+    log(`Node COBOL benchmark / scenario=${options.scenario} / fixed ${RECORD_BYTES} bytes / same JRecord record rules`);
     log(`file=${file} fileBytes=${fileBytes} availableRecords=${availableRecords} measuredRecords=${count}`);
     const warmCount=Math.min(options.warmup,availableRecords);
     log(`Warmup: first ${warmCount} records`);
-    const warmed=await scan(open,warmCount);
+    const warmed=await scan(open,warmCount,options.scenario);
     if(warmed.records!==warmCount) throw new Error(`Warmup ended early: ${warmed.records}/${warmCount}`);
     assertTotals('warmup',warmed);
     log(`warmup verified: ${formatTotals(warmed)}`);
     log('Measured pass: reopen file and start at byte 0');
     const started=performance.now();
-    const actual=await scan(open,count);
+    const actual=await scan(open,count,options.scenario);
     const seconds=(performance.now()-started)/1000;
     if(actual.records!==count) throw new Error(`Measured pass ended early: ${actual.records}/${count}`);
     assertTotals('measured',actual);
@@ -147,6 +177,6 @@ export async function runBenchmark(options:BenchmarkOptions,open:RecordSource,
     const bytes=actual.records*RECORD_BYTES;
     const result:BenchmarkResult={...actual,seconds,recordsPerSecond:actual.records/seconds,
         mibPerSecond:bytes/(1024*1024)/seconds};
-    log(`BENCHMARK result=cursor-loader records=${actual.records} bytes=${bytes} seconds=${seconds.toFixed(6)} recordsPerSecond=${Math.round(result.recordsPerSecond)} mibPerSecond=${result.mibPerSecond.toFixed(2)}`);
+    log(`BENCHMARK result=cursor-loader scenario=${options.scenario} records=${actual.records} bytes=${bytes} seconds=${seconds.toFixed(6)} recordsPerSecond=${Math.round(result.recordsPerSecond)} mibPerSecond=${result.mibPerSecond.toFixed(2)}`);
     return result;
 }

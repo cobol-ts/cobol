@@ -15,8 +15,14 @@
     "dependencies": {},
     "devDependencies": {},
     "scripts": {
+      "generate": "ts-node --transpile-only src/benchmark.generate.cli.ts",
+      "generate:sample": "ts-node --transpile-only src/benchmark.generate.cli.ts --records 100000 --output data/sample-100k.dat --force",
+      "verify": "ts-node --transpile-only src/benchmark.verify.cli.ts",
       "benchmark": "ts-node --transpile-only --prefer-ts-exts src/benchmark.cli.ts",
-      "benchmark:sample": "ts-node --transpile-only --prefer-ts-exts src/benchmark.cli.ts --sample"    }
+      "benchmark:sample": "ts-node --transpile-only --prefer-ts-exts src/benchmark.cli.ts --sample",
+      "benchmark:callback": "ts-node --transpile-only --prefer-ts-exts src/benchmark.callback.cli.ts",
+      "benchmark:callback:sample": "ts-node --transpile-only --prefer-ts-exts src/benchmark.callback.cli.ts --sample"
+    }
   },
   "guards": {
     "compile": true,
