@@ -1,3 +1,4 @@
+import {MemoryMetrics} from '@cobol-ts/metrics';
 import {statSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {performance} from 'node:perf_hooks';
@@ -29,7 +30,8 @@ export async function scanCallback(source:CallbackRecordSource,maxRecords:number
 export async function runCallbackBenchmark(
     options:BenchmarkOptions,
     open:CallbackRecordSource,
-    log:(message:string)=>void=console.log
+    log:(message:string)=>void=console.log,
+    metrics?:MemoryMetrics
 ):Promise<BenchmarkResult> {
     checkedNonNegativeInteger(options.warmup,'warmup');
     const file=resolve(options.data);
@@ -45,6 +47,7 @@ export async function runCallbackBenchmark(
     if(warmed.records!==warmCount) throw new Error(`Warmup ended early: ${warmed.records}/${warmCount}`);
     assertTotals('warmup',warmed);
     log(`warmup verified: ${formatTotals(warmed)}`);
+    if(metrics) metrics.reset();
     log('Measured pass: reopen file and start at byte 0');
     const start=performance.now();
     const actual=await scanCallback(open,count,options.scenario);
@@ -56,5 +59,10 @@ export async function runCallbackBenchmark(
     const result:BenchmarkResult={...actual,seconds,recordsPerSecond:actual.records/seconds,
         mibPerSecond:bytes/(1024*1024)/seconds};
     log(`BENCHMARK result=cursor-loader-callback scenario=${options.scenario} records=${actual.records} bytes=${bytes} seconds=${seconds.toFixed(6)} recordsPerSecond=${Math.round(result.recordsPerSecond)} mibPerSecond=${result.mibPerSecond.toFixed(2)}`);
+    if(metrics){
+        log('METRICS measured pass (warm-up excluded):');
+        const snapshot=metrics.snapshot();
+        for(const name of [...snapshot.keys()].sort()) log(`  ${name}=${snapshot.get(name)}`);
+    }
     return result;
 }

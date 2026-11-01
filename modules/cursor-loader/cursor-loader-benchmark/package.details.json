@@ -6,7 +6,8 @@
     "@cobol-ts/cursor-loader-cobol",
     "@cobol-ts/cursor-loader-types",
     "@cobol-ts/cursor-projection",
-    "@cobol-ts/codec"
+    "@cobol-ts/codec",
+    "@cobol-ts/metrics"
   ],
   "packageJson": {
     "files": [

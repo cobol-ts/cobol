@@ -371,3 +371,7 @@ support `reuse`/`release` because neighbouring records can share a byte buffer.
 Byte-buffer references are still reference-counted. A record can share its
 final byte buffer with the following record, including when it spans buffers.
 The existing iterator API retains its original reference-counted default.
+
+## Optional operation metrics
+
+Supply one `metrics?: IPutMetrics` in `FileCursorInfrastructure` (for instance a `MemoryMetrics` from `@cobol-ts/metrics`). The reader forwards that instance to pooled physical-record resources and the projection factory; the callback scanner additionally records completed callback-row visits. Omitting the option uses the allocation-free `NullMetrics`. No global mutable state is introduced. Counters are operation counts rather than execution times. See `@cobol-ts/metrics` and the benchmark's `README.metrics.md`.

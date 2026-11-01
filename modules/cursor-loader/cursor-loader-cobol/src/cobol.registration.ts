@@ -1,3 +1,4 @@
+import {NULL_METRICS} from '@cobol-ts/metrics';
 import type {ParserRegistry} from '@cobol-ts/cursor-loader-types';
 import {
     cobolParser,
@@ -14,7 +15,7 @@ export function createCobolParserRegistry(
         cobol: {
             parser: cobolParser,
             parserConfig: () => details,
-            createRecordState: createCobolRecordState,
+            createRecordState: () => createCobolRecordState(details.metrics ?? NULL_METRICS),
             cleanRecordState: cleanCobolRecordState
         }
     };

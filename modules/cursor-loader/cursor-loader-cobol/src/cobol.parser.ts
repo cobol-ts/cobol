@@ -1,3 +1,4 @@
+import {type IPutMetrics,NULL_METRICS,METRIC} from "@cobol-ts/metrics";
 import type {
     Parser, ParserPhysicalRecordContent, ProjectionPhysicalRecord,
     PhysicalRecordContext, ProjectionRecordState
@@ -25,6 +26,7 @@ export type CobolProjectionDetails = Readonly<{
     framing?:'rdw';
     dataOffsetBytes?:number;
     controllerLocations:WeakMap<readonly (string|number)[],import("./cobol.projection.symbolic").CobolControllerLocation>;
+    metrics?:IPutMetrics;
 }>;
 export type CobolFixedDetails = CobolProjectionDetails & Readonly<{recordLengthBytes:number}>;
 /** Fixed capacity is independent of the number of active ODO occurrences. */
@@ -53,6 +55,7 @@ type CountContext = {
 export type CobolRecordState = ProjectionRecordState & {
     readonly odoPositions:OdoPositionCache;
     readonly countContext:CountContext;
+    readonly metrics:IPutMetrics;
     /** Start of copybook data relative to the physical record start. */
     dataOffsetBytes?:number;
     rootScratch?:MutableSymbolicView;
@@ -177,6 +180,7 @@ function ensureDecoder(details:CobolDecodedDetails,path:CobolProjectionPath):voi
     const declaration=explicit || !inheritedUsage ? source
         : {...source,clauses:[...source.clauses,{kind:'usage' as const,usage:inheritedUsage}]};
     try {
+        details.metrics?.put(METRIC.COBOL_DECODER_COMPILE);
         details.decoderCache.set(path.node,compileCobolFieldDecoder(declaration,bits/8,details.decodeOptions));
     } catch(error) {
         throw new Error(`COBOL decoder for ${path.fullPath.join('.')}: ${error instanceof Error?error.message:String(error)}`);
@@ -192,6 +196,7 @@ function decodedField(representation:CobolRepresentation,details:CobolDecodedDet
     const state=record.recordState as CobolRecordState;
     const cursor=state.byteCursor??(state.byteCursor=new FragmentedByteCursor());
     cursor.bind(record,record.startByte+range.from,record.startByte+range.to);
+    details.metrics?.put(METRIC.COBOL_DECODER_INVOKE);
     return decoder.decode(cursor);
 }
 
@@ -223,6 +228,7 @@ function parseBuffered(
     record: ParserPhysicalRecordContent<CobolRecordState>,
     details: CobolProjectionDetails
 ): CobolRepresentation | {errors:string[]} | undefined {
+    details.metrics?.put(METRIC.FILE_SCAN_BUFFERED_PARSE);
     const start = record.startByte;
     if (details.framing === 'rdw') {
         const headerEnd = start + 4;
@@ -270,10 +276,12 @@ function parseBuffered(
 }
 
 function fieldRange(representation: CobolRepresentation, details:CobolProjectionDetails, path: CobolProjectionPath, occurrenceIndices: readonly number[]) {
+    details.metrics?.put(METRIC.COBOL_FIELD_RANGE);
     if (path.node.kind !== "elementary") throw new Error("COBOL scalar projection must select an elementary field");
     const record=physical(representation);
     let offsetBits:number,sizeBits:number;
     if("symbolic" in path) {
+        details.metrics?.put(METRIC.COBOL_SYMBOLIC_LOCATE);
         const state=record.recordState as CobolRecordState;
         const scratch=state.scalarScratch ?? (state.scalarScratch={physical:record,originBits:0,enclosingIndices:[]});
         selectSymbolicInto(symbolicView(representation),path,countResolver(details,record),occurrenceIndices,scratch);
@@ -282,13 +290,15 @@ function fieldRange(representation: CobolRepresentation, details:CobolProjection
     } else {
         const state=record.recordState as CobolRecordState;
         if(path.runtimeDimensions.length===0 && occurrenceIndices.length===0) {
+            details.metrics?.put(METRIC.COBOL_FIXED_FAST);
             // The size-expression compiler has already reduced this geometry
             // to numbers. No occurrence resolution or scratch is required.
             offsetBits=path.offsetBits+displacement(representation)+(state.dataOffsetBytes??0)*8;
             sizeBits=path.sizeBits;
         } else {
+            details.metrics?.put(METRIC.COBOL_FIXED_LOCATE);
             // Preserve occurrence-count and index validation for indexed fields.
-            const located=locateCompiledCobolPath(path,occurrenceIndices,state.fixedScratch ?? (state.fixedScratch={offsetBits:0,sizeBits:0}));
+            const located=locateCompiledCobolPath(path,occurrenceIndices,state.fixedScratch ?? (state.fixedScratch={offsetBits:0,sizeBits:0}),details.metrics);
             offsetBits=located.offsetBits+displacement(representation)+(state.dataOffsetBytes??0)*8;
             sizeBits=located.sizeBits;
         }
@@ -309,8 +319,11 @@ class CobolArraySelection implements ProjectedArraySource<CobolRepresentation> {
     private resolver?:ResolvePath;
     private table?:MutableSymbolicView;
     private base=0;
+    private metrics:IPutMetrics=NULL_METRICS;
 
     bind(parent:CobolRepresentation,details:CobolProjectionDetails,path:CobolProjectionPath):void {
+        this.metrics=details.metrics??NULL_METRICS;
+        this.metrics.put(METRIC.COBOL_ARRAY_PROVIDER_BIND);
         const record=physical(parent);
         if("symbolic" in path) {
             if(path.node.kind!=="group" || !hasOccursClause(path.node.source.clauses))
@@ -328,12 +341,14 @@ class CobolArraySelection implements ProjectedArraySource<CobolRepresentation> {
         this.path=path;
     }
     length():number {
+        this.metrics.put(METRIC.COBOL_ARRAY_PROVIDER_LENGTH);
         const path=this.path;
         if(!path) throw new Error("COBOL projected array is not bound");
         if("symbolic" in path) return activeCount(path.node,this.resolver!,this.table!.enclosingIndices);
         return path.runtimeDimensions[0].count;
     }
     element(index:number,reusable?:CobolRepresentation):CobolRepresentation {
+        this.metrics.put(METRIC.COBOL_ARRAY_PROVIDER_ELEMENT);
         const path=this.path,record=this.record;
         if(!path||!record) throw new Error("COBOL projected array is not bound");
         if("symbolic" in path) {
@@ -359,6 +374,7 @@ export const cobolParser = {
     parse,
     parseBuffered,
     compileProjectionPath(details: CobolProjectionDetails, _context: PhysicalRecordContext | undefined, path: readonly (string | number)[], parent?:CobolProjectionPath) {
+        details.metrics?.put(METRIC.COBOL_PATH_COMPILE);
         const compiled=compileCobolMemberPath(details.names, path, parent);
         if(isDecoded(details)) ensureDecoder(details,compiled);
         return compiled;
@@ -382,6 +398,7 @@ export const cobolParser = {
     },
     array(view:CobolRepresentation, details:CobolProjectionDetails, path:CobolProjectionPath,
           reusable?:ProjectedArraySource<CobolRepresentation>):ProjectedArraySource<CobolRepresentation> {
+        if(!(reusable instanceof CobolArraySelection)) details.metrics?.put(METRIC.COBOL_ARRAY_PROVIDER_CREATE);
         const selected=reusable instanceof CobolArraySelection?reusable:new CobolArraySelection();
         selected.bind(view,details,path);
         return selected;
@@ -425,15 +442,15 @@ export const cobolParser = {
     toDebugString: bytesToDebugString
 } satisfies CobolParser;
 
-export function createCobolRecordState():CobolRecordState {
+export function createCobolRecordState(metrics:IPutMetrics=NULL_METRICS):CobolRecordState {
     const context:CountContext={resolve:path=>{
         if(!context.details || !context.record) throw new Error("COBOL count resolver is not bound to a record");
         return resolveCobolCount(context.details,context.record,path);
     }};
-    return {projectionViews:new Map(),odoPositions:new Map(),countContext:context};
+    return {projectionViews:new Map(),odoPositions:new Map(),countContext:context,metrics};
 }
 export function cleanCobolRecordState(state:CobolRecordState):void {
-    cleanOdoPositions(state.odoPositions);
+    cleanOdoPositions(state.odoPositions,state.metrics);
     // The function and allocated scratch buffers survive; the old record
     // and source-specific details do not remain bound after final release.
     state.countContext.record=undefined;

@@ -35,6 +35,7 @@ import {
     type FileCursorResult,
     type FileCursorResultPool
 } from "./cursor.file.result";
+import {type IPutMetrics,NULL_METRICS,METRIC} from "@cobol-ts/metrics";
 import {createRefCountedPool} from "@cobol-ts/ref_counted_pool";
 
 
@@ -67,6 +68,7 @@ export interface FileCursorInfrastructure<
     readonly recordPool?: RecordObjectPool<any>;
     /** Shared buffers must support retain/release for records crossing boundaries. */
     readonly byteBufferPool?: import("@cobol-ts/cursor-loader-types").FileBufferPool;
+    readonly metrics?:IPutMetrics;
 }
 
 
@@ -97,6 +99,7 @@ export async function scanThrowingFileCursor<
     infrastructure: FileCursorInfrastructure<TFile,TFileType>,
     onRecord: (record:TProjection) => void | boolean
 ): Promise<void> {
+    const metrics=infrastructure.metrics??NULL_METRICS;
     const opened = await openFileCursor(definition,file,{
         ...infrastructure,
         recordPool: infrastructure.recordPool ?? createReferenceCountedRecordPool()
@@ -104,6 +107,7 @@ export async function scanThrowingFileCursor<
     const projected = opened.projection.create();
     try {
         await opened.scanRecords((result,physicalRecord) => {
+            metrics.put(METRIC.FILE_SCAN_RECORD);
             if (isErrors(result)) {
                 throw new ErrorsException(result.errors,result.reference);
             }
@@ -365,7 +369,8 @@ async function openFileCursor<
             registered.cleanRecordState,
 
             recordPool: infrastructure.recordPool,
-            byteBufferPool: infrastructure.byteBufferPool
+            byteBufferPool: infrastructure.byteBufferPool,
+            metrics: infrastructure.metrics
         });
 
     const opened =
@@ -381,7 +386,8 @@ async function openFileCursor<
                 parser,
                 opened.details,
                 opened.preparationContext,
-                definition.projection
+                definition.projection,
+                infrastructure.metrics
             );
 
         return {

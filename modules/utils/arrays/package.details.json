@@ -3,15 +3,17 @@
   "name": "@cobol-ts/arrays",
   "description": "utilities about arrays",
   "links": [
+    "@cobol-ts/metrics"
   ],
   "packageJson": {
-    "files": ["build/"],
-    "dependencies": {
-    },
-    "devDependencies": {
-
-    },
-    "scripts": {"start": "react-scripts start"}
+    "files": [
+      "build/"
+    ],
+    "dependencies": {},
+    "devDependencies": {},
+    "scripts": {
+      "start": "react-scripts start"
+    }
   },
   "guards": {
     "compile": true,

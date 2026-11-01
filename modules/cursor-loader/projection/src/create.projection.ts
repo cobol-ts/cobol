@@ -5,6 +5,7 @@ import {
     type ProjectionSupport, type ProjectionAuthoring, type ProjectionRecordState
 } from "@cobol-ts/cursor-loader-types";
 import {createProjectedArray,createArrayWithSize,appendArrayWithSize,resetArrayWithSize, type ProjectedArray, type ProjectedArraySource} from "@cobol-ts/arrays";
+import {type IPutMetrics,NULL_METRICS,METRIC} from "@cobol-ts/metrics";
 import {canonicalProjection} from "./projection.definition";
 
 const REPRESENTATION = Symbol("projectionRepresentation");
@@ -55,9 +56,9 @@ export function defineProjection<T>(definition: ProjectionDefinition<T>):
 /** Compile every member once; row binding only changes representation and record. */
 export function createProjection<T,R,D,P>(
     parser: Parser<R,D,P>, details:D, context:PhysicalRecordContext | undefined,
-    definition:CanonicalProjection<ProjectionDefinition<T>>
+    definition:CanonicalProjection<ProjectionDefinition<T>>, metrics:IPutMetrics=NULL_METRICS
 ):ProjectionFactory<T,R> {
-    const schema = compileTree(parser,details,context,definition as unknown as ProjectionAuthoring);
+    const schema = compileTree(parser,details,context,definition as unknown as ProjectionAuthoring,metrics);
     return {
         create: () => createView(schema,true) as T,
         bind(projection:T, representation:R, record:ProjectionPhysicalRecord) {
@@ -69,6 +70,7 @@ export function createProjection<T,R,D,P>(
     };
 
     function createView(nodes:Compiled<R,D,P>, root:boolean):BoundView<R> {
+        metrics.put(METRIC.PROJECTION_CREATE);
         const view: BoundView<R> = {
             [REPRESENTATION]:undefined,
             [PHYSICAL_RECORD]:undefined,
@@ -100,14 +102,15 @@ export function createProjection<T,R,D,P>(
                     const record = requireRecord(view);
                     try {
                         if (!parser.array) throw new Error("Parser does not support projected arrays");
+                        metrics.put(METRIC.ARRAY_PROPERTY);
                         const cache = view[ROOT] ? rootArrayCache(record) : view[ARRAYS];
                         let runtime = cache.get(node) as ArrayRuntime<R> | undefined;
                         const owner = view[REPRESENTATION] as R;
                         if (!runtime?.isBoundTo(record,owner)) {
                             const selected = parser.array(view[REPRESENTATION] as R,details,node.path,runtime?.source());
-                            if (!runtime) {runtime=makeArray(node);cache.set(node,runtime);}
+                            if (!runtime) {runtime=makeArray(node);cache.set(node,runtime);metrics.put(METRIC.ARRAY_RUNTIME_CREATE);}
                             runtime.bind(selected,record,owner,view);
-                        }
+                        } else metrics.put(METRIC.ARRAY_RUNTIME_ALREADY_BOUND);
                         return runtime.view;
                     } catch(e) {throw diagnostic(parser,record,node.original,e,view,node.name);}
                 }});
@@ -126,38 +129,47 @@ export function createProjection<T,R,D,P>(
         let physical:ProjectionPhysicalRecord | undefined;
         const view = createProjectedArray({
             length: () => {
+                metrics.put(METRIC.ARRAY_LENGTH);
                 if (!items) return 0;
                 try {return items.length();}
                 catch(e) {if (!physical) throw e;throw diagnostic(parser,physical,node.original,e,ownerView,node.name);}
             },
             element(index) {
+                metrics.put(METRIC.ARRAY_ELEMENT);
                 if (!items || !physical) throw new Error("Projected array is not bound");
                 try {
                     let child=elements[index];
-                    if (!child) {child=createView(node.schema,false);elements[index]=child;}
+                    if (!child) {metrics.put(METRIC.ARRAY_CHILD_ALLOCATE);child=createView(node.schema,false);elements[index]=child;}
+                    else metrics.put(METRIC.ARRAY_CHILD_REUSE);
                     if (child[PHYSICAL_RECORD] !== physical || child[REPRESENTATION] === undefined) {
-                        clearView(child);
+                        // The previous lease already cleared borrowed state. Retained,
+                        // unbound children need rebinding, not a second recursive clear.
+                        // Still clear a child if it is bound (including to another record).
+                        if (child[PHYSICAL_RECORD] !== undefined) clearView(child);
+                        metrics.put(METRIC.ARRAY_CHILD_BIND);
                         bindView(child,items.element(index,child[SAVED]),physical,ownerView,node.name,index);
                         appendArrayWithSize(active,child);
-                    }
+                    } else metrics.put(METRIC.ARRAY_CHILD_ALREADY_BOUND);
                     return child;
                 } catch(e) {throw diagnostic(parser,physical,node.original,e,ownerView,node.name,index);}
             }
-        });
+        },metrics);
         return {
             name:node.label, view,elements,
             source() {return retainedSource;},
             isBoundTo(record,nextOwner) {return physical===record && owner===nextOwner && items!==undefined;},
             bind(next,record,nextOwner,nextOwnerView) {
                 if (physical === record && owner === nextOwner) return;
+                metrics.put(METRIC.ARRAY_RUNTIME_BIND);
                 // The retained slots survive re-binding; their borrowed values do not.
-                for(let i=0;i<active.size;i++) clearView(active.values[i]);
+                for(let i=0;i<active.size;i++) {metrics.put(METRIC.ARRAY_CHILD_CLEAR_VISIT);clearView(active.values[i]);}
                 resetArrayWithSize(active);
                 retainedSource=next;items=next;physical=record;owner=nextOwner;ownerView=nextOwnerView;
             },
             clear() {
+                metrics.put(METRIC.ARRAY_RUNTIME_CLEAR);
                 items=undefined;physical=undefined;owner=undefined;ownerView=undefined;
-                for(let i=0;i<active.size;i++) clearView(active.values[i]);
+                for(let i=0;i<active.size;i++) {metrics.put(METRIC.ARRAY_CHILD_CLEAR_VISIT);clearView(active.values[i]);}
                 resetArrayWithSize(active);
             }
         };
@@ -165,6 +177,7 @@ export function createProjection<T,R,D,P>(
 
     function bindView(view:BoundView<R>, representation:R,record:ProjectionPhysicalRecord,
                       parent?:BoundView<R>,via?:string,index?:number) {
+        metrics.put(METRIC.PROJECTION_BIND);
         view[REPRESENTATION]=representation;
         view[SAVED]=representation;
         view[PARENT]=parent;view[VIA]=via;view[INDEX]=index;
@@ -172,12 +185,13 @@ export function createProjection<T,R,D,P>(
     }
 
     function clearView(view:BoundView<R>) {
+        metrics.put(METRIC.PROJECTION_CLEAR);
         if (view[ROOT] && view[PHYSICAL_RECORD]) {
             const state=optionalRootArrayCache(view[PHYSICAL_RECORD]);
-            if (state) for (const array of state.values()) (array as ArrayRuntime<R>).clear();
+            if (state) for (const array of state.values()) {metrics.put(METRIC.PROJECTION_CLEAR_ROOT_ARRAY_VISIT);(array as ArrayRuntime<R>).clear();}
         }
-        for (const array of view[ARRAYS].values()) array.clear();
-        for (const object of view[OBJECTS].values()) clearView(object);
+        for (const array of view[ARRAYS].values()) {metrics.put(METRIC.PROJECTION_CLEAR_NESTED_ARRAY_VISIT);array.clear();}
+        for (const object of view[OBJECTS].values()) {metrics.put(METRIC.PROJECTION_CLEAR_OBJECT_VISIT);clearView(object);}
         view[REPRESENTATION]=undefined;
         view[PHYSICAL_RECORD]=undefined;
     }
@@ -197,14 +211,15 @@ function requireRecord<R>(view:BoundView<R>):ProjectionPhysicalRecord {
     return view[PHYSICAL_RECORD];
 }
 function compileTree<R,D,P>(parser:Parser<R,D,P>, details:D, context:PhysicalRecordContext|undefined,
-                          definition:ProjectionAuthoring, parentName="root", parentPath?:P):Compiled<R,D,P> {
+                          definition:ProjectionAuthoring, metrics:IPutMetrics, parentName="root", parentPath?:P):Compiled<R,D,P> {
     return Object.entries(definition).map(([name,node]):CompiledMember<R,D,P> => {
         const field = {type:node.type,path:node.path ?? [name]} as ProjectionField;
+        metrics.put(METRIC.PROJECTION_PATH_COMPILE);
         const path=parser.compileProjectionPath(details,context,field.path,parentPath);
         if (node.type === "array") return {kind:"array",name,label:`${parentName}.${name}`,path,original:field,
-            schema:compileTree(parser,details,context,node.element,`${parentName}.${name}`,path)};
+            schema:compileTree(parser,details,context,node.element,metrics,`${parentName}.${name}`,path)};
         if (node.type === "object") return {kind:"object",name,path,original:field,
-            schema:compileTree(parser,details,context,node.fields,`${parentName}.${name}`,path)};
+            schema:compileTree(parser,details,context,node.fields,metrics,`${parentName}.${name}`,path)};
         const kind=node.type;
         return {kind:"scalar",name,accessor:function(this:BoundView<R>,...indices:number[]) {
             const record=requireRecord(this);

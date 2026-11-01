@@ -146,3 +146,20 @@ Clearing a runtime visits this active prefix rather than traversing the full
 historical sparse array. Previously visited children retain their allocation.
 Successful scalar reads do not format access paths; errors can include a full
 indexed path built from the retained parent/member/index links.
+
+## Optional operation metrics
+
+`createProjection(parser, details, context, definition, metrics?)` accepts an optional `IPutMetrics`; the public four-argument call remains valid. Instrumentation counts compiled member paths, constructed views, binds, clears, projected-array property accesses, child allocations versus cache reuse, child binds versus already-bound hits, and the actual number of array runtimes, child projections, and nested objects traversed at cleanup. The default is `NullMetrics`. The projected-array Proxy receives the same instance to separate property, length and indexed-access work. The counters do not modify selection or high-water retention semantics.
+
+## Child clearing across leases
+
+A record close recursively clears the active projected-array children but retains
+allocated child slots for future records. On a later selection, a retained child
+whose physical-record binding is already `undefined` is rebound directly; it is
+not recursively cleared a second time. A child that is still bound is cleared
+before rebinding, preserving nested-array and borrowed-record lifetimes.
+
+For the fixed two-element benchmark, this reduces `projection.view.clear` from
+five calls to three per record (root plus the two selected children). The
+`array.child.clear_visit` counter remains two per record: those are the actual
+children visited on close. No change is made to Proxy selection or field layout.

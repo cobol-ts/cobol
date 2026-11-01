@@ -4,7 +4,8 @@
   "description": "Defines declarative projections and projection support contracts for byte-backed cursor representations",
   "links": [
     "@cobol-ts/cursor-loader-types",
-    "@cobol-ts/arrays"
+    "@cobol-ts/arrays",
+    "@cobol-ts/metrics"
   ],
   "packageJson": {
     "files": [

@@ -1,3 +1,5 @@
+import {type IPutMetrics,NULL_METRICS,METRIC} from "@cobol-ts/metrics";
+
 /**
  * A readonly array of borrowed elements. Native arrays satisfy this type.
  *
@@ -25,13 +27,18 @@ const numericIndex = (property: PropertyKey): number | undefined => {
  * The target array holds no values; cached child projections are owned by the
  * caller's record state. Native Array.prototype methods operate via the proxy.
  */
-export function createProjectedArray<T>(source: ProjectedArraySource<T>): ProjectedArray<T> {
+export function createProjectedArray<T>(source: ProjectedArraySource<T>, metrics:IPutMetrics=NULL_METRICS): ProjectedArray<T> {
     const target: T[] = [];
     const view = new Proxy(target, {
         get(t, property, receiver) {
-            if (property === "length") return source.length();
+            if (property === "length") {metrics.put(METRIC.ARRAY_PROXY_LENGTH);return source.length();}
             const index = numericIndex(property);
-            if (index !== undefined) return index < source.length() ? source.element(index) : undefined;
+            if (index !== undefined) {
+                metrics.put(METRIC.ARRAY_PROXY_INDEX);
+                if(index >= source.length()) return undefined;
+                metrics.put(METRIC.ARRAY_PROXY_INDEX_VALID);
+                return source.element(index);
+            }
             return Reflect.get(t, property, receiver);
         },
         has(t, property) {

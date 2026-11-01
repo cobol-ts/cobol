@@ -1,3 +1,4 @@
+import {type IPutMetrics,METRIC} from "@cobol-ts/metrics";
 import type {CompiledCobolEntry, CompiledCobolElementary, CompiledCobolGroup} from "@cobol-ts/layout";
 import {evaluateStorageSize} from "@cobol-ts/size";
 import {findCobolName, type CobolNameIndex} from "./cobol.layout.index";
@@ -113,13 +114,15 @@ export function compileCobolProjectionPath(
 export function locateCompiledCobolPath(
     path: CobolFixedProjectionPath,
     occurrenceIndices: readonly number[] = [],
-    into?: {offsetBits:number;sizeBits:number}
+    into?: {offsetBits:number;sizeBits:number}, metrics?:IPutMetrics
 ): Readonly<{offsetBits: number; sizeBits: number}> {
     if (occurrenceIndices.length !== path.runtimeDimensions.length) {
         throw new Error(`Expected ${path.runtimeDimensions.length} COBOL occurrence indexes, got ${occurrenceIndices.length}`);
     }
     let offsetBits = path.offsetBits;
     for (let i = 0; i < occurrenceIndices.length; i++) {
+        metrics?.put(METRIC.COBOL_FIXED_DIMENSION);
+        metrics?.put(METRIC.COBOL_FIXED_OCCURRENCE);
         const occurrenceIndex = occurrenceIndices[i];
         const {count, strideBits} = path.runtimeDimensions[i];
         if (!Number.isSafeInteger(occurrenceIndex) || occurrenceIndex < 0 || occurrenceIndex >= count) {

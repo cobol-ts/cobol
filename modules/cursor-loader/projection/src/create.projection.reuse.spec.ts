@@ -1,4 +1,5 @@
 import type {ProjectedArray} from "@cobol-ts/arrays";
+import {MemoryMetrics,METRIC} from "@cobol-ts/metrics";
 import {type ProjectionPhysicalRecord, type ProjectionSupport, utf8RangeToString} from "@cobol-ts/cursor-loader-types";
 import {createProjection,defineProjection} from "./create.projection";
 
@@ -78,5 +79,33 @@ describe("array cleanup retains sparse capacity without revisiting historical sl
         expect(runtime.elements.length).toBeGreaterThan(3000);
         Object.defineProperty(runtime.elements,2000,{configurable:true,get(){throw new Error("stale array slot scanned");}});
         try {factory.clear(projection);}finally {delete runtime.elements[2000];}
+    });
+});
+
+
+describe("projected-array child clearing on record reuse",()=>{
+    test("rebinds retained children without clearing already-unbound views a second time",()=>{
+        const metrics=new MemoryMetrics();
+        const factory=createProjection(parser,undefined,undefined,schema,metrics);
+        const projection=factory.create(),holder=record();
+        let retained:Domain["group"]["items"][number] | undefined;
+        for(const values of [["A","B"],["C","D"],["E"]]) {
+            factory.bind(projection,{row:{values},group:false},holder);
+            const items=projection.group.items;
+            const first=items[0];
+            if(retained) expect(first).toBe(retained);
+            else retained=first;
+            expect(first.value()).toBe(values[0]);
+            if(values.length>1) expect(items[1].value()).toBe(values[1]);
+            factory.clear(projection);
+            expect(()=>first.value()).toThrow("Projection is not bound to a record");
+        }
+        // Three roots and three nested objects, plus only the five children
+        // actually accessed across the three leases. Rebinding adds no clears.
+        expect(metrics.get(METRIC.PROJECTION_CLEAR)).toBe(11);
+        expect(metrics.get(METRIC.ARRAY_CHILD_CLEAR_VISIT)).toBe(5);
+        expect(metrics.get(METRIC.ARRAY_CHILD_ALLOCATE)).toBe(2);
+        expect(metrics.get(METRIC.PROJECTION_CREATE)).toBe(4);
+        expect(metrics.get(METRIC.ARRAY_CHILD_BIND)).toBe(5);
     });
 });

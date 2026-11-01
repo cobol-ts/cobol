@@ -224,3 +224,7 @@ lengths; explicit FB reserved maximum capacity; corrupt/truncated headers;
 externally specified AWS Employee binary data to verify ordinary constant
 scalar offsets. The RDW fixture is **test-authored**, not an original IBM
 variable-record file.
+
+## Optional COBOL diagnostics
+
+`scanCobolFile` and `readCobolFile` accept `metrics?: IPutMetrics`. The same instance is passed from the top-level file options into COBOL source details, the per-record ODO cache, physical-record pooling and reusable projections. Compiled-field decoder creation and invocation, scalar field-range resolution, fixed-field fast-path dispatch and generic fixed-path resolution, fixed occurrence visits, symbolic steps, ODO controller reads, cached versus extended boundaries, and ODO cleanup visits are counted separately. Actual visited items in prefix-cache and projection cleanup loops are counted to make possible non-linear work visible. With metrics disabled, no metric names are constructed and no metrics are logged. See `@cobol-ts/metrics` and `cursor-loader-benchmark/README.metrics.md`.

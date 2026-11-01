@@ -1,3 +1,4 @@
+import {type IPutMetrics} from '@cobol-ts/metrics';
 import {readFile, open} from 'node:fs/promises';
 import {basename} from 'node:path';
 import {parseCopybook} from '@cobol-ts/copybook';
@@ -27,6 +28,7 @@ export type CobolFileOptions<TProjection> = Readonly<{
     /** Optional physical record pool. Callback scans default to a fresh simple pool. */
     recordPool?: RecordObjectPool<any>;
     byteBufferPool?: import("@cobol-ts/cursor-loader-types").FileBufferPool;
+    metrics?:IPutMetrics;
 }>;
 
 /**
@@ -43,7 +45,7 @@ export async function* readCobolFile<TProjection>(
     const text = await readFile(options.copybook, 'utf8');
     const ast = valueOrThrow(parseCopybook(text));
     const layout = valueOrThrow(compileCobolLayout(ast, basename(options.copybook), options.layoutOptions));
-    const details = valueOrThrow(createCobolDecodedFramedDetails(layout, options.framing, options.decodeOptions));
+    const details = {...valueOrThrow(createCobolDecodedFramedDetails(layout, options.framing, options.decodeOptions)),metrics:options.metrics};
 
     const file = await open(options.filename, 'r');
     try {
@@ -53,7 +55,8 @@ export async function* readCobolFile<TProjection>(
             {
                 parsers: createCobolParserRegistry(details),
                 bufferSize: options.bufferSize ?? 64 * 1024,
-                fillFileBuffer: fillNodeFileBuffer
+                fillFileBuffer: fillNodeFileBuffer,
+                metrics:options.metrics
             }
         );
     } finally {
@@ -73,7 +76,7 @@ export async function scanCobolFile<TProjection>(
     const text = await readFile(options.copybook,'utf8');
     const ast = valueOrThrow(parseCopybook(text));
     const layout = valueOrThrow(compileCobolLayout(ast,basename(options.copybook),options.layoutOptions));
-    const details = valueOrThrow(createCobolDecodedFramedDetails(layout,options.framing,options.decodeOptions));
+    const details = {...valueOrThrow(createCobolDecodedFramedDetails(layout,options.framing,options.decodeOptions)),metrics:options.metrics};
     const file = await open(options.filename,'r');
     try {
         await scanThrowingFileCursor<TProjection,typeof file,'cobol'>(
@@ -83,7 +86,8 @@ export async function scanCobolFile<TProjection>(
                 bufferSize:options.bufferSize??64*1024,
                 fillFileBuffer:fillNodeFileBuffer,
                 recordPool:options.recordPool,
-                byteBufferPool:options.byteBufferPool},
+                byteBufferPool:options.byteBufferPool,
+                metrics:options.metrics},
             onRecord
         );
     } finally {

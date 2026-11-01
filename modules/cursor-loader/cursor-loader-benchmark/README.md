@@ -152,3 +152,7 @@ should be a distinct future scenario with independently generated data.
 For comparing to Java, use the same `--scenario` on JRecord once its Java
 benchmark has been updated. The Java benchmark has *not* been changed by this
 TypeScript patch.
+
+## Opt-in operation counts
+
+Add `--metrics` to the existing callback CLI, for example `yarn benchmark:callback --scenario array --sample --metrics`. The benchmark opens a reader for warm-up, resets the shared `MemoryMetrics` after verification, reopens the file for the measured pass, and prints the measured counters alphabetically after the existing checksum and throughput results. No counters or new output appear without the flag. Counts are diagnostic, not suitable for throughput comparisons while instrumentation is enabled; see [README.metrics.md](README.metrics.md).

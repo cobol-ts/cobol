@@ -55,6 +55,7 @@ export type BenchmarkOptions = Readonly<{
     bufferSize:number;
     decodeOptions:Readonly<Record<string,unknown>>;
     scenario:BenchmarkScenario;
+    metrics?:boolean;
 }>;
 export type BenchmarkResult = Counters & Readonly<{
     seconds:number;
@@ -109,13 +110,14 @@ export function formatTotals(result:Counters):string {
 }
 
 export function parseBenchmarkArgs(args:readonly string[]):BenchmarkOptions|undefined {
-    const options:{data:string;copybook:string;warmup:number;limit:number|'all';bufferSize:number;decodeOptions:Record<string,unknown>;scenario:BenchmarkScenario}={
+    const options:{data:string;copybook:string;warmup:number;limit:number|'all';bufferSize:number;decodeOptions:Record<string,unknown>;scenario:BenchmarkScenario;metrics?:boolean}={
         data:'data/benchmark.dat',copybook:'copybooks/benchmark.cbl',warmup:100_000,
         limit:'all',bufferSize:64*1024,decodeOptions:{encoding:'ascii'},scenario:'baseline'
     };
     for(let i=0;i<args.length;i++) {
         const arg=args[i];
         if(arg==='--help' || arg==='-h') return undefined;
+        if(arg==='--metrics') {options.metrics=true;continue;}
         if(arg==='--sample') {options.data='data/sample-100k.dat';continue;}
         if(arg==='--scenario') {
             const name=args[++i];

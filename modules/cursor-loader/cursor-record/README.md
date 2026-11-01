@@ -288,3 +288,7 @@ Performance work should therefore focus on measured allocation, memory traffic a
 ## Cleanup cost versus retained capacity
 
 `ArrayWithSize` boundary caches invalidate their contiguous valid prefix by resetting `size`. In the COBOL ODO and generic projection layers, sparse indexed arrays retain their historical slots, but a separate dense valid-prefix of **currently active references** limits cleanup traversal to the current lease. This avoids work proportional to rare high indexes on later small records, at the cost of constant-time bookkeeping on first activation/bind. It is a verified structural property, not a benchmarked speedup.
+
+## Optional pooled-record metrics
+
+`createDefaultPhysicalRecordConfig({...,metrics})` passes a shared `IPutMetrics` through physical-record acquisition and release, with counters distinguishing borrows, actual new holder allocations, returns to the pool and calls to record-state cleanup. All existing pool ownership and final-release cleanup semantics are retained. With no metrics option, an inert `NullMetrics` is used.

@@ -4,7 +4,8 @@
   "description": "the cursor that physically reads the file and returns the byte arrays to the cursor loader",
   "links": [
     "@cobol-ts/cursor-loader-types",
-    "@cobol-ts/cursor-record"
+    "@cobol-ts/cursor-record",
+    "@cobol-ts/metrics"
   ],
   "packageJson": {
     "files": [

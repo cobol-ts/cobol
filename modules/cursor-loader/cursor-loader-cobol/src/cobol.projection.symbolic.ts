@@ -1,3 +1,4 @@
+import {type IPutMetrics,METRIC} from "@cobol-ts/metrics";
 import type {CompiledCobolElementary,CompiledCobolGroup} from "@cobol-ts/layout";
 import type {ProjectionPhysicalRecord} from "@cobol-ts/cursor-loader-types";
 import {evaluateStorageSize, resolveDependingOnCount, type ResolvePath, type StorageSizeExpression} from "@cobol-ts/size";
@@ -33,6 +34,7 @@ export type CobolGeometryDetails=Readonly<{
     /** Immutable controller geometry, memoised by compiled literal path identity. */
     controllerLocations?:WeakMap<readonly (string|number)[],CobolControllerLocation>;
     dataOffsetBytes?:number;
+    metrics?:IPutMetrics;
 }>;
 
 export function compileCobolSymbolicPath(
@@ -72,6 +74,7 @@ export const rootSymbolicView=(physical:ProjectionPhysicalRecord):CobolSymbolicV
 
 /** Only the controller codec needed by the first ODO milestone: unsigned DISPLAY digits. */
 export function resolveCobolCount(details:CobolGeometryDetails,record:ProjectionPhysicalRecord,path:readonly (string|number)[]):number {
+        details.metrics?.put(METRIC.COBOL_CONTROLLER_READ);
         // Controller *position* is immutable for this source. Its value is
         // still read from the current physical record on every request.
         let location=details.controllerLocations?.get(path);
@@ -89,6 +92,7 @@ export function resolveCobolCount(details:CobolGeometryDetails,record:Projection
         if(end>record.endByte) throw new RangeError(`ODO controller ${path.join(".")} exceeds record boundary`);
         let result=0;
         for(let byte=start;byte<end;byte++){
+            details.metrics?.put(METRIC.COBOL_CONTROLLER_BYTE);
             let cursor=byte;
             let digit:number|undefined;
             for(const buffer of record.buffers){
@@ -154,25 +158,29 @@ function setOccurrencePosition(
     }
     const body=repeatedBody(node);
     if(typeof body==="number"){
+        (physical.recordState as {metrics?:IPutMetrics}).metrics?.put(METRIC.COBOL_FIXED_OCCURRENCE);
         result.originBits=tableOriginBits+index*body;
         result.endBits=result.originBits+body;
         return;
     }
-    const state=physical.recordState as {odoPositions?:OdoPositionCache}|undefined;
+    const state=physical.recordState as {odoPositions?:OdoPositionCache;metrics?:IPutMetrics}|undefined;
     if(!state?.odoPositions) throw new Error("COBOL ODO position cache missing from physical record state");
-    const cache=positionBranch(state.odoPositions,node,enclosingIndices);
+    state.metrics?.put(METRIC.COBOL_ODO_OCCURRENCE);
+    const cache=positionBranch(state.odoPositions,node,enclosingIndices,state.metrics);
     // Crucially, on an established prefix *no callback or working index array*
     // is constructed. Only extending the prefix needs the expression evaluator.
     if(cache.starts.size>index+1) {
+        state.metrics?.put(METRIC.COBOL_ODO_CACHE_HIT);
         if(cache.starts.values[0]!==tableOriginBits)
             throw new Error("ODO boundary cache used with a different table origin in the same record");
     } else {
+        state.metrics?.put(METRIC.COBOL_ODO_CACHE_EXTEND);
         const indices=[...enclosingIndices,0];
         const coordinate=indices.length-1;
         occurrenceBoundary(cache,tableOriginBits,index+1,previous=>{
             indices[coordinate]=previous;
             return evalBits(body,resolve,indices);
-        });
+        },state.metrics);
     }
     result.originBits=cache.starts.values[index];
     result.endBits=cache.starts.values[index+1];
@@ -193,6 +201,7 @@ export function selectSymbolicInto(
     indices.length=0;
     for(const index of parent.enclosingIndices) indices.push(index);
     for(let position=0;position<path.relativeSteps.length;position++){
+        (parent.physical.recordState as {metrics?:IPutMetrics}).metrics?.put(METRIC.COBOL_SYMBOLIC_STEP);
         const step=path.relativeSteps[position];
         const node=step.node;
         if(position===0 && path.steps[0]===step){

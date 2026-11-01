@@ -34,3 +34,7 @@ appendArrayWithSize(boundaries, 200); // overwrites the first slot
 
 Reset invalidates the prefix; it does not clear object references beyond it.
 Do not use this abstraction *as the indexed lookup array* for sparse projected children. It **is** appropriate for the separate dense list of child references activated during the current lease. In the projection and ODO caches, sparse indexed storage remains independent of this `ArrayWithSize` cleanup prefix.
+
+## Projected-array access metrics
+
+`createProjectedArray(source, metrics?)` optionally counts direct Proxy `length` requests, numeric property selections and valid numeric selections. Its default `NullMetrics` performs no storage or I/O. A numeric index access calls the provider's length method to validate bounds; the projection package separately counts provider length-resolution work, selection, binding and cleanup. No new array elements are materialised by the counters.

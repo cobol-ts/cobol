@@ -1,3 +1,4 @@
+import {type IPutMetrics,NULL_METRICS,METRIC} from "@cobol-ts/metrics";
 import {createRefCountedPool} from "@cobol-ts/ref_counted_pool";
 import {type RecordObjectPool} from "./record.pool";
 import {
@@ -51,6 +52,7 @@ export interface PhysicalRecordConfig<TRecordState,TFile> extends RecordCursorRe
     readonly physicalContentPool: PhysicalContentPool<TRecordState>;
     readonly fillFileBuffer: FillFileBuffer<TFile>;
     readonly readMore: (this: PooledPhysicalRecordContent<TRecordState>) => Promise<void>;
+    readonly metrics:IPutMetrics;
 }
 
 
@@ -65,6 +67,7 @@ export interface DefaultPhysicalRecordConfig<TRecordState,TFile> {
     /** Inject an existing pool; omitted means a fresh pool for this reader. */
     readonly recordPool?: RecordObjectPool<PooledPhysicalRecordContent<TRecordState>>;
     readonly byteBufferPool?: FileBufferPool;
+    readonly metrics?:IPutMetrics;
 }
 
 
@@ -72,6 +75,7 @@ export interface DefaultPhysicalRecordConfig<TRecordState,TFile> {
 export function createDefaultPhysicalRecordConfig<TRecordState,TFile>(
     options: DefaultPhysicalRecordConfig<TRecordState,TFile>
 ): PhysicalRecordConfig<TRecordState,TFile> {
+    const metrics=options.metrics??NULL_METRICS;
     const byteBufferPool: FileBufferPool = options.byteBufferPool ?? createRefCountedPool(
         () => new Uint8Array(options.bufferSize)
     );
@@ -85,7 +89,9 @@ export function createDefaultPhysicalRecordConfig<TRecordState,TFile>(
     };
 
     const recordPool = options.recordPool;
-    const makeRecord = (): PooledPhysicalRecordContent<TRecordState> => ({
+    const makeRecord = (): PooledPhysicalRecordContent<TRecordState> => {
+        metrics.put(METRIC.RECORD_ALLOCATE);
+        return ({
             buffers: [],
             source: options.source,
             recordNumber: 0,
@@ -99,19 +105,30 @@ export function createDefaultPhysicalRecordConfig<TRecordState,TFile>(
             readMore,
             close: closePhysicalRecord
         });
+    };
 
-    physicalContentPool = recordPool
+    const cleanState = options.cleanRecordState
+        ? (record:PooledPhysicalRecordContent<TRecordState>)=>{metrics.put(METRIC.RECORD_STATE_CLEAN);options.cleanRecordState!(record.recordState);}
+        : undefined;
+
+    const backingPool:PhysicalContentPool<TRecordState> = recordPool
         ? {
             acquire: () => recordPool.acquire(makeRecord),
             release: (record: PooledPhysicalRecordContent<TRecordState>) => {
-                options.cleanRecordState?.(record.recordState);
+                cleanState?.(record);
                 recordPool.release(record);
             }
         } as PhysicalContentPool<TRecordState>
         : createRefCountedPool<PooledPhysicalRecordContent<TRecordState>>(
             makeRecord,
-            options.cleanRecordState ? record=>options.cleanRecordState!(record.recordState) : undefined
+            cleanState
         );
+
+    physicalContentPool = options.metrics ? {
+        acquire:()=>backingPool.acquire(),
+        reuse:record=>backingPool.reuse(record),
+        release:record=>{backingPool.release(record);metrics.put(METRIC.RECORD_RETURN);}
+    } : backingPool;
 
     config = {
         source: options.source,
@@ -121,6 +138,7 @@ export function createDefaultPhysicalRecordConfig<TRecordState,TFile>(
         physicalContentPool,
         fillFileBuffer: options.fillFileBuffer,
         readMore,
+        metrics,
         acquireRecord: () => createPhysicalRecord(config),
         retainBuffer: buffer => byteBufferPool.reuse(buffer),
         releaseBuffer: buffer => byteBufferPool.release(buffer)
@@ -135,6 +153,7 @@ export function createPhysicalRecord<TRecordState,TFile>(
     config: PhysicalRecordConfig<TRecordState,TFile>
 ): PooledPhysicalRecordContent<TRecordState> {
     const record = config.physicalContentPool.acquire();
+    config.metrics.put(METRIC.RECORD_BORROW);
 
     if (record.buffers.length !== 0) {
         throw new Error("Acquired physical record still owns byte buffers");
