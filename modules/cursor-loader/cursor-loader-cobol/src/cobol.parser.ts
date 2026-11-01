@@ -9,14 +9,14 @@ import {FragmentedByteCursor, compileCobolFieldDecoder, type CobolDecodeOptions,
 import {type ErrorsOr, errors, value, flatMapErrorsOr} from "@cobol-ts/errors";
 import {evaluateStorageSize} from "@cobol-ts/size";
 import type {ProjectedArraySource} from "@cobol-ts/arrays";
-import type {ResolvePath} from "@cobol-ts/size";
+import {physical,displacement,symbolicView,countResolver,type CountContext} from "./cobol.representation";
+import {bindCobolArraySelection} from "./cobol.array.selection";
 import {cleanOdoPositions,type OdoPositionCache} from "./cobol.odo.positions";
 import {hasOccursClause} from "./cobol.occurs.clause";
 import {createCobolNameIndex, type CobolNameIndex} from "./cobol.layout.index";
 import {cobolDebugRangeFromBits, cobolDebugRangeNumber, cobolDebugRangeString} from "./cobol.debug.range";
 import {compileCobolMemberPath, locateCompiledCobolPath, type CobolProjectionPath} from "./cobol.projection.path";
-import {activeCount,resolveCobolCount,rootSymbolicView,selectSymbolic,selectSymbolicInto,singleDepthOccurrenceInto,
-    type CobolSymbolicView,type MutableSymbolicView} from "./cobol.projection.symbolic";
+import {resolveCobolCount,selectSymbolicInto,type CobolSymbolicView,type MutableSymbolicView} from "./cobol.projection.symbolic";
 
 export type CobolProjectionDetails = Readonly<{
     layout: readonly CompiledCobolEntry[];
@@ -47,11 +47,6 @@ export type CobolRepresentation = ProjectionPhysicalRecord | Readonly<{
     physical: ProjectionPhysicalRecord;
     displacementBits: number;
 }> | CobolSymbolicView;
-type CountContext = {
-    record?:ProjectionPhysicalRecord;
-    details?:CobolProjectionDetails;
-    readonly resolve:ResolvePath;
-};
 export type CobolRecordState = ProjectionRecordState & {
     readonly odoPositions:OdoPositionCache;
     readonly countContext:CountContext;
@@ -65,29 +60,6 @@ export type CobolRecordState = ProjectionRecordState & {
     byteCursor?:FragmentedByteCursor;
 };
 export type CobolParser = Parser<CobolRepresentation, CobolProjectionDetails, CobolProjectionDetails, CobolRecordState, CobolProjectionPath>;
-
-const physical = (view:CobolRepresentation):ProjectionPhysicalRecord =>
-    "physical" in view ? view.physical : view;
-const displacement = (view:CobolRepresentation):number =>
-    "physical" in view && "displacementBits" in view ? view.displacementBits : 0;
-/** Keep the root's record-specific boundary in reusable record-state scratch. */
-function symbolicView(view:CobolRepresentation):CobolSymbolicView {
-    if("originBits" in view) return view;
-    const record=physical(view),state=record.recordState as CobolRecordState;
-    const root=state.rootScratch ?? (state.rootScratch=rootSymbolicView(record) as MutableSymbolicView);
-    root.physical=record;
-    root.originBits=(state.dataOffsetBytes ?? 0)*8;
-    root.endBits=(record.endByte-record.startByte)*8;
-    return root;
-}
-/** A stable resolver closure per pooled physical holder, rebound on each lease. */
-function countResolver(details:CobolProjectionDetails,record:ProjectionPhysicalRecord):ResolvePath {
-    const context=(record.recordState as CobolRecordState).countContext;
-    context.details=details;
-    context.record=record;
-    return context.resolve;
-}
-
 
 /** Compile the source-scoped index and validate the initially supported FB record size. */
 export function createCobolProjectionDetails(layout:readonly CompiledCobolEntry[]):ErrorsOr<CobolProjectionDetails> {
@@ -311,65 +283,6 @@ function fieldRange(representation: CobolRepresentation, details:CobolProjection
     return range;
 }
 
-/** One provider per retained projected-array runtime. Methods live on the
- * prototype; rebinding does not create a source object or closures. */
-class CobolArraySelection implements ProjectedArraySource<CobolRepresentation> {
-    private record?:ProjectionPhysicalRecord;
-    private path?:CobolProjectionPath;
-    private resolver?:ResolvePath;
-    private table?:MutableSymbolicView;
-    private base=0;
-    private metrics:IPutMetrics=NULL_METRICS;
-
-    bind(parent:CobolRepresentation,details:CobolProjectionDetails,path:CobolProjectionPath):void {
-        this.metrics=details.metrics??NULL_METRICS;
-        this.metrics.put(METRIC.COBOL_ARRAY_PROVIDER_BIND);
-        const record=physical(parent);
-        if("symbolic" in path) {
-            if(path.node.kind!=="group" || !hasOccursClause(path.node.source.clauses))
-                throw new Error("COBOL projected array requires an OCCURS group");
-            const table=this.table ?? (this.table={physical:record,originBits:0,enclosingIndices:[]});
-            const resolver=countResolver(details,record);
-            selectSymbolicInto(symbolicView(parent),path,resolver,[],table);
-            this.resolver=resolver;
-        } else {
-            if(path.node.kind!=="group" || path.runtimeDimensions.length!==1)
-                throw new Error("COBOL projected array requires one fixed OCCURS group");
-            this.base=displacement(parent);
-        }
-        this.record=record;
-        this.path=path;
-    }
-    length():number {
-        this.metrics.put(METRIC.COBOL_ARRAY_PROVIDER_LENGTH);
-        const path=this.path;
-        if(!path) throw new Error("COBOL projected array is not bound");
-        if("symbolic" in path) return activeCount(path.node,this.resolver!,this.table!.enclosingIndices);
-        return path.runtimeDimensions[0].count;
-    }
-    element(index:number,reusable?:CobolRepresentation):CobolRepresentation {
-        this.metrics.put(METRIC.COBOL_ARRAY_PROVIDER_ELEMENT);
-        const path=this.path,record=this.record;
-        if(!path||!record) throw new Error("COBOL projected array is not bound");
-        if("symbolic" in path) {
-            const selected=reusable && "originBits" in reusable
-                ? reusable as MutableSymbolicView
-                : {physical:record,originBits:0,enclosingIndices:[]};
-            singleDepthOccurrenceInto(this.table!,path.node,index,this.resolver!,selected);
-            return selected;
-        }
-        const dimension=path.runtimeDimensions[0];
-        if(!Number.isSafeInteger(index)||index<0||index>=dimension.count)
-            throw new RangeError(`OCCURS index ${index} outside 0..${dimension.count-1}`);
-        const selected=reusable && "physical" in reusable && "displacementBits" in reusable
-            ? reusable as {physical:ProjectionPhysicalRecord;displacementBits:number}
-            : {physical:record,displacementBits:0};
-        selected.physical=record;
-        selected.displacementBits=this.base+index*dimension.strideBits;
-        return selected;
-    }
-}
-
 export const cobolParser = {
     parse,
     parseBuffered,
@@ -398,10 +311,7 @@ export const cobolParser = {
     },
     array(view:CobolRepresentation, details:CobolProjectionDetails, path:CobolProjectionPath,
           reusable?:ProjectedArraySource<CobolRepresentation>):ProjectedArraySource<CobolRepresentation> {
-        if(!(reusable instanceof CobolArraySelection)) details.metrics?.put(METRIC.COBOL_ARRAY_PROVIDER_CREATE);
-        const selected=reusable instanceof CobolArraySelection?reusable:new CobolArraySelection();
-        selected.bind(view,details,path);
-        return selected;
+        return bindCobolArraySelection(view,details,path,reusable);
     },
     integer(record: CobolRepresentation, details: CobolProjectionDetails, path: CobolProjectionPath, ...indices: number[]): number {
         if(isDecoded(details)) {
