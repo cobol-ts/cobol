@@ -9,7 +9,7 @@ import {runCallbackBenchmark} from './benchmark.callback';
 async function main():Promise<void> {
     const options=parseBenchmarkArgs(process.argv.slice(2));
     if(!options) {
-        console.log('yarn benchmark:callback --scenario baseline|array|redefines --data FILE [--sample] [--metrics]');
+        console.log('yarn benchmark:callback --scenario baseline|array|redefines --data FILE [--sample] [--warmup N] [--limit N|all] [--runs N] [--metrics] [--runtime-stats]');
         console.log('yarn benchmark:callback:sample');
         return;
     }

@@ -7,7 +7,7 @@ import {BENCHMARK_PROJECTION,BENCHMARK_COMPLEX_PROJECTION,parseBenchmarkArgs,run
 async function main():Promise<void> {
     const options=parseBenchmarkArgs(process.argv.slice(2));
     if(!options) {
-        console.log('yarn benchmark [-- --data FILE --warmup N --limit N|all --buffer-size N --decode-options JSON]');
+        console.log('yarn benchmark [-- --data FILE --warmup N --limit N|all --buffer-size N --decode-options JSON --runs N --runtime-stats]');
         console.log('yarn benchmark:sample');
         return;
     }

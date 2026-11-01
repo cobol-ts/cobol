@@ -66,6 +66,12 @@ test('CLI defaults match the Java benchmark and reject invalid inputs',()=>{
     expect(parseBenchmarkArgs([])).toEqual({data:'data/benchmark.dat',copybook:'copybooks/benchmark.cbl',
         warmup:100000,limit:'all',bufferSize:65536,decodeOptions:{encoding:'ascii'},scenario:'baseline'});
     expect(parseBenchmarkArgs(['--limit','123'])?.limit).toBe(123);
+    expect(parseBenchmarkArgs(['--runs','3','--warmup','500000'])?.runs).toBe(3);
+    expect(parseBenchmarkArgs(['--runs','3','--warmup','500000'])?.warmup).toBe(500000);
+    expect(parseBenchmarkArgs(['--runtime-stats'])?.runtimeStats).toBe(true);
+    expect(()=>parseBenchmarkArgs(['--runs','0'])).toThrow(/positive integer/);
+    expect(()=>parseBenchmarkArgs(['--runs','2.5'])).toThrow(/nonnegative integer/);
+    expect(()=>parseBenchmarkArgs(['--runs'])).toThrow(/Missing value/);
     expect(()=>parseBenchmarkArgs(['--buffer-size','50'])).toThrow(/at least 200/);
     expect(()=>parseBenchmarkArgs(['--decode-options','[]'])).toThrow(/JSON object/);
 });
@@ -93,4 +99,17 @@ test('array scenario uses occurrence getters, not the overlay getters',()=>{
     const expected=emptyCounters();
     processRow(mockRow(3),expected);
     expect(totals).toEqual(expected);
+});
+
+
+test('repeated async benchmark reopens the source for every measured pass',async()=>{
+    const options={...parseBenchmarkArgs(['--sample','--warmup','10','--limit','20','--runs','3'])!};
+    options.data=join(__dirname,'../data/sample-100k.dat');
+    const track={opened:0,closed:0,finished:0};
+    const messages:string[]=[];
+    const result=await runBenchmark(options,source(50,track),message=>messages.push(message));
+    expect(result.records).toBe(20);
+    expect(track).toEqual({opened:4,closed:70,finished:4});
+    expect(messages.filter(message=>message.startsWith('BENCHMARK result=cursor-loader '))).toHaveLength(3);
+    expect(messages.some(message=>message.startsWith('BENCHMARK SUMMARY result=cursor-loader '))).toBe(true);
 });

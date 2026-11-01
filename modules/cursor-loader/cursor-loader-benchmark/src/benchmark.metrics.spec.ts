@@ -116,3 +116,18 @@ test('async file reader receives the same metrics through reader options',async(
     expect(metrics.get(METRIC.PROJECTION_CREATE)).toBeGreaterThan(0);
     expect(metrics.get(METRIC.RECORD_RETURN)).toBeGreaterThan(0);
 });
+
+
+test('repeated metrics output resets warm-up and each measured pass',async()=>{
+    const metrics=new MemoryMetrics();
+    const options={...parseBenchmarkArgs(['--metrics','--sample','--scenario','array','--warmup','10','--limit','20','--runs','3'])!,data};
+    const projection=defineProjection<BenchmarkArrayRow>(BENCHMARK_COMPLEX_PROJECTION);
+    const messages:string[]=[];
+    await runCallbackBenchmark(options,
+        visitor=>scanCobolFile({filename:data,copybook:complexCopybook,projection,
+            bufferSize:8192,decodeOptions:{encoding:'ascii'},metrics},visitor),
+        message=>messages.push(message),metrics);
+    expect(metrics.get(METRIC.FILE_SCAN_RECORD)).toBe(20);
+    expect(messages.filter(message=>message==='  array.child.bind=40')).toHaveLength(3);
+    expect(messages.filter(message=>message.includes('warm-up excluded'))).toHaveLength(3);
+});

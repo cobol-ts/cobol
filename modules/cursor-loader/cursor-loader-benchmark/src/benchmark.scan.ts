@@ -1,6 +1,6 @@
 import {statSync} from 'node:fs';
 import {resolve} from 'node:path';
-import {performance} from 'node:perf_hooks';
+import {runMeasuredPasses} from './benchmark.measurement';
 import type {ProjectionDefinition} from '@cobol-ts/cursor-loader-types';
 import type {ProjectedArray} from '@cobol-ts/arrays';
 import {
@@ -56,6 +56,8 @@ export type BenchmarkOptions = Readonly<{
     decodeOptions:Readonly<Record<string,unknown>>;
     scenario:BenchmarkScenario;
     metrics?:boolean;
+    runs?:number;
+    runtimeStats?:boolean;
 }>;
 export type BenchmarkResult = Counters & Readonly<{
     seconds:number;
@@ -110,7 +112,7 @@ export function formatTotals(result:Counters):string {
 }
 
 export function parseBenchmarkArgs(args:readonly string[]):BenchmarkOptions|undefined {
-    const options:{data:string;copybook:string;warmup:number;limit:number|'all';bufferSize:number;decodeOptions:Record<string,unknown>;scenario:BenchmarkScenario;metrics?:boolean}={
+    const options:{data:string;copybook:string;warmup:number;limit:number|'all';bufferSize:number;decodeOptions:Record<string,unknown>;scenario:BenchmarkScenario;metrics?:boolean;runs?:number;runtimeStats?:boolean}={
         data:'data/benchmark.dat',copybook:'copybooks/benchmark.cbl',warmup:100_000,
         limit:'all',bufferSize:64*1024,decodeOptions:{encoding:'ascii'},scenario:'baseline'
     };
@@ -118,6 +120,7 @@ export function parseBenchmarkArgs(args:readonly string[]):BenchmarkOptions|unde
         const arg=args[i];
         if(arg==='--help' || arg==='-h') return undefined;
         if(arg==='--metrics') {options.metrics=true;continue;}
+        if(arg==='--runtime-stats') {options.runtimeStats=true;continue;}
         if(arg==='--sample') {options.data='data/sample-100k.dat';continue;}
         if(arg==='--scenario') {
             const name=args[++i];
@@ -128,7 +131,7 @@ export function parseBenchmarkArgs(args:readonly string[]):BenchmarkOptions|unde
             else options.copybook='copybooks/benchmark.cbl';
             continue;
         }
-        if(!['--data','--copybook','--warmup','--limit','--buffer-size','--decode-options'].includes(arg))
+        if(!['--data','--copybook','--warmup','--limit','--runs','--buffer-size','--decode-options'].includes(arg))
             throw new Error(`Unknown argument: ${arg}`);
         const value=args[++i];
         if(value===undefined) throw new Error(`Missing value for ${arg}`);
@@ -144,6 +147,10 @@ export function parseBenchmarkArgs(args:readonly string[]):BenchmarkOptions|unde
             if(!/^\d+$/.test(value)) throw new Error(`${arg} requires a nonnegative integer`);
             const number=checkedNonNegativeInteger(Number(value),arg);
             if(arg==='--warmup') options.warmup=number;
+            if(arg==='--runs') {
+                if(number===0) throw new Error('--runs requires a positive integer');
+                options.runs=number;
+            }
             if(arg==='--limit') options.limit=number;
             if(arg==='--buffer-size') options.bufferSize=number;
         }
@@ -169,16 +176,8 @@ export async function runBenchmark(options:BenchmarkOptions,open:RecordSource,
     if(warmed.records!==warmCount) throw new Error(`Warmup ended early: ${warmed.records}/${warmCount}`);
     assertTotals('warmup',warmed);
     log(`warmup verified: ${formatTotals(warmed)}`);
-    log('Measured pass: reopen file and start at byte 0');
-    const started=performance.now();
-    const actual=await scan(open,count,options.scenario);
-    const seconds=(performance.now()-started)/1000;
-    if(actual.records!==count) throw new Error(`Measured pass ended early: ${actual.records}/${count}`);
-    assertTotals('measured',actual);
-    log(`measured verified: ${formatTotals(actual)}`);
-    const bytes=actual.records*RECORD_BYTES;
-    const result:BenchmarkResult={...actual,seconds,recordsPerSecond:actual.records/seconds,
-        mibPerSecond:bytes/(1024*1024)/seconds};
-    log(`BENCHMARK result=cursor-loader scenario=${options.scenario} records=${actual.records} bytes=${bytes} seconds=${seconds.toFixed(6)} recordsPerSecond=${Math.round(result.recordsPerSecond)} mibPerSecond=${result.mibPerSecond.toFixed(2)}`);
-    return result;
+    return runMeasuredPasses({
+        options,scan:()=>scan(open,count,options.scenario),
+        resultName:'cursor-loader',expectedRecords:count,assertTotals,formatTotals,log
+    });
 }
