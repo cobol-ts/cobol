@@ -139,15 +139,22 @@ export function createProjection<T,R,D,P>(
                 if (!items || !physical) throw new Error("Projected array is not bound");
                 try {
                     let child=elements[index];
-                    if (!child) {metrics.put(METRIC.ARRAY_CHILD_ALLOCATE);child=createView(node.schema,false);elements[index]=child;}
-                    else metrics.put(METRIC.ARRAY_CHILD_REUSE);
+                    if (!child) {
+                        metrics.put(METRIC.ARRAY_CHILD_ALLOCATE);
+                        child=createView(node.schema,false);
+                        // These describe the compiled array site and retained slot.
+                        // Only the parent and borrowed record vary between leases.
+                        child[VIA]=node.name;
+                        child[INDEX]=index;
+                        elements[index]=child;
+                    } else metrics.put(METRIC.ARRAY_CHILD_REUSE);
                     if (child[PHYSICAL_RECORD] !== physical || child[REPRESENTATION] === undefined) {
                         // The previous lease already cleared borrowed state. Retained,
                         // unbound children need rebinding, not a second recursive clear.
                         // Still clear a child if it is bound (including to another record).
                         if (child[PHYSICAL_RECORD] !== undefined) clearView(child);
                         metrics.put(METRIC.ARRAY_CHILD_BIND);
-                        bindView(child,items.element(index,child[SAVED]),physical,ownerView,node.name,index);
+                        bindArrayChild(child,items.element(index,child[SAVED]),physical,ownerView);
                         appendArrayWithSize(active,child);
                     } else metrics.put(METRIC.ARRAY_CHILD_ALREADY_BOUND);
                     return child;
@@ -181,6 +188,16 @@ export function createProjection<T,R,D,P>(
         view[REPRESENTATION]=representation;
         view[SAVED]=representation;
         view[PARENT]=parent;view[VIA]=via;view[INDEX]=index;
+        view[PHYSICAL_RECORD]=record;
+    }
+
+    /** Hot-path array rebinding: [VIA] and [INDEX] were set when the slot was allocated. */
+    function bindArrayChild(view:BoundView<R>, representation:R,record:ProjectionPhysicalRecord,
+                            parent:BoundView<R> | undefined) {
+        metrics.put(METRIC.PROJECTION_BIND);
+        view[REPRESENTATION]=representation;
+        view[SAVED]=representation;
+        view[PARENT]=parent;
         view[PHYSICAL_RECORD]=record;
     }
 

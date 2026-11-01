@@ -109,3 +109,30 @@ describe("projected-array child clearing on record reuse",()=>{
         expect(metrics.get(METRIC.ARRAY_CHILD_BIND)).toBe(5);
     });
 });
+
+describe("projected-array slot metadata",()=>{
+    test("member name and index are assigned once, while the record-specific binding is renewed",()=>{
+        const factory=createProjection(parser,undefined,undefined,schema);
+        const projection=factory.create(),holder=record();
+        factory.bind(projection,{row:{values:["A","B"]},group:false},holder);
+        const retained=projection.group.items[1];
+        expect(retained.value()).toBe("B");
+
+        // A retained slot always represents the same compiled array member
+        // and numerical index. Making these internal fields read-only catches
+        // accidental reinitialisation on the next record lease.
+        const symbols=Object.getOwnPropertySymbols(retained as object);
+        for (const label of ["projectionVia","projectionIndex"]) {
+            const symbol=symbols.find(candidate=>candidate.description===label);
+            if (!symbol) throw new Error(`Missing internal slot metadata: ${label}`);
+            const value=(retained as unknown as {[key:symbol]:unknown})[symbol];
+            Object.defineProperty(retained,symbol,{value,writable:false,configurable:true});
+        }
+
+        factory.clear(projection);
+        factory.bind(projection,{row:{values:["X","Y","Z"]},group:false},holder);
+        expect(projection.group.items[1]).toBe(retained);
+        expect(retained.value()).toBe("Y");
+        factory.clear(projection);
+    });
+});
