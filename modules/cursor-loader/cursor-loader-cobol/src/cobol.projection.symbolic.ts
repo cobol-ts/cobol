@@ -34,6 +34,8 @@ export type CobolGeometryDetails=Readonly<{
     /** Immutable controller geometry, memoised by compiled literal path identity. */
     controllerLocations?:WeakMap<readonly (string|number)[],CobolControllerLocation>;
     dataOffsetBytes?:number;
+    /** Same DISPLAY character set used by compiled scalar decoders. */
+    decodeOptions?:Readonly<{encoding?:'ebcdic-037'|'ascii'}>;
     metrics?:IPutMetrics;
 }>;
 
@@ -91,6 +93,7 @@ export function resolveCobolCount(details:CobolGeometryDetails,record:Projection
         const end=start+location.sizeBits/8;
         if(end>record.endByte) throw new RangeError(`ODO controller ${path.join(".")} exceeds record boundary`);
         let result=0;
+        const zero=details.decodeOptions?.encoding==='ascii' ? 0x30 : 0xf0;
         for(let byte=start;byte<end;byte++){
             details.metrics?.put(METRIC.COBOL_CONTROLLER_BYTE);
             let cursor=byte;
@@ -99,9 +102,9 @@ export function resolveCobolCount(details:CobolGeometryDetails,record:Projection
                 if(cursor<buffer.length){digit=buffer[cursor];break;}
                 cursor-=buffer.length;
             }
-            if(digit===undefined || digit<0xf0 || digit>0xf9)
+            if(digit===undefined || digit<zero || digit>zero+9)
                 throw new Error(`Invalid unsigned DISPLAY ODO controller digit at ${path.join(".")}`);
-            result=result*10+(digit-0xf0);
+            result=result*10+(digit-zero);
             if(!Number.isSafeInteger(result)) throw new Error(`ODO controller value overflows safe integer at ${path.join(".")}`);
         }
         return result;

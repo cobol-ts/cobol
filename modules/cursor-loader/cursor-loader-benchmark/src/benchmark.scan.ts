@@ -3,6 +3,7 @@ import {resolve} from 'node:path';
 import {runMeasuredPasses} from './benchmark.measurement';
 import type {ProjectionDefinition} from '@cobol-ts/cursor-loader-types';
 import type {ProjectedArray} from '@cobol-ts/arrays';
+import {expectedOdoCounters} from './benchmark.odo.fixture';
 import {
     COUNTER_NAMES,checkedNonNegativeInteger,emptyCounters,expectedCounters,RECORD_BYTES,
     type Counters
@@ -18,7 +19,20 @@ export type BenchmarkRow = Readonly<{
     approved(): string;
 }>;
 
-export type BenchmarkScenario = 'baseline' | 'array' | 'redefines';
+export type BenchmarkScenario = 'baseline' | 'array' | 'redefines' | 'odo';
+export type BenchmarkOdoRow = Readonly<{
+    items:ProjectedArray<Readonly<{value():number}>>;
+    status():string;region():string;category():string;approved():string;
+}>;
+export const BENCHMARK_ODO_PROJECTION:ProjectionDefinition<BenchmarkOdoRow>={
+    items:{type:'array',path:['ODO-BENCHMARK-RECORD','ITEMS'],element:{
+        value:{type:'integer',path:['ITEM-VALUE']}
+    }},
+    status:{type:'character',path:['ODO-BENCHMARK-RECORD','STATUS-CODE']},
+    region:{type:'character',path:['ODO-BENCHMARK-RECORD','REGION-CODE']},
+    category:{type:'character',path:['ODO-BENCHMARK-RECORD','CATEGORY-CODE']},
+    approved:{type:'character',path:['ODO-BENCHMARK-RECORD','APPROVED-FLAG']}
+};
 export type BenchmarkArrayRow = BenchmarkRow & Readonly<{
     amounts:ProjectedArray<Readonly<{value():number}>>;
 }>;
@@ -44,7 +58,8 @@ export const BENCHMARK_PROJECTION: ProjectionDefinition<BenchmarkRow> = {
     category: {type:'character',path:['BENCHMARK-RECORD','CATEGORY-CODE']},
     approved: {type:'character',path:['BENCHMARK-RECORD','APPROVED-FLAG']}
 };
-export type RecordLease = Readonly<{result:BenchmarkRow;close():void}>;
+export type BenchmarkAnyRow=BenchmarkRow|BenchmarkOdoRow;
+export type RecordLease = Readonly<{result:BenchmarkAnyRow;close():void}>;
 export type RecordSource = () => AsyncIterable<RecordLease>;
 
 export type BenchmarkOptions = Readonly<{
@@ -66,15 +81,26 @@ export type BenchmarkResult = Counters & Readonly<{
 }>;
 
 /** Same six decoded fields and two predicates as the Java/JRecord benchmark. */
-export function processRow(row:BenchmarkRow,result:Counters,scenario:BenchmarkScenario='baseline'):void {
+export function processRow(row:BenchmarkAnyRow,result:Counters,scenario:BenchmarkScenario='baseline'):void {
+    if(scenario==='odo') {
+        const odo=row as unknown as BenchmarkOdoRow;
+        const count=odo.items.length;
+        const sum=(count>0?odo.items[0].value():0)+(count>1?odo.items[1].value():0);
+        const status=odo.status(),region=odo.region(),category=odo.category(),approved=odo.approved();
+        result.records++;result.totalSum+=sum;
+        if(status==='A' && region==='N'){result.activeNorthCount++;result.activeNorthSum+=sum;}
+        if(category==='P' && approved==='Y'){result.approvedPremiumCount++;result.approvedPremiumSum+=sum;}
+        return;
+    }
+    const normal=row as BenchmarkRow;
     const amounts=scenario==='array' ? (row as BenchmarkArrayRow).amounts : undefined;
-    const a=amounts ? amounts[0].value() : row.amountA();
-    const b=amounts ? amounts[1].value() : row.amountB();
+    const a=amounts ? amounts[0].value() : normal.amountA();
+    const b=amounts ? amounts[1].value() : normal.amountB();
     const sum = a + b;
-    const status = row.status();
-    const region = row.region();
-    const category = row.category();
-    const approved = row.approved();
+    const status = normal.status();
+    const region = normal.region();
+    const category = normal.category();
+    const approved = normal.approved();
     result.records++;
     result.totalSum += sum;
     if(status==='A' && region==='N') {
@@ -100,8 +126,8 @@ export async function scan(source:RecordSource,maxRecords:number,scenario:Benchm
     return result;
 }
 
-export function assertTotals(stage:string,actual:Counters):void {
-    const expected = expectedCounters(actual.records);
+export function assertTotals(stage:string,actual:Counters,scenario:BenchmarkScenario='baseline'):void {
+    const expected = scenario==='odo'?expectedOdoCounters(actual.records):expectedCounters(actual.records);
     for(const name of COUNTER_NAMES) {
         if(actual[name]!==expected[name])
             throw new Error(`${stage} FAILED ${name}: actual=${actual[name]} expected=${expected[name]}. Verify COBOL decoder / ASCII DISPLAY configuration.`);
@@ -116,18 +142,20 @@ export function parseBenchmarkArgs(args:readonly string[]):BenchmarkOptions|unde
         data:'data/benchmark.dat',copybook:'copybooks/benchmark.cbl',warmup:100_000,
         limit:'all',bufferSize:64*1024,decodeOptions:{encoding:'ascii'},scenario:'baseline'
     };
+    let sampleRequested=false;
     for(let i=0;i<args.length;i++) {
         const arg=args[i];
         if(arg==='--help' || arg==='-h') return undefined;
         if(arg==='--metrics') {options.metrics=true;continue;}
         if(arg==='--runtime-stats') {options.runtimeStats=true;continue;}
-        if(arg==='--sample') {options.data='data/sample-100k.dat';continue;}
+        if(arg==='--sample') {sampleRequested=true;continue;}
         if(arg==='--scenario') {
             const name=args[++i];
-            if(name!=='baseline' && name!=='array' && name!=='redefines')
-                throw new Error('--scenario requires baseline, array or redefines');
+            if(name!=='baseline' && name!=='array' && name!=='redefines' && name!=='odo')
+                throw new Error('--scenario requires baseline, array, redefines or odo');
             options.scenario=name;
-            if(name!=='baseline') options.copybook='copybooks/benchmark-complex.cbl';
+            if(name==='odo') options.copybook='copybooks/benchmark-odo.cbl';
+            else if(name!=='baseline') options.copybook='copybooks/benchmark-complex.cbl';
             else options.copybook='copybooks/benchmark.cbl';
             continue;
         }
@@ -155,6 +183,8 @@ export function parseBenchmarkArgs(args:readonly string[]):BenchmarkOptions|unde
             if(arg==='--buffer-size') options.bufferSize=number;
         }
     }
+    if(sampleRequested) options.data=options.scenario==='odo'?'data/odo-sample-100k.dat':'data/sample-100k.dat';
+    else if(options.scenario==='odo' && options.data==='data/benchmark.dat') options.data='data/odo.dat';
     if(options.bufferSize<RECORD_BYTES) throw new Error('buffer-size must be at least 200');
     return options;
 }
@@ -168,16 +198,16 @@ export async function runBenchmark(options:BenchmarkOptions,open:RecordSource,
     if(fileBytes%RECORD_BYTES!==0) throw new Error(`File size ${fileBytes} is not divisible by 200`);
     const availableRecords=fileBytes/RECORD_BYTES;
     const count=options.limit==='all'?availableRecords:Math.min(availableRecords,checkedNonNegativeInteger(options.limit,'limit'));
-    log(`Node COBOL benchmark / scenario=${options.scenario} / fixed ${RECORD_BYTES} bytes / same JRecord record rules`);
+    log(`Node COBOL benchmark / scenario=${options.scenario} / fixed ${RECORD_BYTES} bytes / ${options.scenario==='odo'?'variable active count':'same JRecord record rules'}`);
     log(`file=${file} fileBytes=${fileBytes} availableRecords=${availableRecords} measuredRecords=${count}`);
     const warmCount=Math.min(options.warmup,availableRecords);
     log(`Warmup: first ${warmCount} records`);
     const warmed=await scan(open,warmCount,options.scenario);
     if(warmed.records!==warmCount) throw new Error(`Warmup ended early: ${warmed.records}/${warmCount}`);
-    assertTotals('warmup',warmed);
+    assertTotals('warmup',warmed,options.scenario);
     log(`warmup verified: ${formatTotals(warmed)}`);
     return runMeasuredPasses({
         options,scan:()=>scan(open,count,options.scenario),
-        resultName:'cursor-loader',expectedRecords:count,assertTotals,formatTotals,log
+        resultName:'cursor-loader',expectedRecords:count,assertTotals:(stage,totals)=>assertTotals(stage,totals,options.scenario),formatTotals,log
     });
 }

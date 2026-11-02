@@ -10,7 +10,7 @@ import {parseCopybook} from "@cobol-ts/copybook";
 import {valueOrThrow} from "@cobol-ts/errors";
 import {compileCobolLayout} from "@cobol-ts/layout";
 import {compileCobolMemberPath} from "./cobol.projection.path";
-import {activeCount,rootSymbolicView,selectSymbolic,singleDepthOccurrence,type CobolNamedNode,
+import {activeCount,resolveCobolCount,rootSymbolicView,selectSymbolic,singleDepthOccurrence,type CobolNamedNode,
     type CobolSymbolicPath,type CobolSymbolicView} from "./cobol.projection.symbolic";
 import {cobolParser,createCobolProjectionDetails,createCobolRecordState} from "./cobol.parser";
 import {customerHexBytes} from "./customer.fixtures";
@@ -34,6 +34,23 @@ const nestedFixedAfterOdo=[
     "      15 INNERS OCCURS 2 TIMES.",
     "        20 VALUE PIC X."
 ].join("\n");
+
+describe("ODO controller DISPLAY encoding",()=>{
+    const layout=layoutFor(["01 ROW.","  05 COUNT PIC 9.","  05 ITEMS OCCURS 0 TO 8 TIMES DEPENDING ON COUNT.","    10 CODE PIC X."].join("\n"));
+    const path=["ROW","COUNT"];
+    test("ASCII DISPLAY count uses the decoded source encoding",()=>{
+        const details={...valueOrThrow(createCobolProjectionDetails(layout)),decodeOptions:{encoding:'ascii' as const}};
+        expect(resolveCobolCount(details,record(Uint8Array.from([0x30,0x41])),path)).toBe(0);
+        expect(resolveCobolCount(details,record(Uint8Array.from([0x38,0x41])),path)).toBe(8);
+        expect(()=>resolveCobolCount(details,record(Uint8Array.from([0xf8,0x41])),path)).toThrow(/Invalid unsigned DISPLAY ODO controller digit/);
+    });
+    test("EBCDIC-037 remains the default and rejects ASCII digit bytes",()=>{
+        const details=valueOrThrow(createCobolProjectionDetails(layout));
+        expect(resolveCobolCount(details,record(Uint8Array.from([0xf0,0xc1])),path)).toBe(0);
+        expect(resolveCobolCount(details,record(Uint8Array.from([0xf8,0xc1])),path)).toBe(8);
+        expect(()=>resolveCobolCount(details,record(Uint8Array.from([0x38,0xc1])),path)).toThrow(/Invalid unsigned DISPLAY ODO controller digit/);
+    });
+});
 
 describe("COBOL enclosing occurrence context",()=>{
     test("the root, outer element, ordinary group and inner element carry their selected indexes",()=>{

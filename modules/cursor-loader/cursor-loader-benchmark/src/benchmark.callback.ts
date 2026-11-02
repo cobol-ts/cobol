@@ -7,12 +7,12 @@ import {
     type Counters
 } from './benchmark.fixture';
 import {
-    type BenchmarkOptions,type BenchmarkResult,type BenchmarkRow,
+    type BenchmarkOptions,type BenchmarkResult,type BenchmarkAnyRow,
     assertTotals,formatTotals,processRow,type BenchmarkScenario
 } from './benchmark.scan';
 
 /** A fresh file is opened for each scan; record objects are borrowed. */
-export type CallbackRecordSource = (visitor:(row:BenchmarkRow)=>void|boolean)=>Promise<void>;
+export type CallbackRecordSource = (visitor:(row:BenchmarkAnyRow)=>void|boolean)=>Promise<void>;
 
 /** Process all available records synchronously in each file-buffer batch. */
 export async function scanCallback(source:CallbackRecordSource,maxRecords:number,scenario:BenchmarkScenario='baseline'):Promise<Counters> {
@@ -39,16 +39,16 @@ export async function runCallbackBenchmark(
     if(fileBytes%RECORD_BYTES!==0) throw new Error(`File size ${fileBytes} is not divisible by 200`);
     const availableRecords=fileBytes/RECORD_BYTES;
     const count=options.limit==='all'?availableRecords:Math.min(availableRecords,checkedNonNegativeInteger(options.limit,'limit'));
-    log(`Node COBOL callback benchmark / scenario=${options.scenario} / fixed ${RECORD_BYTES} bytes / same JRecord record rules`);
+    log(`Node COBOL callback benchmark / scenario=${options.scenario} / fixed ${RECORD_BYTES} bytes / ${options.scenario==='odo'?'variable active count':'same JRecord record rules'}`);
     log(`file=${file} fileBytes=${fileBytes} availableRecords=${availableRecords} measuredRecords=${count}`);
     const warmCount=Math.min(options.warmup,availableRecords);
     log(`Warmup: first ${warmCount} records`);
     const warmed=await scanCallback(open,warmCount,options.scenario);
     if(warmed.records!==warmCount) throw new Error(`Warmup ended early: ${warmed.records}/${warmCount}`);
-    assertTotals('warmup',warmed);
+    assertTotals('warmup',warmed,options.scenario);
     log(`warmup verified: ${formatTotals(warmed)}`);
     return runMeasuredPasses({
         options,scan:()=>scanCallback(open,count,options.scenario),
-        resultName:'cursor-loader-callback',expectedRecords:count,assertTotals,formatTotals,log,metrics
+        resultName:'cursor-loader-callback',expectedRecords:count,assertTotals:(stage,totals)=>assertTotals(stage,totals,options.scenario),formatTotals,log,metrics
     });
 }
