@@ -25,7 +25,8 @@ async function main():Promise<void> {
         const open=()=>readCobolFile<BenchmarkOdoRow>({
             filename,copybook,projection,bufferSize:options.bufferSize,
             framing:{kind:'fixed',recordLength:200},
-            decodeOptions:options.decodeOptions as CobolDecodeOptions
+            decodeOptions:options.decodeOptions as CobolDecodeOptions,
+            experimentalSharedOdoArrays:options.sharedOdoArrays
         });
         await runBenchmark(options,open);
     } else {

@@ -28,8 +28,7 @@ Keep this package as a sibling of `cursor-loader-cobol`, `cursor-file`,
 `layout`, and the other packages. Let the existing workspace tooling process
 `package.details.json` and link the `@cobol-ts` dependencies. In particular,
 this module needs the workspace's `@cobol-ts/codec` package, just as
-`cursor-loader-cobol` does. The uploaded archive does not include that module,
-so the full reader run must be validated in your complete workspace.
+`cursor-loader-cobol` does. The required codec module is part of this monorepo; a working installation must link its local package dependencies.
 
 No Python, standalone JavaScript scripts, bespoke build steps, or alternate
 project structure are involved. Commands run the TypeScript sources with
@@ -173,54 +172,12 @@ graphs. The fixed geometry is chosen from the compiled COBOL path, not just a
 source-level `OCCURS n` declaration. For diagnostics, `--metrics` shows no
 `array.proxy.index` or `array.child.bind` events for the eligible fixed path.
 
-## ODO count benchmark (fixed-capacity frame)
+## Current default fixed-array path and reproducibility
 
-The `odo` scenario measures `OCCURS DEPENDING ON` selection separately from
-fixed OCCURS. It uses the real COBOL copybook compiler, byte-backed projection
-and callback/async readers; no benchmark-specific byte offsets are used in the
-measured reader. Its own copybook is `copybooks/benchmark-odo.cbl`.
+The `array` scenario exercises the automatically selected shared-binding native array when its compiled shape qualifies; no experimental opt-in flag is needed. The performance benchmark measures the whole callback scan, not merely array indexing. A sample instrumented pass can validate that scalar decodes remain present while Proxy/child-binding operation counters drop; these counts describe the implementation path and should not be mistaken for elapsed time. Use `--runs 5 --limit 5000000 --warmup 500000` for repeated passes, compare medians cautiously, and always check the checksum lines. The standalone metrics run should use `--sample --metrics` and must not be compared directly with an uninstrumented throughput run.
 
-The physical frame is **always 200 bytes**. The first byte is an ASCII DISPLAY
-count from 0 to 8, followed by four status/region/category/approval characters,
-then eight nine-digit *capacity* slots and 123 padding bytes. Only the first
-`ITEM-COUNT` slots are active according to ODO semantics. Padding and inactive
-slots are not accessed by the benchmark. This first scenario does **not** test
-physical variable-record framing or offsets of fields after the variable array.
-Those are separate future scenarios.
+### ODO shared-binding experiment
 
-The deterministic nine-record cycle covers every count from 0 to 8. It repeats
-for any requested file size; expected sums are calculated from the generation
-formula in `benchmark.odo.fixture.ts` independently of the compiled COBOL
-layout. The workload reads the active length and at most the first two item
-values per record, along with four scalar flags. This is a **variable-work**
-benchmark: records with zero active items perform fewer scalar decodes than
-records with two or more items. Compare records/sec together with counters
-for decoder invocations and element selections.
+The ODO benchmark also accepts `--shared-odo-arrays`, which passes `experimentalSharedOdoArrays` to the production COBOL reader only for `--scenario odo`. The original Proxy implementation remains the default; both paths read the same deterministic 200-byte fixtures and verify the same independent checksums. The native-array experiment resolves the ODO controller once per array bind and retains eight scalar child views (even when the active count is zero), without copying or eagerly decoding item values.
 
-Generate the bundled 100,000-record sample, or a larger reproducible file:
-
-```bash
-yarn generate:odo:sample
-yarn generate --scenario odo --records 5000000 --chunk-records 45000 --output data/odo-5m.dat
-yarn generate --scenario odo --records 100000000 --chunk-records 45000 --output data/odo.dat
-```
-
-The generator refuses to overwrite an existing file unless `--force` is
-specified. A compressed patch may also ship `data/odo-sample-100k.dat` so the
-sample need not be regenerated. The default ODO generator chunk size must be
-set to a multiple of nine; the examples above use 45,000 records per chunk.
-
-Run the existing benchmark paths with the ODO scenario:
-
-```bash
-yarn benchmark:callback --scenario odo --sample --metrics
-yarn benchmark:callback --scenario odo --data data/odo-5m.dat --limit 5000000 --warmup 500000 --runs 5
-yarn benchmark --scenario odo --sample
-```
-
-The `--scenario odo --sample` command selects the ODO sample, independent of
-the argument order. `--scenario odo` without `--data` selects `data/odo.dat`.
-Warm-up and each measured pass verify ODO-specific counters. Instrumentation
-is for diagnosis, not throughput comparison; run five-pass performance tests
-without `--metrics`. This scenario does not use the previous fixed-array
-JRecord checksum oracle.
+Run `yarn benchmark:callback --scenario odo --sample --metrics --shared-odo-arrays` to validate counters. For throughput, omit `--metrics` and use the existing `--data data/odo-5m.dat --limit 5000000 --warmup 500000 --runs 5` options. Compare the five-pass median with the established uninstrumented **386,029 records/sec** baseline, allowing for normal machine variability.

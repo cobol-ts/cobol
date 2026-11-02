@@ -18,10 +18,21 @@ const PARENT = Symbol("projectionParent");
 const VIA = Symbol("projectionVia");
 const INDEX = Symbol("projectionIndex");
 const SHARED_LEASE = Symbol("projectionSharedLease");
-type SharedLease={record:ProjectionPhysicalRecord|undefined};
+type SharedLease={record:ProjectionPhysicalRecord|undefined; activeCount?:number};
 type SharedFixedSource<R> = ProjectedArraySource<R> & {sharedElement(index:number,lease:SharedLease):R};
 function isSharedFixedSource<R>(source:ProjectedArraySource<R>):source is SharedFixedSource<R> {
     return typeof (source as Partial<SharedFixedSource<R>>).sharedElement === "function";
+}
+/** Opt-in provider for a small variable-count array with immutable element stride. */
+type SharedOdoSource<R> = ProjectedArraySource<R> & {
+    sharedOdoCapacity():number;
+    sharedOdoElement(index:number,lease:SharedLease):R;
+};
+function isSharedOdoSource<R>(source:ProjectedArraySource<R>):source is SharedOdoSource<R> {
+    const candidate=source as Partial<SharedOdoSource<R>>;
+    return typeof candidate.sharedOdoCapacity === "function" &&
+        typeof candidate.sharedOdoElement === "function" &&
+        candidate.sharedOdoCapacity()>0;
 }
 
 type Parser<R,D,P> = ProjectionSupport<R,D,P> & PhysicalRecordDebugRenderer;
@@ -129,6 +140,8 @@ export function createProjection<T,R,D,P>(
     function makeArray(node:ArrayMember<R,D,P>,initial:ProjectedArraySource<R>):ArrayRuntime<R> {
         if(node.schema.every(member=>member.kind==="scalar")
            && isSharedFixedSource(initial) && initial.length()<=8) return makeSharedFixedArray(node,initial);
+        if(node.schema.every(member=>member.kind==="scalar") && isSharedOdoSource(initial))
+            return makeSharedOdoArray(node,initial);
         const elements:BoundView<R>[] = [];
         let items:ProjectedArraySource<R> | undefined;
         let retainedSource:ProjectedArraySource<R> | undefined;
@@ -223,6 +236,53 @@ export function createProjection<T,R,D,P>(
         };
     }
 
+    /** ODO fast path: one borrowed binding and count, with stable child views.
+     * The visible native array is resized, but its permanent children are never
+     * recreated or rebound.  Truncation removes visible slots only. */
+    function makeSharedOdoArray(node:ArrayMember<R,D,P>,source:SharedOdoSource<R>):ArrayRuntime<R> {
+        const lease:SharedLease={record:undefined,activeCount:0};
+        const elements:BoundView<R>[]=[];
+        const capacity=source.sharedOdoCapacity();
+        for(let index=0;index<capacity;index++) {
+            const child=createView(node.schema,false);
+            child[REPRESENTATION]=source.sharedOdoElement(index,lease);
+            child[SHARED_LEASE]=lease;
+            child[VIA]=node.name;
+            child[INDEX]=index;
+            elements.push(child);
+        }
+        const visible:BoundView<R>[]=[];
+        let owner:R|undefined;
+        let retained:ProjectedArraySource<R>=source;
+        return {
+            name:node.label,view:visible as ProjectedArray<unknown>,elements,
+            source(){return retained;},
+            isBoundTo(record,nextOwner){return lease.record===record && owner===nextOwner;},
+            bind(next,record,nextOwner,_ownerView){
+                if(next!==source || !isSharedOdoSource(next))
+                    throw new Error("ODO array provider identity changed");
+                // Calculate the active count exactly once per record binding.
+                // Do not publish the new lease until its controller is valid.
+                const active=next.length();
+                if(!Number.isSafeInteger(active)||active<0||active>capacity)
+                    throw new RangeError(`ODO count ${active} outside 0..${capacity}`);
+                metrics.put(METRIC.ARRAY_RUNTIME_BIND);
+                const current=visible.length;
+                if(active<current) visible.length=active;
+                else for(let index=current;index<active;index++) visible[index]=elements[index];
+                retained=next;owner=nextOwner;
+                lease.activeCount=active;
+                lease.record=record;
+            },
+            clear(){
+                metrics.put(METRIC.ARRAY_RUNTIME_CLEAR);
+                lease.record=undefined;
+                lease.activeCount=0;
+                owner=undefined;
+            }
+        };
+    }
+
     function bindView(view:BoundView<R>, representation:R,record:ProjectionPhysicalRecord,
                       parent?:BoundView<R>,via?:string,index?:number) {
         metrics.put(METRIC.PROJECTION_BIND);
@@ -265,8 +325,11 @@ function rootArrayCache(record:ProjectionPhysicalRecord):Map<object,unknown> {
     return cache;
 }
 function requireRecord<R>(view:BoundView<R>):ProjectionPhysicalRecord {
-    const record=view[SHARED_LEASE]?.record ?? view[PHYSICAL_RECORD];
+    const lease=view[SHARED_LEASE];
+    const record=lease?.record ?? view[PHYSICAL_RECORD];
     if (!record) throw new Error("Projection is not bound to a record");
+    if(lease?.activeCount!==undefined && view[INDEX]!==undefined && view[INDEX]>=lease.activeCount)
+        throw new RangeError(`ODO occurrence ${view[INDEX]} is not active (count ${lease.activeCount})`);
     return record;
 }
 function compileTree<R,D,P>(parser:Parser<R,D,P>, details:D, context:PhysicalRecordContext|undefined,

@@ -27,6 +27,8 @@ export type CobolProjectionDetails = Readonly<{
     dataOffsetBytes?:number;
     controllerLocations:WeakMap<readonly (string|number)[],import("./cobol.projection.symbolic").CobolControllerLocation>;
     metrics?:IPutMetrics;
+    /** Experimental, restricted native-array ODO execution; default is lazy Proxy. */
+    experimentalSharedOdoArrays?:boolean;
 }>;
 export type CobolFixedDetails = CobolProjectionDetails & Readonly<{recordLengthBytes:number}>;
 /** Fixed capacity is independent of the number of active ODO occurrences. */

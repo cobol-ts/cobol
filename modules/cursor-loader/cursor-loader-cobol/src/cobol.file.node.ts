@@ -29,6 +29,8 @@ export type CobolFileOptions<TProjection> = Readonly<{
     recordPool?: RecordObjectPool<any>;
     byteBufferPool?: import("@cobol-ts/cursor-loader-types").FileBufferPool;
     metrics?:IPutMetrics;
+    /** Opt-in shared-binding native arrays for eligible small ODO tables. */
+    experimentalSharedOdoArrays?:boolean;
 }>;
 
 /**
@@ -45,7 +47,8 @@ export async function* readCobolFile<TProjection>(
     const text = await readFile(options.copybook, 'utf8');
     const ast = valueOrThrow(parseCopybook(text));
     const layout = valueOrThrow(compileCobolLayout(ast, basename(options.copybook), options.layoutOptions));
-    const details = {...valueOrThrow(createCobolDecodedFramedDetails(layout, options.framing, options.decodeOptions)),metrics:options.metrics};
+    const details = {...valueOrThrow(createCobolDecodedFramedDetails(layout, options.framing, options.decodeOptions)),metrics:options.metrics,
+        experimentalSharedOdoArrays:options.experimentalSharedOdoArrays};
 
     const file = await open(options.filename, 'r');
     try {
@@ -76,7 +79,8 @@ export async function scanCobolFile<TProjection>(
     const text = await readFile(options.copybook,'utf8');
     const ast = valueOrThrow(parseCopybook(text));
     const layout = valueOrThrow(compileCobolLayout(ast,basename(options.copybook),options.layoutOptions));
-    const details = {...valueOrThrow(createCobolDecodedFramedDetails(layout,options.framing,options.decodeOptions)),metrics:options.metrics};
+    const details = {...valueOrThrow(createCobolDecodedFramedDetails(layout,options.framing,options.decodeOptions)),metrics:options.metrics,
+        experimentalSharedOdoArrays:options.experimentalSharedOdoArrays};
     const file = await open(options.filename,'r');
     try {
         await scanThrowingFileCursor<TProjection,typeof file,'cobol'>(

@@ -9,7 +9,7 @@ import {runCallbackBenchmark} from './benchmark.callback';
 async function main():Promise<void> {
     const options=parseBenchmarkArgs(process.argv.slice(2));
     if(!options) {
-        console.log('yarn benchmark:callback --scenario baseline|array|redefines|odo --data FILE [--sample] [--warmup N] [--limit N|all] [--runs N] [--metrics] [--runtime-stats]');
+        console.log('yarn benchmark:callback --scenario baseline|array|redefines|odo --data FILE [--sample] [--warmup N] [--limit N|all] [--runs N] [--metrics] [--runtime-stats] [--shared-odo-arrays]');
         console.log('yarn benchmark:callback:sample');
         return;
     }
@@ -27,7 +27,8 @@ async function main():Promise<void> {
         await runCallbackBenchmark(options,visitor=>scanCobolFile<BenchmarkOdoRow>({
             filename,copybook,projection,bufferSize:options.bufferSize,
             framing:{kind:'fixed',recordLength:200},
-            decodeOptions:options.decodeOptions as CobolDecodeOptions,metrics
+            decodeOptions:options.decodeOptions as CobolDecodeOptions,metrics,
+            experimentalSharedOdoArrays:options.sharedOdoArrays
         },visitor),console.log,metrics);
     } else {
         const projection=defineProjection<BenchmarkArrayRow>(BENCHMARK_COMPLEX_PROJECTION);

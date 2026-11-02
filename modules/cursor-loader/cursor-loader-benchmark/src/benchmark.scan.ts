@@ -73,6 +73,7 @@ export type BenchmarkOptions = Readonly<{
     metrics?:boolean;
     runs?:number;
     runtimeStats?:boolean;
+    sharedOdoArrays?:boolean;
 }>;
 export type BenchmarkResult = Counters & Readonly<{
     seconds:number;
@@ -138,7 +139,7 @@ export function formatTotals(result:Counters):string {
 }
 
 export function parseBenchmarkArgs(args:readonly string[]):BenchmarkOptions|undefined {
-    const options:{data:string;copybook:string;warmup:number;limit:number|'all';bufferSize:number;decodeOptions:Record<string,unknown>;scenario:BenchmarkScenario;metrics?:boolean;runs?:number;runtimeStats?:boolean}={
+    const options:{data:string;copybook:string;warmup:number;limit:number|'all';bufferSize:number;decodeOptions:Record<string,unknown>;scenario:BenchmarkScenario;metrics?:boolean;runs?:number;runtimeStats?:boolean;sharedOdoArrays?:boolean}={
         data:'data/benchmark.dat',copybook:'copybooks/benchmark.cbl',warmup:100_000,
         limit:'all',bufferSize:64*1024,decodeOptions:{encoding:'ascii'},scenario:'baseline'
     };
@@ -147,6 +148,7 @@ export function parseBenchmarkArgs(args:readonly string[]):BenchmarkOptions|unde
         const arg=args[i];
         if(arg==='--help' || arg==='-h') return undefined;
         if(arg==='--metrics') {options.metrics=true;continue;}
+        if(arg==='--shared-odo-arrays') {options.sharedOdoArrays=true;continue;}
         if(arg==='--runtime-stats') {options.runtimeStats=true;continue;}
         if(arg==='--sample') {sampleRequested=true;continue;}
         if(arg==='--scenario') {
@@ -185,6 +187,8 @@ export function parseBenchmarkArgs(args:readonly string[]):BenchmarkOptions|unde
     }
     if(sampleRequested) options.data=options.scenario==='odo'?'data/odo-sample-100k.dat':'data/sample-100k.dat';
     else if(options.scenario==='odo' && options.data==='data/benchmark.dat') options.data='data/odo.dat';
+    if(options.sharedOdoArrays && options.scenario!=='odo')
+        throw new Error('--shared-odo-arrays requires --scenario odo');
     if(options.bufferSize<RECORD_BYTES) throw new Error('buffer-size must be at least 200');
     return options;
 }

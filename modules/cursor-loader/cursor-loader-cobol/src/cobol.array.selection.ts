@@ -2,7 +2,7 @@ import {type IPutMetrics,NULL_METRICS,METRIC} from "@cobol-ts/metrics";
 import type {ProjectionPhysicalRecord} from "@cobol-ts/cursor-loader-types";
 import type {ProjectedArraySource} from "@cobol-ts/arrays";
 import type {ResolvePath} from "@cobol-ts/size";
-import {hasOccursClause} from "./cobol.occurs.clause";
+import {findOccursClause,hasOccursClause} from "./cobol.occurs.clause";
 import {activeCount,selectSymbolicInto,singleDepthOccurrenceInto,type CobolSymbolicPath,type MutableSymbolicView} from "./cobol.projection.symbolic";
 import type {CobolFixedProjectionPath,CobolProjectionPath} from "./cobol.projection.path";
 import {physical,displacement,symbolicView,countResolver} from "./cobol.representation";
@@ -79,6 +79,9 @@ export class SymbolicCobolArraySelection implements CobolArrayProvider {
     private resolver?:ResolvePath;
     private table?:MutableSymbolicView;
     private metrics:IPutMetrics=NULL_METRICS;
+    private sharedCapacity=0;
+    private sharedStrideBits=0;
+    private sharedActiveCount=0;
 
     constructor(readonly path:CobolSymbolicPath) {
         if(path.node.kind!=="group" || !hasOccursClause(path.node.source.clauses))
@@ -94,12 +97,56 @@ export class SymbolicCobolArraySelection implements CobolArrayProvider {
         selectSymbolicInto(symbolicView(parent),this.path,resolver,[],table);
         this.resolver=resolver;
         this.record=record;
+        // Opt-in only for a root-level ODO with fixed element size and a
+        // statically positioned table. Nested/symbolic layouts stay lazy.
+        this.sharedCapacity=0;
+        if(details.experimentalSharedOdoArrays) {
+            const occurs=findOccursClause(this.path.node.source.clauses);
+            const size=this.path.node.size;
+            if(occurs?.kind==="occurs" && !("count" in occurs) &&
+               occurs.max<=8 && occurs.max>0 &&
+               typeof size!=="number" && size.kind==="depending-on" &&
+               typeof size.expression==="number" &&
+               this.path.relativeSteps.length===this.path.steps.length &&
+               this.path.steps.every((step,index)=>
+                   typeof step.node.leftOffset==="number" && step.index===undefined &&
+                   (index===this.path.steps.length-1 || !hasOccursClause(step.node.source.clauses))) &&
+               table.enclosingIndices.length===0) {
+                this.sharedCapacity=occurs.max;
+                this.sharedStrideBits=size.expression;
+                this.sharedActiveCount=activeCount(this.path.node,resolver,table.enclosingIndices);
+            }
+        }
     }
 
     length():number {
         this.metrics.put(METRIC.COBOL_ARRAY_PROVIDER_LENGTH);
         if(!this.record) throw new Error("COBOL projected array is not bound");
+        if(this.sharedCapacity>0) return this.sharedActiveCount;
         return activeCount(this.path.node,this.resolver!,this.table!.enclosingIndices);
+    }
+
+    /** Capability discovery is checked once at runtime construction. */
+    sharedOdoCapacity():number {return this.sharedCapacity;}
+
+    /** Stable symbolic occurrence: its location and borrowed record are
+     * resolved through the current table/lease without per-child rebinding. */
+    sharedOdoElement(index:number,lease:{record:ProjectionPhysicalRecord|undefined;activeCount?:number}):CobolRepresentation {
+        if(!this.sharedCapacity || !Number.isSafeInteger(index) || index<0 || index>=this.sharedCapacity)
+            throw new RangeError(`ODO occurrence index ${index} outside retained capacity`);
+        const provider=this;
+        const indices:readonly number[]=[index];
+        const requireActive=()=>{
+            if(!lease.record) throw new Error("Projected array is not bound");
+            if(index>=(lease.activeCount??0))
+                throw new RangeError(`ODO occurrence ${index} is not active (count ${lease.activeCount})`);
+        };
+        return {
+            get physical() {requireActive();return lease.record!;},
+            get originBits() {requireActive();return provider.table!.originBits+index*provider.sharedStrideBits;},
+            get endBits() {requireActive();return provider.table!.originBits+(index+1)*provider.sharedStrideBits;},
+            enclosingIndices:indices
+        };
     }
 
     element(index:number,reusable?:CobolRepresentation):CobolRepresentation {
