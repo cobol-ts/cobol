@@ -43,6 +43,20 @@ export class FixedCobolArraySelection implements CobolArrayProvider {
         return this.count;
     }
 
+    /** Experimental: create a permanent occurrence descriptor, not a copied record. */
+    sharedElement(index:number, lease:{record:ProjectionPhysicalRecord|undefined}):CobolRepresentation {
+        if(!Number.isSafeInteger(index)||index<0||index>=this.count)
+            throw new RangeError(`OCCURS index ${index} outside 0..${this.count-1}`);
+        const provider=this;
+        return {
+            get physical() {
+                if(!lease.record) throw new Error("Projected array is not bound");
+                return lease.record;
+            },
+            get displacementBits() {return provider.base+index*provider.strideBits;}
+        };
+    }
+
     element(index:number,reusable?:CobolRepresentation):CobolRepresentation {
         this.metrics.put(METRIC.COBOL_ARRAY_PROVIDER_ELEMENT);
         const record=this.record;

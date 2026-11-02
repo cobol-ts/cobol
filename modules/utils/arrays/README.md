@@ -38,3 +38,7 @@ Do not use this abstraction *as the indexed lookup array* for sparse projected c
 ## Projected-array access metrics
 
 `createProjectedArray(source, metrics?)` optionally counts direct Proxy `length` requests, numeric property selections and valid numeric selections. Its default `NullMetrics` performs no storage or I/O. A numeric index access calls the provider's length method to validate bounds; the projection package separately counts provider length-resolution work, selection, binding and cleanup. No new array elements are materialised by the counters.
+
+## Native arrays versus the Proxy adapter
+
+The `ProjectedArray` Proxy adapter is the **lazy** selection mechanism: numeric property access asks a source for its active length and selected element, and the projection layer manages reusable high-water child views. Small fixed-position COBOL arrays may instead use real JavaScript arrays of reusable projection children, selected by the COBOL projection runtime. That does not change the contract of `createProjectedArray` or make the Proxy unnecessary; symbolic/ODO and complex arrays still require it. The native-array strategy holds views, not scalar values, and the byte-backed borrowed lifetime is enforced by the owning projection/record binding rather than by JavaScript array indexing.

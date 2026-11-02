@@ -153,13 +153,28 @@ indexed path built from the retained parent/member/index links.
 
 ## Child clearing across leases
 
-A record close recursively clears the active projected-array children but retains
+For the **lazy Proxy implementation**, a record close recursively clears the active projected-array children but retains
 allocated child slots for future records. On a later selection, a retained child
 whose physical-record binding is already `undefined` is rebound directly; it is
 not recursively cleared a second time. A child that is still bound is cleared
 before rebinding, preserving nested-array and borrowed-record lifetimes.
 
-For the fixed two-element benchmark, this reduces `projection.view.clear` from
-five calls to three per record (root plus the two selected children). The
+For the older lazy Proxy two-element benchmark, this reduces `projection.view.clear` from
+five calls to three per record (root plus the two selected children). In that lazy path, the
 `array.child.clear_visit` counter remains two per record: those are the actual
 children visited on close. No change is made to Proxy selection or field layout.
+
+### Small fixed arrays
+
+When the parser provides immutable fixed-position occurrence descriptors, a
+scalar-only array of at most eight elements uses a frozen native JavaScript
+array of reusable views. Its child views share the array runtime's current
+record lease rather than each being rebound. The original record bytes remain
+authoritative and scalar values are decoded on demand. Other array shapes use
+lazy Proxy selection. Holding a child after the owning record closes is invalid.
+
+## Fixed-position shared binding (current default)
+
+For COBOL providers that advertise a supported small fixed array, the array getter now returns a real JavaScript array of retained scalar child projection views. This is a separate representation from the Proxy described above: it constructs eligible child views once and keeps their occurrence geometry immutable. A record lease updates a shared physical-record binding, rather than individually rebinding each array element. On close, clearing the shared binding makes previously retained child accessors invalid. No COBOL field values are copied or decoded at bind time.
+
+The current eligibility guard is fixed-position geometry, scalar-only children and at most eight occurrences. A fixed count positioned after symbolic variable-length storage is not automatically eligible. Nested and ODO-dependent arrays continue down the lazy Proxy path. The older discussion of high-water child slots above applies specifically to that **lazy** path; the native array retains all eligible view slots from construction. Both paths implement the same typed projection intent, but native-array operations and internal cache sizes are not interchangeable diagnostic contracts. Tests covering independent leases and stale child access belong with this module and the COBOL integration tests.

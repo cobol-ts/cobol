@@ -56,7 +56,7 @@ export async function* readCobolFile<TProjection>(
                 parsers: createCobolParserRegistry(details),
                 bufferSize: options.bufferSize ?? 64 * 1024,
                 fillFileBuffer: fillNodeFileBuffer,
-                metrics:options.metrics
+                metrics:options.metrics,
             }
         );
     } finally {

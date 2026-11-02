@@ -137,8 +137,10 @@ describe("multiple independent fixed OCCURS arrays",()=>{
         expect(phone.number()).toBe("5/8/f4 f5 f6");
         expect(address.postcode()).toBe("12/14/c5 c6");
         factory.clear(customer);
-        expect(phones.length).toBe(0);
-        expect(addresses.length).toBe(0);
+        expect(phones.length).toBe(2);
+        expect(addresses.length).toBe(3);
+        expect(()=>phone.number()).toThrow();
+        expect(()=>address.postcode()).toThrow();
         const second=physicalRecord(siblingBytes[1],state,2);
         factory.bind(customer,second,second);
         expect(customer.telephones).toBe(phones);
@@ -244,8 +246,10 @@ describe("nested fixed OCCURS as arrays of projected arrays",()=>{
         expect(rootRuntime.elements[1]).toBe(second);
         factory.clear(customer);
         expect(orders.length).toBe(0);
-        expect(firstItems.length).toBe(0);
-        expect(secondItems.length).toBe(0);
+        expect(firstItems.length).toBe(3);
+        expect(secondItems.length).toBe(3);
+        expect(()=>firstFirst.sku()).toThrow();
+        expect(()=>secondLast.sku()).toThrow();
         const next=physicalRecord(nestedBytes[1],state,2);
         factory.bind(customer,next,next);
         expect(customer.orders).toBe(orders);

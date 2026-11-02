@@ -17,6 +17,12 @@ const SAVED = Symbol("projectionRetainedSelection");
 const PARENT = Symbol("projectionParent");
 const VIA = Symbol("projectionVia");
 const INDEX = Symbol("projectionIndex");
+const SHARED_LEASE = Symbol("projectionSharedLease");
+type SharedLease={record:ProjectionPhysicalRecord|undefined};
+type SharedFixedSource<R> = ProjectedArraySource<R> & {sharedElement(index:number,lease:SharedLease):R};
+function isSharedFixedSource<R>(source:ProjectedArraySource<R>):source is SharedFixedSource<R> {
+    return typeof (source as Partial<SharedFixedSource<R>>).sharedElement === "function";
+}
 
 type Parser<R,D,P> = ProjectionSupport<R,D,P> & PhysicalRecordDebugRenderer;
 type BoundView<R> = {
@@ -29,6 +35,7 @@ type BoundView<R> = {
     [PARENT]: BoundView<R> | undefined;
     [VIA]: string | undefined;
     [INDEX]: number | undefined;
+    [SHARED_LEASE]: SharedLease | undefined;
 };
 type ScalarMember<R> = {kind:"scalar";name:string; accessor:(this:BoundView<R>,...indices:number[])=>number|string};
 type ObjectMember<R,D,P> = {kind:"object"; name:string;path:P; schema: Compiled<R,D,P>; original: ProjectionField};
@@ -77,7 +84,7 @@ export function createProjection<T,R,D,P>(
             [ARRAYS]:new Map(),
             [OBJECTS]:new Map(),
             [ROOT]:root,
-            [SAVED]:undefined, [PARENT]:undefined, [VIA]:undefined, [INDEX]:undefined
+            [SAVED]:undefined, [PARENT]:undefined, [VIA]:undefined, [INDEX]:undefined, [SHARED_LEASE]:undefined
         };
         for (const node of nodes) {
             if (node.kind === "scalar") {
@@ -108,7 +115,7 @@ export function createProjection<T,R,D,P>(
                         const owner = view[REPRESENTATION] as R;
                         if (!runtime?.isBoundTo(record,owner)) {
                             const selected = parser.array(view[REPRESENTATION] as R,details,node.path,runtime?.source());
-                            if (!runtime) {runtime=makeArray(node);cache.set(node,runtime);metrics.put(METRIC.ARRAY_RUNTIME_CREATE);}
+                            if (!runtime) {runtime=makeArray(node,selected);cache.set(node,runtime);metrics.put(METRIC.ARRAY_RUNTIME_CREATE);}
                             runtime.bind(selected,record,owner,view);
                         } else metrics.put(METRIC.ARRAY_RUNTIME_ALREADY_BOUND);
                         return runtime.view;
@@ -119,7 +126,9 @@ export function createProjection<T,R,D,P>(
         return view;
     }
 
-    function makeArray(node:ArrayMember<R,D,P>):ArrayRuntime<R> {
+    function makeArray(node:ArrayMember<R,D,P>,initial:ProjectedArraySource<R>):ArrayRuntime<R> {
+        if(node.schema.every(member=>member.kind==="scalar")
+           && isSharedFixedSource(initial) && initial.length()<=8) return makeSharedFixedArray(node,initial);
         const elements:BoundView<R>[] = [];
         let items:ProjectedArraySource<R> | undefined;
         let retainedSource:ProjectedArraySource<R> | undefined;
@@ -182,6 +191,38 @@ export function createProjection<T,R,D,P>(
         };
     }
 
+
+    /** Small fixed-position scalar arrays use native indexing. Each child carries an immutable occurrence
+     * descriptor; the only per-lease write is to the common borrowed binding. */
+    function makeSharedFixedArray(node:ArrayMember<R,D,P>,source:SharedFixedSource<R>):ArrayRuntime<R> {
+        const lease:SharedLease={record:undefined};
+        const elements:BoundView<R>[]=[];
+        const count=source.length();
+        for(let index=0;index<count;index++) {
+            const child=createView(node.schema,false);
+            child[REPRESENTATION]=source.sharedElement(index,lease);
+            child[SHARED_LEASE]=lease;
+            child[VIA]=node.name;
+            child[INDEX]=index;
+            elements.push(child);
+        }
+        const view=Object.freeze(elements.slice()) as unknown as ProjectedArray<unknown>;
+        let owner:R|undefined;
+        let retained:ProjectedArraySource<R>=source;
+        return {
+            name:node.label,view,elements,
+            source(){return retained;},
+            isBoundTo(record,nextOwner){return lease.record===record && owner===nextOwner;},
+            bind(next,record,nextOwner,_ownerView){
+                if(next!==source || !isSharedFixedSource(next))
+                    throw new Error("Fixed array provider identity changed");
+                metrics.put(METRIC.ARRAY_RUNTIME_BIND);
+                retained=next;owner=nextOwner;lease.record=record;
+            },
+            clear(){metrics.put(METRIC.ARRAY_RUNTIME_CLEAR);lease.record=undefined;owner=undefined;}
+        };
+    }
+
     function bindView(view:BoundView<R>, representation:R,record:ProjectionPhysicalRecord,
                       parent?:BoundView<R>,via?:string,index?:number) {
         metrics.put(METRIC.PROJECTION_BIND);
@@ -224,8 +265,9 @@ function rootArrayCache(record:ProjectionPhysicalRecord):Map<object,unknown> {
     return cache;
 }
 function requireRecord<R>(view:BoundView<R>):ProjectionPhysicalRecord {
-    if (!view[PHYSICAL_RECORD]) throw new Error("Projection is not bound to a record");
-    return view[PHYSICAL_RECORD];
+    const record=view[SHARED_LEASE]?.record ?? view[PHYSICAL_RECORD];
+    if (!record) throw new Error("Projection is not bound to a record");
+    return record;
 }
 function compileTree<R,D,P>(parser:Parser<R,D,P>, details:D, context:PhysicalRecordContext|undefined,
                           definition:ProjectionAuthoring, metrics:IPutMetrics, parentName="root", parentPath?:P):Compiled<R,D,P> {

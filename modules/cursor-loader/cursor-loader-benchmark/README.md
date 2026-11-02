@@ -28,8 +28,7 @@ Keep this package as a sibling of `cursor-loader-cobol`, `cursor-file`,
 `layout`, and the other packages. Let the existing workspace tooling process
 `package.details.json` and link the `@cobol-ts` dependencies. In particular,
 this module needs the workspace's `@cobol-ts/codec` package, just as
-`cursor-loader-cobol` does. The uploaded archive does not include that module,
-so the full reader run must be validated in your complete workspace.
+`cursor-loader-cobol` does. The required codec module is part of this monorepo; a working installation must link its local package dependencies.
 
 No Python, standalone JavaScript scripts, bespoke build steps, or alternate
 project structure are involved. Commands run the TypeScript sources with
@@ -156,3 +155,23 @@ TypeScript patch.
 ## Opt-in operation counts
 
 Add `--metrics` to the existing callback CLI, for example `yarn benchmark:callback --scenario array --sample --metrics`. The benchmark opens a reader for warm-up, resets the shared `MemoryMetrics` after verification, reopens the file for the measured pass, and prints the measured counters alphabetically after the existing checksum and throughput results. No counters or new output appear without the flag. Counts are diagnostic, not suitable for throughput comparisons while instrumentation is enabled; see [README.metrics.md](README.metrics.md).
+
+### Shared-binding fixed arrays (default)
+
+Small (up to eight elements) fixed-position COBOL OCCURS arrays with scalar-only
+child projections use native, frozen JavaScript arrays of reusable byte-backed
+views by default. One record binding is shared by every child; there is **no
+copy of the COBOL bytes** and scalar decoding remains on demand. Views are
+invalid after their record lease closes. This selection is internal and
+requires no CLI flag.
+
+Symbolic/ODO arrays, larger fixed arrays, and arrays containing nested objects
+or arrays continue through the existing lazy Proxy-backed implementation. This
+bounded policy deliberately avoids eagerly constructing large or nested view
+graphs. The fixed geometry is chosen from the compiled COBOL path, not just a
+source-level `OCCURS n` declaration. For diagnostics, `--metrics` shows no
+`array.proxy.index` or `array.child.bind` events for the eligible fixed path.
+
+## Current default fixed-array path and reproducibility
+
+The `array` scenario exercises the automatically selected shared-binding native array when its compiled shape qualifies; no experimental opt-in flag is needed. The performance benchmark measures the whole callback scan, not merely array indexing. A sample instrumented pass can validate that scalar decodes remain present while Proxy/child-binding operation counters drop; these counts describe the implementation path and should not be mistaken for elapsed time. Use `--runs 5 --limit 5000000 --warmup 500000` for repeated passes, compare medians cautiously, and always check the checksum lines. The standalone metrics run should use `--sample --metrics` and must not be compared directly with an uninstrumented throughput run.

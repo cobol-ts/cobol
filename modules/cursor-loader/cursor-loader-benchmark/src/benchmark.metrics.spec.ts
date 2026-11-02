@@ -32,15 +32,16 @@ test('single top-level metrics object sees record, projection, array and COBOL o
     expect(metrics.get(METRIC.RECORD_RETURN)).toBe(100);
     expect(metrics.get(METRIC.RECORD_STATE_CLEAN)).toBe(100);
     expect(metrics.get(METRIC.ARRAY_PROPERTY)).toBe(100);
-    expect(metrics.get(METRIC.ARRAY_PROXY_INDEX)).toBe(200);
-    expect(metrics.get(METRIC.ARRAY_ELEMENT)).toBe(200);
-    expect(metrics.get(METRIC.ARRAY_CHILD_BIND)).toBe(200);
-    expect(metrics.get(METRIC.ARRAY_CHILD_CLEAR_VISIT)).toBe(200);
-    // Root + two active children once each. No pre-bind clear of unbound children.
-    expect(metrics.get(METRIC.PROJECTION_CLEAR)).toBe(300);
+    expect(metrics.get(METRIC.ARRAY_PROXY_INDEX)).toBe(0);
+    expect(metrics.get(METRIC.ARRAY_ELEMENT)).toBe(0);
+    expect(metrics.get(METRIC.ARRAY_CHILD_BIND)).toBe(0);
+    expect(metrics.get(METRIC.ARRAY_CHILD_CLEAR_VISIT)).toBe(0);
+    // Only the root is bound and cleared per lease; native array children inherit its binding.
+    expect(metrics.get(METRIC.PROJECTION_BIND)).toBe(100);
+    expect(metrics.get(METRIC.PROJECTION_CLEAR)).toBe(100);
     expect(metrics.get(METRIC.ARRAY_RUNTIME_CREATE)).toBe(1);
-    expect(metrics.get(METRIC.ARRAY_CHILD_ALLOCATE)).toBe(2);
-    expect(metrics.get(METRIC.ARRAY_CHILD_REUSE)).toBe(198);
+    expect(metrics.get(METRIC.ARRAY_CHILD_ALLOCATE)).toBe(0);
+    expect(metrics.get(METRIC.ARRAY_CHILD_REUSE)).toBe(0);
     expect(metrics.get(METRIC.PROJECTION_CREATE)).toBe(3);
     expect(metrics.get(METRIC.COBOL_FIELD_RANGE)).toBe(600);
     expect(metrics.get(METRIC.COBOL_FIXED_FAST)).toBe(600);
@@ -49,14 +50,14 @@ test('single top-level metrics object sees record, projection, array and COBOL o
     expect(metrics.get(METRIC.COBOL_PATH_COMPILE)).toBe(8);
 });
 
-test('fixed-array child cache and cleanup visits scale linearly across 100, 1000 and 10000 records',async()=>{
+test('shared-binding fixed arrays avoid per-child binds and cleanup visits across record counts',async()=>{
     for(const records of [100,1000,10000]){
         const metrics=new MemoryMetrics();
         expect(await measured('array',records,metrics)).toEqual(expectedCounters(records));
-        expect(metrics.get(METRIC.ARRAY_CHILD_ALLOCATE)).toBe(2);
+        expect(metrics.get(METRIC.ARRAY_CHILD_ALLOCATE)).toBe(0);
         expect(metrics.get(METRIC.ARRAY_RUNTIME_CREATE)).toBe(1);
-        expect(metrics.get(METRIC.ARRAY_CHILD_BIND)).toBe(2*records);
-        expect(metrics.get(METRIC.ARRAY_CHILD_CLEAR_VISIT)).toBe(2*records);
+        expect(metrics.get(METRIC.ARRAY_CHILD_BIND)).toBe(0);
+        expect(metrics.get(METRIC.ARRAY_CHILD_CLEAR_VISIT)).toBe(0);
         expect(metrics.get(METRIC.PROJECTION_CLEAR_ROOT_ARRAY_VISIT)).toBe(records);
         expect(metrics.get(METRIC.PROJECTION_CREATE)).toBe(3);
     }
@@ -91,9 +92,11 @@ test('the CLI accepts --metrics and warm-up counters are excluded from measured 
         message=>messages.push(message),metrics);
     expect(result.records).toBe(20);
     expect(metrics.get(METRIC.FILE_SCAN_RECORD)).toBe(20);
-    expect(metrics.get(METRIC.ARRAY_CHILD_BIND)).toBe(40);
+    expect(metrics.get(METRIC.ARRAY_CHILD_BIND)).toBe(0);
+    expect(metrics.get(METRIC.PROJECTION_BIND)).toBe(20);
     expect(messages).toContain('METRICS measured pass (warm-up excluded):');
-    expect(messages).toContain('  array.child.bind=40');
+    expect(messages).toContain('  projection.view.bind=20');
+    expect(messages).not.toContain('  array.child.bind=40');
     const counters=messages.filter(message=>message.startsWith('  '));
     expect(counters.map(message=>message.slice(2,message.indexOf("="))))
         .toEqual(counters.map(message=>message.slice(2,message.indexOf("="))).sort());
@@ -128,6 +131,6 @@ test('repeated metrics output resets warm-up and each measured pass',async()=>{
             bufferSize:8192,decodeOptions:{encoding:'ascii'},metrics},visitor),
         message=>messages.push(message),metrics);
     expect(metrics.get(METRIC.FILE_SCAN_RECORD)).toBe(20);
-    expect(messages.filter(message=>message==='  array.child.bind=40')).toHaveLength(3);
+    expect(messages.filter(message=>message==='  projection.view.bind=20')).toHaveLength(3);
     expect(messages.filter(message=>message.includes('warm-up excluded'))).toHaveLength(3);
 });

@@ -228,3 +228,9 @@ variable-record file.
 ## Optional COBOL diagnostics
 
 `scanCobolFile` and `readCobolFile` accept `metrics?: IPutMetrics`. The same instance is passed from the top-level file options into COBOL source details, the per-record ODO cache, physical-record pooling and reusable projections. Compiled-field decoder creation and invocation, scalar field-range resolution, fixed-field fast-path dispatch and generic fixed-path resolution, fixed occurrence visits, symbolic steps, ODO controller reads, cached versus extended boundaries, and ODO cleanup visits are counted separately. Actual visited items in prefix-cache and projection cleanup loops are counted to make possible non-linear work visible. With metrics disabled, no metric names are constructed and no metrics are logged. See `@cobol-ts/metrics` and `cursor-loader-benchmark/README.metrics.md`.
+
+## Selecting a fixed-array representation
+
+The compiled COBOL provider may identify an array as eligible for the shared-binding native-array path: fixed positioning, no symbolic length dependency, scalar-only child projections and no more than eight elements. That selection is automatic in the current implementation. The resulting array contains projection **views**, never decoded records. All its children resolve the active borrowed record through one shared binding, with immutable occurrence offsets. Closing the owning lease invalidates their reads without visiting and rebinding every child.
+
+The generic lazy Proxy path is still required for larger arrays, ODO-controlled counts and more complex structures. A fixed OCCURS *count* is not proof that a field's physical position is fixed: layout compilation determines eligibility. This distinction also matters when nested fixed arrays occur under symbolic prefixes. Continue using the support matrix and framing sections above as the source of COBOL syntax and file-format coverage.
