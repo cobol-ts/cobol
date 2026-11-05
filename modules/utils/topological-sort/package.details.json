@@ -1,0 +1,18 @@
+{
+  "template": "node",
+  "name": "@cobol-ts/topological-sort",
+  "description": "Topological sorting into dependency generations with detailed cycle diagnostics",
+  "links": ["@cobol-ts/errors"],
+  "packageJson": {
+    "files": ["build/"],
+    "dependencies": {},
+    "devDependencies": {},
+    "scripts": {}
+  },
+  "guards": {
+    "compile": true,
+    "publish": true,
+    "test": true,
+    "react": false
+  }
+}
