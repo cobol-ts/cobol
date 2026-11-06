@@ -1,14 +1,18 @@
 
+import {ErrorsOr} from '@cobol-ts/errors'
 import {Graph, topologicalSort} from './topological.sort'
-import {valueOrThrow} from "@cobol-ts/errors";
 
 interface Calculation {
     name: string
     dependencies: Calculation[]
 }
 
-function normalise<Node>(generations: Node[][]): Set<Node>[] {
-    return generations.map(generation => new Set(generation))
+function normalise<Node>(
+    result: ErrorsOr<Node[][]>
+): ErrorsOr<Set<Node>[]> {
+    return 'errors' in result
+        ? result
+        : {value: result.value.map(generation => new Set(generation))}
 }
 
 describe('example', () => {
@@ -43,12 +47,12 @@ describe('example', () => {
             dependencies: [creditScore, affordability]
         }
 
-        const result = topologicalSort(graph, [decision])
-
-        expect(normalise(valueOrThrow(result))).toEqual(normalise([
-            [customerData, accountData],
-            [creditScore, affordability],
-            [decision]
-        ]))
+        expect(normalise(topologicalSort(graph, [decision]))).toEqual({
+            value: [
+                new Set([customerData, accountData]),
+                new Set([creditScore, affordability]),
+                new Set([decision])
+            ]
+        })
     })
 })
